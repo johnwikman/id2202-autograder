@@ -1,0 +1,10 @@
+description = """
+Checks that stdin is printed as stdout.
+"""
+
+[test.options]
+args = ["--stdin-to-stdout"]
+ignore_stdin = false
+stdin = "Hello, World??"
+stdout = "Hello, World??"
+stderr = ""

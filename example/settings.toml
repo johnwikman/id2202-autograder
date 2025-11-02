@@ -1,0 +1,69 @@
+name = "ID2202 Autograder"
+version = "3"
+temp_dir = "/tmp/id2202_autograder/temp"
+
+# All paths are relative to this file, not where the binary is being run from.
+
+# Logging settings
+[log]
+dir = "./data/logs" # where to place generated logs
+verbose = false     # whether to output debug messages
+
+# Entrypoint monitor process settings
+[monitor]
+poll_interval_seconds = 30
+
+# Process notification settings
+[notify]
+path = "/tmp/id2202_autograder/proc.notify"
+poll_timeout_millisec = 5000
+
+# Information about the github that jobs will be submitted from
+[github]
+address = "gits-15.sys.kth.se"
+org = "ID2202-jwikman-test"
+allow_any_org = false
+allowed_repo_prefixes = ["id2202-"]
+allowed_repo_suffixes = []
+prohibited_repo_prefixes = []
+prohibited_repo_suffixes = ["-shadow"]
+auth_token = "ChangeMe"
+webhook_secret = "s3cr3t"
+max_payload = 65536
+comment_signature = "(_This is an automated response from the autograder_ \U0001F916)"
+
+# Postgres configuration
+[postgres]
+user = "autograder"
+password = "ChangeMe"
+host = "127.0.0.1"
+port = 5432
+
+# Server-specific configuration (should contain the GitHub secret here)
+[server]
+address = "127.0.0.1" # this only works outside containers
+port = 8080
+
+# Runner-specific configuration
+[runner]
+n_runners = 4
+database_poll_interval_seconds = 10
+podman_image = "docker.io/johnwikman/id2202:0.3.0"
+podman_network_prefix = "id2202_runnernet"
+
+# Only ever mount the input files, never expose the intended code or
+# output to the running program. That is checked outside the solutions
+# execution environment.
+mount_repo = "/id2202/repo"
+mount_tests = "/id2202/tests"
+
+workspace_dir = "./data/workspace" # storage for data currently being worked on
+test_config = "./tests/tests.toml" # configuration for test cases
+
+# Symbols and text used in the Markdown output
+[runner.md_settings]
+symbol_ok = "\u2705"             # ✅
+symbol_skipped = "\u2753"        # ❓
+symbol_failed = "\u274C"         # ❌
+symbol_tagsuccess = "\U0001F389" # 🎉
+symbol_build = "\U0001F6A7"      # 🚧

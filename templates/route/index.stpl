@@ -1,0 +1,9 @@
+<% include!("../header.stpl"); %>
+
+<h1 class="display-1">Hi there!</h1>
+
+<p class="lead">
+    If you can see this page, it means that the autograder is running.
+</p>
+
+<% include!("../footer.stpl"); %>

@@ -1,0 +1,7 @@
+description = """
+Checks that code 15 is returned.
+"""
+
+[test.options]
+args = ["--code", "15"]
+code = 15

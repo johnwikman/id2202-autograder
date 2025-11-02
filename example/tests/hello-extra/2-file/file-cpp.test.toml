@@ -1,0 +1,13 @@
+description = """
+Checks that the .cpp file is printed to standard output.
+"""
+
+[test.options]
+args = []
+code = 0
+auto_input_files = [".cpp"]
+stdout = """
+int main() {
+  return 5;
+}
+"""

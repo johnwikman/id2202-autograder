@@ -1,0 +1,12 @@
+description = """
+Checks that hello world is printed to stdout, but nothing
+else is printed.
+
+Allows for arbitrary whitespaces in the output.
+"""
+
+[test.options]
+args = ["--stdout"]
+stdout = "     H   ell            \no, Wor                    ld!   "
+strip_whitespace_stdout = true
+stderr = ""

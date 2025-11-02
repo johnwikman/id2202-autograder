@@ -1,0 +1,40 @@
+<% include!("../header.stpl"); %>
+
+<h1>Job Information</h1>
+<table class="table table-striped table-hover">
+  <thead>
+    <tr>
+      <th scope="col">Submission ID</th>
+      <th scope="col">Date Submitted</th>
+      <th scope="col">Grading Tags</th>
+      <th scope="col">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+<% for j in &job_info_vec { %>
+    <tr>
+        <td scope="row"><%= j.id.to_string() %></td>
+        <td><%= j.date_submitted %></td>
+        <td><%
+        for (i, t) in j.grading_tags.iter().enumerate() {
+          %><code><%= t %></code><%
+          if (i + 1) < j.grading_tags.len() {
+            %>, <%
+          }
+        } %></td>
+        <td><%
+          match &j.status_symbol_and_class {
+            Some((symbol, span_class)) => {
+              %><%= symbol %> <span class="<%= span_class %>"><%= j.status %></span><%
+          },
+            None => {
+              %><%= j.status %><%
+          }
+          } %>
+        </td>
+    </tr>
+<% } %>
+  </tbody>
+</table>
+
+<% include!("../footer.stpl"); %>

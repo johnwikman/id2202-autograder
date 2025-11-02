@@ -1,0 +1,9 @@
+title = "Hello (Files)"
+description = "Checking that specific files are present in the solution directory."
+
+# Generic configuration for all tests under this directory
+[test]
+kind = "check_file_exists"
+
+[test.options]
+ignore_mimetype = true

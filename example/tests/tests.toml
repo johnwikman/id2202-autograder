@@ -1,0 +1,99 @@
+# Default values
+[default]
+timeout_build = 60   # Timeout for building the project
+timeout_test = 60    # Timeout for a single test case
+timeout_total = 1200 # Timeout for a tag
+max_output = 4194304 # Maximum length of captured output (4 MiB)
+shown_failures = 3   # Number of failed tests that should be revealed to the user.
+build_cmd = ["make"]
+build_prohibit_binary_files = true
+build_allowed_binary_files = ["regalloc.pdf", "liveness.pdf"]
+build_allowed_binary_mimetypes = [
+    "application/pdf",
+    "application/javascript",
+    "application/json",
+]
+
+# Default configuration for test kinds
+# (These can be overidden by specific tests, if you want the compilation
+# process to fail, etc.)
+[default.kind.run]
+bin = "cigrid"
+args = []
+code = 0
+ignore_stdin = true
+stdin = ""
+ignore_stdout = true
+trim_stdout = true
+strip_whitespace_stdout = false
+stdout = ""
+ignore_stderr = true
+trim_stderr = true
+strip_whitespace_stderr = false
+stderr = ""
+auto_input_files = [".cpp"]
+
+# Note: ASM is generated to stdout. So it will never be ignored
+[default.kind.gen_asm_and_run]
+bin = "cigrid"
+args = ["--asm"]
+code = 0
+ignore_stdin = true
+stdin = ""
+ignore_stderr = true
+trim_stderr = true
+strip_whitespace_stderr = false
+stderr = ""
+auto_input_files = [".cpp"]
+# Defaults for assembler and compiler
+assemble_cmd = ["nasm", "-felf64", "<ASM_FILE>", "-o", "a.o"]
+assemble_code = 0
+compile_cmd = ["gcc", "-no-pie", "a.o", "-o", "a.out"]
+compile_code = 0
+# Defaults for running the generated binary
+run_cmd = ["./a.out"]
+run_code = 0
+run_ignore_stdin = true
+run_stdin = ""
+run_ignore_stdout = true
+run_trim_stdout = true
+run_strip_whitespace_stdout = false
+run_stdout = ""
+run_ignore_stderr = true
+run_trim_stderr = true
+run_strip_whitespace_stderr = false
+run_stderr = ""
+
+[default.kind.check_file_exists]
+path = ""
+ignore_mimetype = true
+mimetype_prefix = ""
+
+# The test tags are specified below. Note that the source files are build once
+# for each tag. Hence all build configuration are specified in this file.
+#
+# Any configuration on how the tests are run can be customly specified for each
+# test case.
+[tags.hello]
+dirs = ["hello"]
+build.srcdir = "solutions/hello"
+build.cmd = ["make"]
+
+[tags.hello-extra]
+dirs = ["hello-extra"]
+build.srcdir = "solutions/hello-extra"
+build.cmd = ["make"]
+
+[tags.hello-asm]
+dirs = ["hello-asm"]
+build.srcdir = "solutions/hello-asm"
+build.cmd = ["make"]
+
+[tags.hello-file]
+dirs = ["hello-file"]
+build.srcdir = "solutions/hello-file"
+build.cmd = ["echo"] # No build needed for this tag
+
+# "Alias" tags which can be used to run invoke multiple tags
+[tag_groups]
+hello-all = ["hello", "hello-extra", "hello-asm", "hello-file"]

@@ -1,0 +1,7 @@
+description = """
+Checks that code 10 is returned.
+"""
+
+[test.options]
+args = ["--code", "10"]
+code = 10

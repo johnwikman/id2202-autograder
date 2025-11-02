@@ -1,0 +1,10 @@
+title = "Hello (Assembly)"
+description = "\"Hello, World!\" tests for assembly output."
+
+# Generic configuration for all tests under this directory
+[test]
+kind = "gen_asm_and_run"
+
+[test.options]
+bin = "hello-asm"
+args = []

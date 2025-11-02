@@ -1,0 +1,16 @@
+title = "Print"
+description = "Prints output"
+
+[test]
+kind = "run"
+
+# 5 seconds should be plenty here, useful to test timeout functionality.
+timeout = 5
+
+[test.options]
+code = 0
+ignore_stdin = true
+ignore_stdout = false
+ignore_stderr = false
+trim_stdout = true
+trim_stderr = true

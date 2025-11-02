@@ -1,0 +1,9 @@
+title = "Hello"
+description = "Checks that the program prints \"Hello, World!\" and then exits with code 0."
+
+# Generic configuration for all tests under this directory
+[test]
+kind = "run"
+[test.options]
+bin = "hello"
+ignore_stdout = false

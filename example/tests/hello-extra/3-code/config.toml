@@ -1,0 +1,11 @@
+title = "Code Only"
+description = "Only checks code output"
+
+# Same stdin used for all tests
+[test]
+kind = "run"
+
+[test.options]
+ignore_stdin = true
+ignore_stdout = true
+ignore_stderr = true

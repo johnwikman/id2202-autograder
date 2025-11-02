@@ -1,0 +1,16 @@
+description = """
+Checks that the .md file is printed to standard output.
+"""
+
+# This should ignore the .cpp file that also exists with the same prefix
+
+[test.options]
+args = []
+code = 0
+auto_input_files = [".md"]
+stdout = """
+This is some text **in bold**.
+
+## Subheader
+Some more text.
+"""

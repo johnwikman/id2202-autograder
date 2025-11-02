@@ -1,0 +1,16 @@
+description = """
+Checks that the generated assembly program prints hello world and exits with code 0.
+
+The input file should be printed to stderr while the ASM is printed to stdout.
+"""
+
+[test.options]
+code = 0
+auto_input_files = [".in"]
+stderr = "This is the input file, but I am not used here!"
+ignore_stderr = false
+trim_stderr = true
+
+run_code = 0
+run_stdout = "Hello, World!"
+run_ignore_stdout = false
