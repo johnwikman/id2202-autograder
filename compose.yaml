@@ -1,0 +1,65 @@
+name: id2202-autograder
+
+services:
+  autograder:
+    image: localhost/id2202-autograder:1.0.1
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+      - MKNOD
+    devices:
+      - "/dev/fuse:/dev/fuse"
+    security_opt:
+      - "label=disable"
+      - "seccomp=unconfined"
+    privileged: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - type: bind
+        source: example
+        target: /mnt/example
+        read_only: true
+        bind:
+          selinux: z
+      - type: bind
+        source: data/containers
+        target: /var/lib/containers/storage
+        bind:
+          selinux: z
+      - type: bind
+        source: data/ssh
+        target: /root/.ssh
+        bind:
+          selinux: z
+    environment:
+      AUTOGRADER_LOG_DIR: "/tmp/id2202/log"
+      AUTOGRADER_RUNNER_WORKSPACE_DIR: "/tmp/id2202/workspace"
+      #AUTOGRADER_GITHUB_WEBHOOK_SECRET: "5up3rS3cr3t"
+      AUTOGRADER_GITHUB_AUTH_TOKEN: "${AUTOGRADER_GITHUB_AUTH_TOKEN}"
+      AUTOGRADER_SERVER_ADDRESS: "0.0.0.0"
+      AUTOGRADER_SERVER_PORT: "8080"
+      AUTOGRADER_POSTGRES_USER: "autograder"
+      AUTOGRADER_POSTGRES_PASSWORD: "ChangeMe"
+      AUTOGRADER_POSTGRES_HOST: "postgres"
+      AUTOGRADER_POSTGRES_PORT: "5432"
+    command: /autograder/target/release/entrypoint --settings /mnt/example/settings.toml start
+
+  postgres:
+    image: docker.io/library/postgres:17.6
+    restart: unless-stopped
+    shm_size: 128m
+    ports:
+      - "5432:5432"
+    volumes:
+      - type: bind
+        source: data/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          selinux: z
+    environment:
+      POSTGRES_USER: "autograder"
+      POSTGRES_PASSWORD: "ChangeMe"
+      PGDATA: /var/lib/postgresql/data/pgdata
