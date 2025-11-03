@@ -41,6 +41,24 @@ pub fn single_linefeed_to_space<S: AsRef<str>>(s: S) -> String {
     }
 }
 
+/// Returns a markdown preformatted block <pre> containing the provided text s
+/// as verbatim, making sure to escape parts that could otherwise be
+/// interpreted as HTML.
+pub fn md_preformatted<S: AsRef<str>>(s: S) -> String {
+    let mut ret_str = String::new();
+    ret_str.push_str("<pre>\n");
+    for c in s.as_ref().chars() {
+        match c {
+            '<' => ret_str.push_str("&lt;"),
+            '>' => ret_str.push_str("&gt;"),
+            '&' => ret_str.push_str("&amp;"),
+            _ => ret_str.push(c),
+        }
+    }
+    ret_str.push_str("\n</pre>");
+    ret_str
+}
+
 /// Joins two file system paths together.
 pub fn path_join<A: AsRef<Path>, B: AsRef<Path>>(a: A, b: B) -> Result<String, Error> {
     a.as_ref()
@@ -124,9 +142,16 @@ pub fn mimetype<P: AsRef<Path>>(path: P) -> Result<String, Error> {
     let mimetype = mime_string
         .split(" ")
         .next()
-        .ok_or(Error::from("Internal error"))?
-        .to_string();
-    Ok(mimetype)
+        .ok_or(Error::from("Internal error"))?;
+    let mimetype = if mimetype.ends_with(";") {
+        mimetype
+            .split_at_checked(mimetype.len() - 1)
+            .ok_or(Error::from("Internal error"))?
+            .0
+    } else {
+        mimetype
+    };
+    Ok(mimetype.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -159,11 +184,28 @@ pub struct SyscommandOutput {
 
 /// Runs a command with a timeout.
 /// On success, returns code, stdout, and stderr.
-pub fn syscommand_timeout(
-    cmd: &[&str],
+///
+/// Example, to run a simple command:
+/// ```
+/// use id2202_autograder::utils::{
+///     syscommand_timeout, SyscommandSettings};
+///
+/// let ret = syscommand_timeout(
+///     ["echo", "foo"],
+///     SyscommandSettings::default()
+/// ).unwrap();
+///
+/// println!("Returned {}", ret.code);
+/// ```
+pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
+    cmd: CmdList,
     cmd_settings: SyscommandSettings,
 ) -> Result<SyscommandOutput, Error> {
-    let os_cmd: Vec<OsString> = cmd.iter().map(OsString::from).collect();
+    let os_cmd: Vec<OsString> = cmd
+        .as_ref()
+        .iter()
+        .map(|s| OsString::from(s.as_ref()))
+        .collect();
 
     let stdin_filepath = match cmd_settings.stdin {
         Some(s) => {
@@ -399,5 +441,65 @@ mod tests {
             .is_equal_to("foo bar\n\nbabar");
         assert_that!(single_linefeed_to_space("\nfoo\nbar\n\n\nbabar  \n"))
             .is_equal_to("foo bar\n\n\nbabar");
+    }
+
+    #[test]
+    fn test_md_preformatted() {
+        assert_that!(md_preformatted("foo")).is_equal_to("<pre>\nfoo\n</pre>");
+        assert_that!(md_preformatted("int foo() {return 1 < 2;}"))
+            .is_equal_to("<pre>\nint foo() {return 1 &lt; 2;}\n</pre>");
+        assert_that!(md_preformatted(
+            "bool bar(int x) {\n  return x < 2 && x >= 2;\n}"
+        ))
+        .is_equal_to(
+            "<pre>\nbool bar(int x) {\n  return x &lt; 2 &amp;&amp; x &gt;= 2;\n}\n</pre>",
+        );
+    }
+
+    #[test]
+    fn test_mimetype() {
+        {
+            let mut f = tempfile::NamedTempFile::new().unwrap();
+            f.write("{\"foo\": 1, \"bar\": true}".as_bytes()).unwrap();
+            assert_that!(mimetype(f.path()).unwrap()).contains("json");
+        }
+        {
+            let mut f = tempfile::NamedTempFile::new().unwrap();
+            f.write("foo bar\nI am a regular text file...".as_bytes())
+                .unwrap();
+            assert_that!(mimetype(f.path()).unwrap()).starts_with("text");
+        }
+    }
+
+    #[test]
+    fn test_syscommand_simple() {
+        let ret = syscommand_timeout(
+            ["echo", "foo"],
+            SyscommandSettings {
+                max_stdout_length: Some(10),
+                ..Default::default()
+            },
+        );
+        assert_that!(&ret).is_ok();
+        assert_that!(&ret)
+            .ok()
+            .mapping(|s| &s.stdout)
+            .is_equal_to("foo\n");
+    }
+
+    #[test]
+    fn test_syscommand_with_timeout() {
+        let ret = syscommand_timeout(
+            ["sleep", "2"],
+            SyscommandSettings {
+                timeout: Duration::from_secs(1),
+                ..Default::default()
+            },
+        );
+        assert_that!(&ret).is_err();
+        assert_that!(&ret).err().satisfies(|e| match e {
+            Error::SyscommandTimeoutError { .. } => true,
+            _ => false,
+        });
     }
 }

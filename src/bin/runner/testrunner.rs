@@ -16,7 +16,8 @@ use id2202_autograder::{
     settings::{RunnerMarkdownSettings, Settings},
     test_config::{Tag, TagBuildConfig, Test, TestGroup, Testkind, Tests},
     utils::{
-        self, path_absolute_join, syscommand_timeout, systemtime_to_utc_string, SyscommandSettings,
+        self, md_preformatted, path_absolute_join, syscommand_timeout, systemtime_to_utc_string,
+        SyscommandSettings,
     },
 };
 use itertools::Itertools;
@@ -2156,20 +2157,18 @@ impl TestRunnerHandle {
 
         if let Some((recv_stdout, expected_stdout)) = mismatch_stdout {
             msg.push_str("\n\n### Standard Output Mismatch\n\n");
-            msg.push_str("Expected stdout:\n\n```\n");
-            msg.push_str(expected_stdout);
-            msg.push_str("\n```\n\nReceived stdout:\n\n```\n");
-            msg.push_str(recv_stdout);
-            msg.push_str("\n```");
+            msg.push_str("Expected stdout:\n\n");
+            msg.push_str(&md_preformatted(expected_stdout));
+            msg.push_str("\n\nReceived stdout:\n\n");
+            msg.push_str(&md_preformatted(recv_stdout));
         }
 
         if let Some((recv_stderr, expected_stderr)) = mismatch_stderr {
             msg.push_str("\n\n### Standard Error Mismatch\n\n");
-            msg.push_str("Expected stderr:\n\n```\n");
-            msg.push_str(expected_stderr);
-            msg.push_str("\n```\n\nReceived stderr:\n\n```\n");
-            msg.push_str(recv_stderr);
-            msg.push_str("\n```");
+            msg.push_str("Expected stderr:\n\n");
+            msg.push_str(&md_preformatted(expected_stderr));
+            msg.push_str("\n\nReceived stderr:\n\n");
+            msg.push_str(&md_preformatted(recv_stderr));
         }
 
         if let Some(code) = captured_code {
@@ -2179,23 +2178,17 @@ impl TestRunnerHandle {
 
         if let Some(stdout) = captured_stdout {
             msg.push_str("\n\n### Captured Standard Output\n\n");
-            msg.push_str("```\n");
-            msg.push_str(stdout);
-            msg.push_str("\n```");
+            msg.push_str(&md_preformatted(stdout));
         }
 
         if let Some(stderr) = captured_stderr {
             msg.push_str("\n\n### Captured Standard Error\n\n");
-            msg.push_str("```\n");
-            msg.push_str(stderr);
-            msg.push_str("\n```");
+            msg.push_str(&md_preformatted(stderr));
         }
 
         if let Some(asm) = generated_asm {
             msg.push_str("\n\n### Generated Assembly\n\n");
-            msg.push_str("```asm\n");
-            msg.push_str(asm);
-            msg.push_str("\n```");
+            msg.push_str(&md_preformatted(asm));
         }
 
         additional_md_details.push(msg);
