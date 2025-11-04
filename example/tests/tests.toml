@@ -4,6 +4,7 @@ timeout_build = 60   # Timeout for building the project
 timeout_test = 60    # Timeout for a single test case
 timeout_total = 1200 # Timeout for a tag
 max_output = 4194304 # Maximum length of captured output (4 MiB)
+truncate_len = 2000  # Truncate captured output that exceeds this many characters
 shown_failures = 3   # Number of failed tests that should be revealed to the user.
 build_cmd = ["make"]
 build_prohibit_binary_files = true
@@ -27,10 +28,12 @@ ignore_stdout = true
 trim_stdout = true
 strip_whitespace_stdout = false
 stdout = ""
+stdout_alternatives = []
 ignore_stderr = true
 trim_stderr = true
 strip_whitespace_stderr = false
 stderr = ""
+stderr_alternatives = []
 auto_input_files = [".cpp"]
 
 # Note: ASM is generated to stdout. So it will never be ignored

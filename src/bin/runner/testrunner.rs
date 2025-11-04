@@ -16,8 +16,8 @@ use id2202_autograder::{
     settings::{RunnerMarkdownSettings, Settings},
     test_config::{Tag, TagBuildConfig, Test, TestGroup, Testkind, Tests},
     utils::{
-        self, md_preformatted, path_absolute_join, syscommand_timeout, systemtime_to_utc_string,
-        SyscommandSettings,
+        self, md_preformatted, md_preformatted_with_truncation, path_absolute_join,
+        syscommand_timeout, systemtime_to_utc_string, SyscommandSettings,
     },
 };
 use itertools::Itertools;
@@ -44,6 +44,10 @@ pub struct TestRunnerHandle {
     /// Maxmimum length of output from stderr or stdout. Test case will fail if
     /// the output is longer than this.
     pub max_output: usize,
+
+    /// Truncate captured output that exceeds this length when showing it in
+    /// the formatted markdown.
+    pub truncate_len: usize,
 
     /// The directory in which this runner will place artifacts. E.g. cloned
     /// git repositories here, input files for test cases, etc. This directory
@@ -175,8 +179,8 @@ pub enum TestResult {
 pub struct TestFailureDetails {
     message: Option<String>,
     mismatch_code: Option<(i32, i32)>,
-    mismatch_stdout: Option<(String, String)>,
-    mismatch_stderr: Option<(String, String)>,
+    mismatch_stdout: Option<(String, Vec<String>)>,
+    mismatch_stderr: Option<(String, Vec<String>)>,
     captured_code: Option<i32>,
     captured_stdout: Option<String>,
     captured_stderr: Option<String>,
@@ -552,6 +556,7 @@ impl TestRunnerHandle {
             mount_repo: settings.runner.mount_repo.clone(),
             mount_tests: settings.runner.mount_tests.clone(),
             max_output: tests.default.max_output,
+            truncate_len: tests.default.truncate_len,
             workspace: workspace_dir,
             submission_id: sub.id,
             repo_dir: repo_dir,
@@ -956,10 +961,10 @@ impl TestRunnerHandle {
                     },
                     capture_stdout: true,
                     expect_code: Some(conf.code),
-                    stderr_expect: if conf.ignore_stderr {
+                    stderr_expect_alternatives: if conf.ignore_stderr {
                         None
                     } else {
-                        Some(conf.stderr.to_owned())
+                        Some(vec![conf.stderr.to_owned()])
                     },
                     stderr_trim: conf.trim_stderr,
                     stderr_rm_whitespace: conf.strip_whitespace_stderr,
@@ -1024,17 +1029,21 @@ impl TestRunnerHandle {
                     },
                     capture_stdout: false,
                     expect_code: Some(conf.code),
-                    stdout_expect: if conf.ignore_stdout {
+                    stdout_expect_alternatives: if conf.ignore_stdout {
                         None
                     } else {
-                        Some(conf.stdout.to_owned())
+                        let mut alternatives = vec![conf.stdout.to_owned()];
+                        alternatives.extend_from_slice(conf.stdout_alternatives.as_slice());
+                        Some(alternatives)
                     },
                     stdout_trim: conf.trim_stdout,
                     stdout_rm_whitespace: conf.strip_whitespace_stdout,
-                    stderr_expect: if conf.ignore_stderr {
+                    stderr_expect_alternatives: if conf.ignore_stderr {
                         None
                     } else {
-                        Some(conf.stderr.to_owned())
+                        let mut alternatives = vec![conf.stderr.to_owned()];
+                        alternatives.extend_from_slice(conf.stderr_alternatives.as_slice());
+                        Some(alternatives)
                     },
                     stderr_trim: conf.trim_stderr,
                     stderr_rm_whitespace: conf.strip_whitespace_stderr,
@@ -1364,10 +1373,10 @@ struct RunSolutionArgs {
     stdin: Option<String>,
     capture_stdout: bool,
     expect_code: Option<i32>,
-    stdout_expect: Option<String>,
+    stdout_expect_alternatives: Option<Vec<String>>,
     stdout_trim: bool,
     stdout_rm_whitespace: bool,
-    stderr_expect: Option<String>,
+    stderr_expect_alternatives: Option<Vec<String>>,
     stderr_trim: bool,
     stderr_rm_whitespace: bool,
     infile_path: Option<String>,
@@ -1384,10 +1393,10 @@ impl Default for RunSolutionArgs {
             stdin: None,
             capture_stdout: false,
             expect_code: None,
-            stdout_expect: None,
+            stdout_expect_alternatives: None,
             stdout_trim: false,
             stdout_rm_whitespace: false,
-            stderr_expect: None,
+            stderr_expect_alternatives: None,
             stderr_trim: false,
             stderr_rm_whitespace: false,
             infile_path: None,
@@ -1462,17 +1471,21 @@ impl TestRunnerHandle {
                         None
                     }
                 });
-                let stdout_status = match args.stdout_expect {
-                    Some(expect_stdout) => {
-                        if treat_output(
-                            &output.stdout,
-                            args.stdout_trim,
-                            args.stdout_rm_whitespace,
-                        )? != treat_output(
-                            &expect_stdout,
-                            args.stdout_trim,
-                            args.stdout_rm_whitespace,
-                        )? {
+                let stdout_status = match args.stdout_expect_alternatives {
+                    Some(expect_stdout_alternatives) => {
+                        let mut found_match = false;
+                        for alt_stdout in expect_stdout_alternatives.iter() {
+                            found_match |= treat_output(
+                                &output.stdout,
+                                args.stdout_trim,
+                                args.stdout_rm_whitespace,
+                            )? == treat_output(
+                                &alt_stdout,
+                                args.stdout_trim,
+                                args.stdout_rm_whitespace,
+                            )?;
+                        }
+                        if !found_match {
                             if args.stdout_rm_whitespace {
                                 msgs.push(
                                     "Whitespaces are ignored on standard output.".to_string(),
@@ -1480,30 +1493,40 @@ impl TestRunnerHandle {
                             } else if args.stdout_trim {
                                 msgs.push("Leading and trailing whitespaces are ignored on standard output.".to_string());
                             }
-                            Some((output.stdout.to_owned(), expect_stdout.to_owned()))
+                            Some((
+                                output.stdout.to_owned(),
+                                expect_stdout_alternatives.to_owned(),
+                            ))
                         } else {
                             None
                         }
                     }
                     None => None,
                 };
-                let stderr_status = match args.stderr_expect {
-                    Some(expect_stderr) => {
-                        if treat_output(
-                            &output.stderr,
-                            args.stderr_trim,
-                            args.stderr_rm_whitespace,
-                        )? != treat_output(
-                            &expect_stderr,
-                            args.stderr_trim,
-                            args.stderr_rm_whitespace,
-                        )? {
+                let stderr_status = match args.stderr_expect_alternatives {
+                    Some(expect_stderr_alternatives) => {
+                        let mut found_match = false;
+                        for alt_stderr in expect_stderr_alternatives.iter() {
+                            found_match |= treat_output(
+                                &output.stderr,
+                                args.stderr_trim,
+                                args.stderr_rm_whitespace,
+                            )? == treat_output(
+                                &alt_stderr,
+                                args.stderr_trim,
+                                args.stderr_rm_whitespace,
+                            )?;
+                        }
+                        if !found_match {
                             if args.stderr_rm_whitespace {
                                 msgs.push("Whitespaces are ignored on standard error.".to_string());
                             } else if args.stderr_trim {
                                 msgs.push("Leading and trailing whitespaces are ignored on standard error.".to_string());
                             }
-                            Some((output.stderr.to_owned(), expect_stderr.to_owned()))
+                            Some((
+                                output.stderr.to_owned(),
+                                expect_stderr_alternatives.to_owned(),
+                            ))
                         } else {
                             None
                         }
@@ -1795,7 +1818,7 @@ impl TestRunnerHandle {
                             } else if args.stdout_trim {
                                 msgs.push("Leading and trailing whitespaces are ignored on standard output.".to_string());
                             }
-                            Some((output.stdout.to_owned(), expect_stdout.to_owned()))
+                            Some((output.stdout.to_owned(), vec![expect_stdout.to_owned()]))
                         } else {
                             None
                         }
@@ -1818,7 +1841,7 @@ impl TestRunnerHandle {
                             } else if args.stderr_trim {
                                 msgs.push("Leading and trailing whitespaces are ignored on standard error.".to_string());
                             }
-                            Some((output.stderr.to_owned(), expect_stderr.to_owned()))
+                            Some((output.stderr.to_owned(), vec![expect_stderr.to_owned()]))
                         } else {
                             None
                         }
@@ -2044,8 +2067,8 @@ impl TestRunnerHandle {
         test: &Test,
         message: &Option<String>,
         mismatch_code: &Option<(i32, i32)>,
-        mismatch_stdout: &Option<(String, String)>,
-        mismatch_stderr: &Option<(String, String)>,
+        mismatch_stdout: &Option<(String, Vec<String>)>,
+        mismatch_stderr: &Option<(String, Vec<String>)>,
         captured_code: &Option<i32>,
         captured_stdout: &Option<String>,
         captured_stderr: &Option<String>,
@@ -2157,18 +2180,34 @@ impl TestRunnerHandle {
 
         if let Some((recv_stdout, expected_stdout)) = mismatch_stdout {
             msg.push_str("\n\n### Standard Output Mismatch\n\n");
-            msg.push_str("Expected stdout:\n\n");
-            msg.push_str(&md_preformatted(expected_stdout));
-            msg.push_str("\n\nReceived stdout:\n\n");
-            msg.push_str(&md_preformatted(recv_stdout));
+            msg.push_str("**Expected stdout:**\n\n");
+            msg.push_str(
+                &expected_stdout
+                    .iter()
+                    .map(md_preformatted)
+                    .join("\n\nor\n\n"),
+            );
+            msg.push_str("\n\n**Received stdout:**\n\n");
+            msg.push_str(&md_preformatted_with_truncation(
+                recv_stdout,
+                Some(self.truncate_len),
+            ));
         }
 
         if let Some((recv_stderr, expected_stderr)) = mismatch_stderr {
             msg.push_str("\n\n### Standard Error Mismatch\n\n");
-            msg.push_str("Expected stderr:\n\n");
-            msg.push_str(&md_preformatted(expected_stderr));
-            msg.push_str("\n\nReceived stderr:\n\n");
-            msg.push_str(&md_preformatted(recv_stderr));
+            msg.push_str("**Expected stderr:**\n\n");
+            msg.push_str(
+                &expected_stderr
+                    .iter()
+                    .map(md_preformatted)
+                    .join("\n\nor\n\n"),
+            );
+            msg.push_str("\n\n**Received stderr:**\n\n");
+            msg.push_str(&md_preformatted_with_truncation(
+                recv_stderr,
+                Some(self.truncate_len),
+            ));
         }
 
         if let Some(code) = captured_code {
@@ -2178,17 +2217,26 @@ impl TestRunnerHandle {
 
         if let Some(stdout) = captured_stdout {
             msg.push_str("\n\n### Captured Standard Output\n\n");
-            msg.push_str(&md_preformatted(stdout));
+            msg.push_str(&md_preformatted_with_truncation(
+                stdout,
+                Some(self.truncate_len),
+            ));
         }
 
         if let Some(stderr) = captured_stderr {
             msg.push_str("\n\n### Captured Standard Error\n\n");
-            msg.push_str(&md_preformatted(stderr));
+            msg.push_str(&md_preformatted_with_truncation(
+                stderr,
+                Some(self.truncate_len),
+            ));
         }
 
         if let Some(asm) = generated_asm {
             msg.push_str("\n\n### Generated Assembly\n\n");
-            msg.push_str(&md_preformatted(asm));
+            msg.push_str(&md_preformatted_with_truncation(
+                asm,
+                Some(self.truncate_len),
+            ));
         }
 
         additional_md_details.push(msg);

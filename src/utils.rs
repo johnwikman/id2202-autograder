@@ -45,16 +45,53 @@ pub fn single_linefeed_to_space<S: AsRef<str>>(s: S) -> String {
 /// as verbatim, making sure to escape parts that could otherwise be
 /// interpreted as HTML.
 pub fn md_preformatted<S: AsRef<str>>(s: S) -> String {
+    md_preformatted_with_truncation(s, None)
+}
+
+/// Returns a markdown preformatted block <pre> containing the provided text s
+/// as verbatim, making sure to escape parts that could otherwise be
+/// interpreted as HTML.
+pub fn md_preformatted_with_truncation<S: AsRef<str>>(s: S, truncate: Option<usize>) -> String {
     let mut ret_str = String::new();
     ret_str.push_str("<pre>\n");
-    for c in s.as_ref().chars() {
-        match c {
-            '<' => ret_str.push_str("&lt;"),
-            '>' => ret_str.push_str("&gt;"),
-            '&' => ret_str.push_str("&amp;"),
-            _ => ret_str.push(c),
+
+    fn push_escape(ret_str: &mut String, src: &str) {
+        for c in src.chars() {
+            match c {
+                '<' => ret_str.push_str("&lt;"),
+                '>' => ret_str.push_str("&gt;"),
+                '&' => ret_str.push_str("&amp;"),
+                _ => ret_str.push(c),
+            }
         }
     }
+
+    let s = s.as_ref();
+    let l = s.len();
+    if let Some(offset) = truncate {
+        let half_offset = offset.div_ceil(2);
+        match if let Some(half_rev_offset) = s.len().checked_sub(half_offset) {
+            (
+                s.split_at_checked(half_offset),
+                s.split_at_checked(half_rev_offset),
+                offset < l,
+            )
+        } else {
+            (None, None, false)
+        } {
+            (Some(l_split), Some(r_split), true) => {
+                push_escape(&mut ret_str, l_split.0);
+                ret_str.push_str("\n...\nTRUNCATED\n...\n");
+                push_escape(&mut ret_str, r_split.1);
+            }
+            _ => {
+                push_escape(&mut ret_str, s);
+            }
+        }
+    } else {
+        push_escape(&mut ret_str, s);
+    }
+
     ret_str.push_str("\n</pre>");
     ret_str
 }
@@ -276,11 +313,14 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         max_stdout_length: usize,
         max_stderr_length: usize,
     ) -> Result<Option<ExitStatus>, Error> {
-        let mut read_buf: [u8; 4096] = [0u8; 4096];
+        static BUFFER_SIZE: usize = 4096;
+        static EVENT_CAPACITY: usize = 1024;
+
+        let mut read_buf = [0u8; BUFFER_SIZE];
 
         let mut poll = mio::Poll::new()
             .inspect_err(|e| log::error!("Received error when registering stderr: {e}"))?;
-        let mut events = mio::Events::with_capacity(1024);
+        let mut events = mio::Events::with_capacity(EVENT_CAPACITY);
 
         if let Some(f) = &handle.stdout {
             poll.registry()
@@ -343,7 +383,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
                     if buf_stdout.len() > max_stdout_length {
                         return Err(Error::SyscommandOutputLimitExceededError(max_stdout_length));
                     }
-                    if l < 4096 {
+                    if l < BUFFER_SIZE {
                         break;
                     }
                 }
@@ -355,7 +395,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
                     if buf_stderr.len() > max_stderr_length {
                         return Err(Error::SyscommandOutputLimitExceededError(max_stderr_length));
                     }
-                    if l < 4096 {
+                    if l < BUFFER_SIZE {
                         break;
                     }
                 }
@@ -457,6 +497,36 @@ mod tests {
     }
 
     #[test]
+    fn test_md_preformatted_truncated() {
+        assert_that!(md_preformatted_with_truncation("foo", Some(3)))
+            .is_equal_to("<pre>\nfoo\n</pre>");
+
+        assert_that!(md_preformatted_with_truncation(
+            "int foo() {return 1 < 2;}",
+            Some(400)
+        ))
+        .is_equal_to("<pre>\nint foo() {return 1 &lt; 2;}\n</pre>");
+
+        assert_that!(md_preformatted_with_truncation(
+            "bool bar(int x) {\n  return x < 2 && x >= 2;\n}",
+            Some(400)
+        ))
+        .is_equal_to(
+            "<pre>\nbool bar(int x) {\n  return x &lt; 2 &amp;&amp; x &gt;= 2;\n}\n</pre>",
+        );
+
+        // Actual splits
+        assert_that!(md_preformatted_with_truncation("foo", Some(2)))
+            .is_equal_to("<pre>\nf\n...\nTRUNCATED\n...\no\n</pre>");
+
+        assert_that!(md_preformatted_with_truncation(
+            "int foo() {return 1 < 2;}",
+            Some(12)
+        ))
+        .is_equal_to("<pre>\nint fo\n...\nTRUNCATED\n...\n &lt; 2;}\n</pre>");
+    }
+
+    #[test]
     fn test_mimetype() {
         {
             let mut f = tempfile::NamedTempFile::new().unwrap();
@@ -485,6 +555,44 @@ mod tests {
             .ok()
             .mapping(|s| &s.stdout)
             .is_equal_to("foo\n");
+    }
+
+    #[test]
+    fn test_syscommand_lots_of_output() {
+        let ret = syscommand_timeout(
+            [
+                "bash",
+                "-c",
+                "for i in $(seq 1 400); do echo 0123456789qwerty; done",
+            ],
+            SyscommandSettings {
+                max_stdout_length: Some(1024 * 1024),
+                ..Default::default()
+            },
+        );
+        assert_that!(&ret).is_ok();
+        assert_that!(&ret)
+            .ok()
+            .mapping(|s| &s.stdout)
+            .is_equal_to(&"0123456789qwerty\n".repeat(400));
+    }
+
+    #[test]
+    fn test_syscommand_stdin() {
+        let example_stdin = "0123456789qwertyFOO_BAR".repeat(400);
+        let ret = syscommand_timeout(
+            ["cat"],
+            SyscommandSettings {
+                max_stdout_length: Some(1024 * 1024),
+                stdin: Some(example_stdin.clone()),
+                ..Default::default()
+            },
+        );
+        assert_that!(&ret).is_ok();
+        assert_that!(&ret)
+            .ok()
+            .mapping(|s| &s.stdout)
+            .is_equal_to(&example_stdin);
     }
 
     #[test]

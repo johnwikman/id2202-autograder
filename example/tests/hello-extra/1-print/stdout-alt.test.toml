@@ -1,0 +1,9 @@
+description = """
+Checks that hello world or foo is printed to stdout.
+"""
+
+[test.options]
+args = ["--stdout"]
+stdout = "Foo"
+stderr = ""
+stdout_alternatives = ["Hello, World!"]

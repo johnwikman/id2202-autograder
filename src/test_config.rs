@@ -18,10 +18,12 @@ pub struct TestkindBaseRun {
     pub trim_stdout: bool,
     pub strip_whitespace_stdout: bool,
     pub stdout: String,
+    pub stdout_alternatives: Vec<String>,
     pub ignore_stderr: bool,
     pub trim_stderr: bool,
     pub strip_whitespace_stderr: bool,
     pub stderr: String,
+    pub stderr_alternatives: Vec<String>,
 }
 
 /// Configuration for running the build binary and checking its output.
@@ -151,6 +153,9 @@ pub struct TestDefault {
 
     /// Maximum output characters on stdout and stderr for a test case.
     pub max_output: usize,
+
+    /// Truncate output that exceeds this length.
+    pub truncate_len: usize,
 
     /// Number of failed tests to show to the student.
     pub shown_failures: usize,

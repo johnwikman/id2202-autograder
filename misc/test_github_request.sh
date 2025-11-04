@@ -6,7 +6,7 @@ if [ $# != 1 ]; then
 fi
 
 COMMIT_HASH="$1"
-MESSAGE="#hello"
+MESSAGE="#hello-all"
 
 ORG="ID2202-jwikman-test"
 REPO="id2202-testgrader"

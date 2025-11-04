@@ -2,7 +2,7 @@ name: id2202-autograder
 
 services:
   autograder:
-    image: localhost/id2202-autograder:1.0.1
+    image: localhost/id2202-autograder:1.1.0
     depends_on:
       - postgres
     restart: unless-stopped
