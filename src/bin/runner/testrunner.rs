@@ -1248,13 +1248,17 @@ impl TestRunnerHandle {
                         gh_markdown.push_str(&format!("\n\nExit code: `{c}`"));
                     }
                     if let Some(stdout) = captured_stdout {
-                        gh_markdown.push_str(&format!(
-                            "\n\n### Captured Standard Output\n\n```\n{stdout}\n```"
+                        gh_markdown.push_str("\n\n### Captured Standard Output\n\n");
+                        gh_markdown.push_str(&md_preformatted_with_truncation(
+                            stdout,
+                            Some(self.truncate_len),
                         ));
                     }
                     if let Some(stderr) = captured_stderr {
-                        gh_markdown.push_str(&format!(
-                            "\n\n### Captured Standard Error\n\n```\n{stderr}\n```"
+                        gh_markdown.push_str("\n\n### Captured Standard Error\n\n");
+                        gh_markdown.push_str(&md_preformatted_with_truncation(
+                            stderr,
+                            Some(self.truncate_len),
                         ));
                     }
                     tag_json["reason"] = "build failed".into();
@@ -1285,13 +1289,17 @@ impl TestRunnerHandle {
                         self.md_settings.symbol_build
                     ));
                     if let Some(stdout) = captured_stdout {
-                        gh_markdown.push_str(&format!(
-                            "\n\n### Captured Standard Output\n\n```\n{stdout}\n```"
+                        gh_markdown.push_str("\n\n### Captured Standard Output\n\n");
+                        gh_markdown.push_str(&md_preformatted_with_truncation(
+                            stdout,
+                            Some(self.truncate_len),
                         ));
                     }
                     if let Some(stderr) = captured_stderr {
-                        gh_markdown.push_str(&format!(
-                            "\n\n### Captured Standard Error\n\n```\n{stderr}\n```"
+                        gh_markdown.push_str("\n\n### Captured Standard Error\n\n");
+                        gh_markdown.push_str(&md_preformatted_with_truncation(
+                            stderr,
+                            Some(self.truncate_len),
                         ));
                     }
                     tag_json["reason"] = "build timed out".into();
