@@ -15,6 +15,8 @@ services:
       - "label=disable"
       - "seccomp=unconfined"
     privileged: true
+    # "init" is crucial to reap subprocesses spawned by the autograder
+    init: true
     ports:
       - "8080:8080"
     volumes:
