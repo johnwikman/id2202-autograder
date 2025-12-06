@@ -313,8 +313,9 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         max_stdout_length: usize,
         max_stderr_length: usize,
     ) -> Result<Option<ExitStatus>, Error> {
-        static BUFFER_SIZE: usize = 4096;
+        static BUFFER_SIZE: usize = 4096 * 1024;
         static EVENT_CAPACITY: usize = 1024;
+        static POLL_DURATION: Duration = Duration::from_millis(10);
 
         let mut read_buf = [0u8; BUFFER_SIZE];
 
@@ -344,7 +345,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         let mut stat = None;
 
         while SystemTime::now() < end_time && stat.is_none() {
-            poll.poll(&mut events, Some(Duration::from_millis(100)))?;
+            poll.poll(&mut events, Some(POLL_DURATION))?;
 
             for event in &events {
                 if event.token() == mio::Token(1) {
