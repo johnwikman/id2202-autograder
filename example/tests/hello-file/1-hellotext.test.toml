@@ -4,5 +4,4 @@ Checks that the file "hello.txt" file exists.
 
 [test.options]
 path = "hello.txt"
-ignore_mimetype = false
 mimetype_prefix = "text/plain"

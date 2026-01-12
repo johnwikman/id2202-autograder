@@ -1,6 +1,5 @@
 name = "ID2202 Autograder"
 version = "3"
-temp_dir = "/tmp/id2202_autograder/temp"
 
 # All paths are relative to this file, not where the binary is being run from.
 
@@ -15,22 +14,27 @@ poll_interval_seconds = 30
 
 # Process notification settings
 [notify]
-path = "/tmp/id2202_autograder/proc.notify"
 poll_timeout_millisec = 5000
 
-# Information about the github that jobs will be submitted from
-[github]
-address = "gits-15.sys.kth.se"
-org = "ID2202-jwikman-test"
-allow_any_org = false
+# Configuration for incoming submissions
+[submission]
+max_tag_length = 128
+
+# Information about GitHub instances that can submit grading jobs
+[submission.github]
+webhook_secret = "s3cr3t"
+max_payload = 65536
+comment_signature = "(_This is an automated response from the autograder_ \U0001F916)"
+
+# Known GitHub servers that we can accept requests from
+[[submission.github.known_instances]]
+domain = "gits-15.sys.kth.se"
+auth_token = "ChangeMe"
+allowed_orgs = ["ID2202-jwikman-test"]
 allowed_repo_prefixes = ["id2202-"]
 allowed_repo_suffixes = []
 prohibited_repo_prefixes = []
 prohibited_repo_suffixes = ["-shadow"]
-auth_token = "ChangeMe"
-webhook_secret = "s3cr3t"
-max_payload = 65536
-comment_signature = "(_This is an automated response from the autograder_ \U0001F916)"
 
 # Postgres configuration
 [postgres]
@@ -58,12 +62,16 @@ mount_repo = "/id2202/repo"
 mount_tests = "/id2202/tests"
 
 workspace_dir = "./data/workspace" # storage for data currently being worked on
+shadow_dir = "./data/shadow"       # storage for submitted solutions
 test_config = "./tests/tests.toml" # configuration for test cases
 
-# Symbols and text used in the Markdown output
-[runner.md_settings]
+# Settings for markdown output during reporting.
+[reporting.markdown]
 symbol_ok = "\u2705"             # ✅
 symbol_skipped = "\u2753"        # ❓
 symbol_failed = "\u274C"         # ❌
 symbol_tagsuccess = "\U0001F389" # 🎉
 symbol_build = "\U0001F6A7"      # 🚧
+show_indicator_submission_header = false
+show_indicator_tag_header = true
+truncate_len = 2000

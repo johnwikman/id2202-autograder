@@ -1,15 +1,22 @@
 // Connection and schema modification utilities
 
 use diesel::{
-    self, Connection, ExpressionMethods, PgConnection, QueryDsl, RunQueryDsl, SelectableHelper,
+    self, Connection, ExpressionMethods, OptionalExtension, PgConnection, QueryDsl, RunQueryDsl,
+    SelectableHelper,
 };
+use num_traits::FromPrimitive;
+use rand::Rng;
 use std::time::SystemTime;
 
 use crate::{
-    db::models::{NewGitHubSubmission, Submission, SubmissionStatusCode},
+    config::Settings,
+    db::models::{
+        NewSubmission, Submission, SubmissionInfo, SubmissionInfoGitHub, SubmissionSource,
+        SubmissionSourceGitHub, SubmissionSourceKind, SubmissionStatusCode,
+    },
     error::Error,
     github,
-    settings::Settings,
+    reporting::Report,
 };
 
 pub struct DatabaseConnection {
@@ -26,113 +33,238 @@ impl DatabaseConnection {
 
         log::debug!("Connecting to postgres database with \"{}\"", conn_string);
         let conn = PgConnection::establish(&conn_string).map_err(|e| {
-            log::error!("Failed to connect to database: {e}");
-            Error::from(e)
+            log::error!("Failed to connect to database: {e:#}");
+            Error::auto_msg("failed to connect to database", e)
         })?;
 
         log::debug!("Connection established.");
         Ok(DatabaseConnection { conn: conn })
     }
 
+    /// Notifies all listeners on the channel `ch`. This does not include any
+    /// payload in the notification.
+    ///
+    /// Warning: The value for `ch` can never come from a user as that will be
+    /// hardcoded into the query.
+    ///
+    /// See this link for more information about `NOTIFY`:
+    /// https://www.postgresql.org/docs/current/sql-notify.html
+    pub fn notify<S: AsRef<str>>(&mut self, ch: S) -> Result<(), Error> {
+        // Check that the channel is only ASCII alphabet chars
+        if !ch.as_ref().bytes().all(|c| c.is_ascii_alphabetic()) {
+            return Error::err_format("notify channel", ch.as_ref());
+        }
+
+        diesel::sql_query(&format!("NOTIFY {};", ch.as_ref()))
+            .execute(&mut self.conn)
+            .map_err(|e| {
+                Error::auto_msg(format!("could not notify channel \"{}\"", ch.as_ref()), e)
+            })?;
+        Ok(())
+    }
+
     /// Registers an incoming GitHub submission in the database.
+    ///
+    /// ## Warning about Race Conditions
+    /// This may return an error if two threads attempt to register a
+    /// submission with the same `domain`, `org`, and `repo` values at the same
+    /// time.
     pub fn register_github_submission(
         &mut self,
-        s: &Settings,
-        grading_tags: &Vec<String>,
+        grading_tags: &Vec<&str>,
+        domain: &str,
         user: &str,
         org: &str,
         repo: &str,
         commit: &str,
     ) -> Result<i64, Error> {
-        use crate::db::schema::submissions;
-
-        let sub = NewGitHubSubmission {
-            date_submitted: std::time::SystemTime::now(),
-            grading_tags: grading_tags.join(";"),
-            exec_finished: false,
-            exec_status_code: SubmissionStatusCode::NotStarted as i32,
-            github_address: s.github.address.clone(),
-            github_org: org.to_string(),
-            github_repo: repo.to_string(),
-            github_user: user.to_string(),
-            github_commit: commit.to_string(),
-        };
-        let ret: Submission = diesel::insert_into(submissions::table)
-            .values(&sub)
-            .returning(Submission::as_returning())
-            .get_result(&mut self.conn)
-            .map_err(|e: diesel::result::Error| {
-                log::error!("Could not insert new submission into database: {e}");
-                Error::from(e)
-            })?;
-
-        Ok(ret.id)
-    }
-
-    /// Return all the submissions in the database, sorted by submission date.
-    ///
-    /// Can optionally set a date using `since` for how far back to look. Can
-    /// also limit the number of responses using the `limit` argument.
-    pub fn get_submissions(
-        &mut self,
-        since: Option<&SystemTime>,
-        limit: Option<i64>,
-    ) -> Result<Vec<Submission>, Error> {
-        use crate::db::schema::submissions::{self, date_submitted};
-
-        let base_q = submissions::table
-            .select(Submission::as_select())
-            .order(date_submitted.asc());
-
-        let q_result = match (since, limit) {
-            (Some(t), Some(l)) => base_q
-                .filter(date_submitted.ge(t))
-                .limit(l)
-                .load(&mut self.conn),
-            (Some(t), None) => base_q.filter(date_submitted.ge(t)).load(&mut self.conn),
-            (None, Some(l)) => base_q.limit(l).load(&mut self.conn),
-            _ => base_q.load(&mut self.conn),
+        use crate::db::{
+            models::{NewSubmissionInfoGitHub, SubmissionSourceGitHub},
+            schema::{submission_info_github, submissions},
         };
 
-        let ret: Vec<Submission> = q_result.map_err(|e: diesel::result::Error| {
-            log::error!("Could not get submissions from database: {e}");
-            Error::from(e)
+        // Make sure that this happens as a single transaction, unrolling it on
+        // an error.
+        //
+        // TODO:
+        // Fix the race condition where two threads are inserting at the same
+        // time, one inserts and the other gets None back. The one who gets
+        // None back will select, but cannot find the submission source since
+        // that has not yet been created. Somehow needs to do both inserts
+        // atomically or lock the table somehow.
+        //
+        // The consequence of this is that this function will return an error,
+        // but the database will remain in good health. So it is not fatal from
+        // a server perspective, but it is an annoying edge case.
+        let (src, gh_src) = self.conn.transaction(|conn| {
+            use crate::db::{
+                models::{
+                    NewSubmissionSource, NewSubmissionSourceGitHub,
+                },
+                schema::{
+                    submission_source_github::{self, columns as ghsrc_col},
+                    submission_sources::{self, columns as src_col},
+                },
+            };
+            let ghsrc_insert_check = diesel::insert_into(submission_source_github::table)
+                .values(NewSubmissionSourceGitHub {
+                    domain: domain.to_string(),
+                    org: org.to_string(),
+                    repo: repo.to_string(),
+                })
+                .on_conflict_do_nothing()
+                .returning(SubmissionSourceGitHub::as_returning())
+                .get_result(conn)
+                .optional()?;
+
+            if let Some(new_gh_src) = ghsrc_insert_check {
+                // Inserted a new row into the GitHub submissions, so need to
+                // insert a row into the submission_source table too. Also
+                // generate a random auth_key for this source.
+                let mut key: Vec<u8> = vec![0u8; 32];
+                rand::rng().fill_bytes(key.as_mut_slice());
+
+                let src = diesel::insert_into(submission_sources::table)
+                    .values(NewSubmissionSource {
+                        kind: SubmissionSourceKind::GitHub as i32,
+                        kind_id: new_gh_src.id,
+                        auth_key: bs58::encode(key).into_string(),
+                    })
+                    .returning(SubmissionSource::as_returning())
+                    .get_result(conn)
+                    .inspect_err(|e: &diesel::result::Error| {
+                        log::error!(
+                                "Could not insert a submission source for GitHub source id {}: {}",
+                                new_gh_src.id,
+                            e,
+                        )
+                    })?;
+
+                Ok::<_, diesel::result::Error>((src, new_gh_src))
+            } else {
+                let gh_src = submission_source_github::table
+                    .select(SubmissionSourceGitHub::as_select())
+                    .filter(ghsrc_col::domain.eq(domain))
+                    .filter(ghsrc_col::org.eq(org))
+                    .filter(ghsrc_col::repo.eq(repo))
+                    .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitHub source in the database with {} {} {}: {}", domain, org, repo, e)})?;
+
+                let src = submission_sources::table
+                    .select(SubmissionSource::as_select())
+                    .filter(src_col::kind.eq(SubmissionSourceKind::GitHub as i32))
+                    .filter(src_col::kind_id.eq(gh_src.id))
+                    .first(conn)
+                    .inspect_err(|e: &diesel::result::Error| {
+                        log::error!("Expected to find a submission source referencing GitHub source with id {}: {}", gh_src.id, e)
+                    })?;
+
+                Ok((src, gh_src))
+            }
         })?;
 
-        Ok(ret)
+        // Atomically execute the insert into the database, ensuring that we
+        // roll back both the submission and source info on failure.
+        self.conn.transaction(|conn| {
+            let sub: Submission = diesel::insert_into(submissions::table)
+                .values(NewSubmission {
+                    date_submitted: std::time::SystemTime::now(),
+                    grading_tags: grading_tags.join(";"),
+                    exec_finished: false,
+                    exec_status_code: SubmissionStatusCode::NotStarted as i32,
+                    source_id: src.id,
+                })
+                .returning(Submission::as_returning())
+                .get_result(conn)
+                .map_err(|e: diesel::result::Error| {
+                    log::error!("Could not insert new submission into database: {e}");
+                    Error::auto_msg("could not insert new submission into database", e)
+                })?;
+
+            diesel::insert_into(submission_info_github::table)
+                .values(NewSubmissionInfoGitHub {
+                    submission_id: sub.id,
+                    github_source_id: gh_src.id,
+                    commit: commit.to_string(),
+                    user: user.to_string(),
+                })
+                .execute(conn)
+                .map_err(|e: diesel::result::Error| {
+                    log::error!("Could not insert GitHub info into database: {e}");
+                    Error::auto_msg("could not insert new submission into database", e)
+                })?;
+
+            Ok(sub.id)
+        })
     }
 
-    /// Returns the submission with the specified submission id.
-    pub fn get_submission(&mut self, sub_id: i64) -> Result<Submission, Error> {
-        use crate::db::schema::submissions::{self, id};
+    /// Returns all information submission with the specified submission id.
+    pub fn get_submission_info(&mut self, sub_id: i64) -> Result<SubmissionInfo, Error> {
+        use crate::db::schema::{
+            submission_info_github::{self, columns as ghinfo_col},
+            submission_source_github::{self, columns as ghsrc_col},
+            submission_sources::{self, columns as subsrc_col},
+            submissions::{self, columns as sub_col},
+        };
 
-        let ret: Submission = submissions::table
+        // TODO: Here we should do a join, instead 4 separate queries...
+
+        let sub: Submission = submissions::table
             .select(Submission::as_select())
-            .filter(id.eq(sub_id))
+            .filter(sub_col::id.eq(sub_id))
             .first(&mut self.conn)
             .map_err(|e: diesel::result::Error| {
-                log::error!("Could not get submission from database: {e}");
-                Error::from(e)
+                Error::auto_msg(
+                    format!("could not get submission {sub_id} from database"),
+                    e,
+                )
             })?;
 
-        Ok(ret)
+        let src: SubmissionSource = submission_sources::table
+            .select(SubmissionSource::as_select())
+            .filter(subsrc_col::id.eq(sub.source_id))
+            .first(&mut self.conn)?;
+
+        match SubmissionSourceKind::from_i32(src.kind) {
+            Some(SubmissionSourceKind::GitHub) => {
+                let gh_src = submission_source_github::table
+                    .select(SubmissionSourceGitHub::as_select())
+                    .filter(ghsrc_col::id.eq(src.kind_id))
+                    .first(&mut self.conn)?;
+
+                let gh_info = submission_info_github::table
+                    .select(SubmissionInfoGitHub::as_select())
+                    .filter(ghinfo_col::submission_id.eq(sub.id))
+                    .filter(ghinfo_col::github_source_id.eq(gh_src.id))
+                    .first(&mut self.conn)?;
+
+                Ok(SubmissionInfo::GitHub {
+                    sub: sub,
+                    src: src,
+                    gh_src: gh_src,
+                    gh_info: gh_info,
+                })
+            }
+            None => Error::err_runtime(format!(
+                "Invalid source kind {} for submission source with id {}",
+                src.kind, src.id
+            )),
+        }
     }
 
     /// Return all the queued submissions in the database, oldest first
     pub fn queued_submissions(&mut self) -> Result<Vec<Submission>, Error> {
         use crate::db::schema::submissions::{
-            self, assigned_runner, date_submitted, exec_finished,
+            self, assigned_runner_id, date_submitted, exec_finished,
         };
 
         let ret: Vec<Submission> = submissions::table
             .select(Submission::as_select())
             .filter(exec_finished.eq(false))
-            .filter(assigned_runner.is_null())
+            .filter(assigned_runner_id.is_null())
             .order(date_submitted.asc())
             .load(&mut self.conn)
             .map_err(|e: diesel::result::Error| {
-                log::error!("Could not get queued submissions from database: {e}");
-                Error::from(e)
+                Error::auto_msg("could not get queued submissions from database", e)
             })?;
 
         Ok(ret)
@@ -159,17 +291,17 @@ impl DatabaseConnection {
                 WHERE
                     s2.exec_finished = false
                 AND
-                    s2.assigned_runner IS NULL
+                    s2.assigned_runner_id IS NULL
                 AND
-                    -- Make sure that the user isn't already being graded.
-                    s2.github_repo NOT IN (
-                        SELECT s3.github_repo FROM submissions AS s3
-                        WHERE
-                            s3.exec_finished = false
-                        AND
-                            s3.assigned_runner IS NOT NULL
-                        FOR UPDATE
-                    )
+                  -- Make sure that something from this source isn't already being graded.
+                  s2.source_id NOT IN (
+                      SELECT s3.source_id FROM submissions AS s3
+                      WHERE
+                          s3.exec_finished = false
+                      AND
+                          s3.assigned_runner_id IS NOT NULL
+                      FOR UPDATE
+                  )
                 ORDER BY date_submitted ASC
                 LIMIT 1
                 -- This below is important to ensure that is gets executed
@@ -177,7 +309,7 @@ impl DatabaseConnection {
                 FOR UPDATE
             )
             UPDATE submissions s
-            SET assigned_runner = {runner_id}
+            SET assigned_runner_id = {runner_id}
               FROM queued_entries AS qe
               WHERE s.id = qe.id
 
@@ -186,8 +318,10 @@ impl DatabaseConnection {
         ))
         .get_results(&mut self.conn)
         .map_err(|e: diesel::result::Error| {
-            log::error!("Error updating the database: {e}");
-            Error::from(e)
+            Error::auto_msg(
+                format!("error assigning a submission to runner {runner_id}"),
+                e,
+            )
         })?;
 
         // This should always return some by this stage...
@@ -198,18 +332,20 @@ impl DatabaseConnection {
     /// with the provided runner id.
     pub fn active_submissions(&mut self, runner_id: i32) -> Result<Vec<Submission>, Error> {
         use crate::db::schema::submissions::{
-            self, assigned_runner, date_submitted, exec_finished,
+            self, assigned_runner_id, date_submitted, exec_finished,
         };
 
         let ret: Vec<Submission> = submissions::table
             .select(Submission::as_select())
             .filter(exec_finished.eq(false))
-            .filter(assigned_runner.eq(runner_id))
+            .filter(assigned_runner_id.eq(runner_id))
             .order(date_submitted.asc())
             .load(&mut self.conn)
             .map_err(|e: diesel::result::Error| {
-                log::error!("Could not get submissions from database: {e}");
-                Error::from(e)
+                Error::auto_msg(
+                    format!("could not get active submissions for runner {runner_id}"),
+                    e,
+                )
             })?;
 
         Ok(ret)
@@ -225,12 +361,10 @@ impl DatabaseConnection {
             .execute(&mut self.conn)
             .map(|_| ())
             .map_err(|e| {
-                log::error!(
-                    "Could not set exec_date_started for submission {}: {}",
-                    submission_id,
-                    &e
-                );
-                Error::from(e)
+                Error::auto_msg(
+                    format!("Could not set exec_date_started for submission {submission_id}"),
+                    e,
+                )
             })
     }
 
@@ -247,63 +381,86 @@ impl DatabaseConnection {
             .execute(&mut self.conn)
             .map(|_| ())
             .map_err(|e| {
-                log::error!(
-                    "Could not set exec_date_finished for submission {}: {}",
-                    submission_id,
-                    &e
-                );
-                Error::from(e)
+                Error::auto_msg(
+                    format!("Could not set exec_date_finished for submission {submission_id}"),
+                    e,
+                )
             })
     }
 
-    /// Updates the entry in the database, and also writes a comment to the
-    /// GitHub commit.
-    pub fn github_comment_and_status(
+    /// Updates the entry in the database, and also sends a report back to the
+    /// submission source. The format of the sent report depends on the kind of
+    /// source.
+    pub fn report_and_status(
         &mut self,
         settings: &Settings,
-        sub: &Submission,
-        msg: &str,
+        info: &SubmissionInfo,
+        report: &Report,
         status: SubmissionStatusCode,
         exec_finished: bool,
     ) -> Result<(), Error> {
-        use crate::{
-            db::{models::SubmissionStatusCode as SSC, schema::submissions},
-            github::CommitState as GHCS,
-        };
-
-        log::debug!("Setting commit information for submission {}", sub.id);
-        let (org, repo, commit) = (&sub.github_org, &sub.github_repo, &sub.github_commit);
+        use crate::db::{models::SubmissionStatusCode as SSC, schema::submissions};
 
         // async is annoying when you don't need it...
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| Error::from(format!("Could not unwrap tokio runtime: {e}")))?;
+            .map_err(|e| Error::auto_msg("could not unwrap tokio runtime", e))?;
 
-        rt.block_on(async {
-            github::create_commit_message(settings, org, repo, commit, msg).await
-        })
-        .unwrap_or_else(|e| {
-            log::warn!("Could not create message for commit {commit} on {repo}: {e}");
-        });
+        match info {
+            SubmissionInfo::GitHub {
+                sub,
+                src: _,
+                gh_src,
+                gh_info,
+            } => {
+                use crate::github::CommitState as GHCS;
 
-        let gh_state: github::CommitState = match status {
-            SSC::NotStarted | SSC::Running => GHCS::Pending,
-            SSC::Success => GHCS::Success,
-            SSC::SubmissionError
-            | SSC::BuildError
-            | SSC::BuildTimedOut
-            | SSC::TestCasesFailed
-            | SSC::TestCasesTimedOut => GHCS::Failure,
-            SSC::AutograderFailure => GHCS::Failure,
-        };
+                log::debug!("Setting commit information for submission {}", sub.id);
+                let (domain, org, repo, commit) =
+                    (&gh_src.domain, &gh_src.org, &gh_src.repo, &gh_info.commit);
 
-        rt.block_on(async {
-            github::create_commit_status(settings, org, repo, commit, gh_state, None).await
-        })
-        .unwrap_or_else(|e| {
-            log::warn!("Could not set status for commit {commit} on {repo}: {e}");
-        });
+                rt.block_on(async {
+                    github::create_commit_message(
+                        settings,
+                        domain,
+                        org,
+                        repo,
+                        commit,
+                        &report.to_markdown(&settings.reporting.markdown),
+                    )
+                    .await
+                })
+                .unwrap_or_else(|e| {
+                    log::warn!("Could not create message for commit {commit} on {repo}: {e}");
+                });
+
+                let gh_state: github::CommitState = match status {
+                    SSC::NotStarted | SSC::Running => GHCS::Pending,
+                    SSC::Success => GHCS::Success,
+                    SSC::SubmissionError
+                    | SSC::BuildError
+                    | SSC::BuildTimedOut
+                    | SSC::TestCasesFailed
+                    | SSC::TestCasesTimedOut
+                    | SSC::OutputLimitExceeded
+                    | SSC::SubmissionTimedOut => GHCS::Failure,
+                    SSC::AutograderFailure => GHCS::Failure,
+                };
+
+                rt.block_on(async {
+                    github::create_commit_status(
+                        settings, domain, org, repo, commit, gh_state, None,
+                    )
+                    .await
+                })
+                .unwrap_or_else(|e| {
+                    log::warn!("Could not set status for commit {commit} on {repo}: {e}");
+                });
+            }
+        }
+
+        let sub = info.get_submission();
 
         log::debug!(
             "Setting submission status to {:?} for submission {}",
@@ -316,17 +473,47 @@ impl DatabaseConnection {
             .set((
                 submissions::exec_status_code.eq(status as i32),
                 submissions::exec_finished.eq(exec_finished),
+                submissions::exec_report.eq(serde_json::to_value(report)?),
             ))
             .execute(&mut self.conn)
             .map(|_| ())
             .map_err(|e| {
-                log::error!(
-                    "Could not set status to {:?} for submission {}: {}",
-                    status,
-                    sub.id,
-                    &e
-                );
-                Error::from(e)
+                Error::auto_msg(
+                    format!(
+                        "could not set status to {:?} for submission {}",
+                        status, sub.id
+                    ),
+                    e,
+                )
+            })
+    }
+
+    /// Just set the status of the submission in the database, without sending
+    /// a report to the submission source.
+    pub fn set_status(
+        &mut self,
+        sub: &Submission,
+        status: SubmissionStatusCode,
+        exec_finished: bool,
+    ) -> Result<(), Error> {
+        use crate::db::schema::submissions;
+
+        diesel::update(submissions::table)
+            .filter(submissions::id.eq(sub.id))
+            .set((
+                submissions::exec_status_code.eq(status as i32),
+                submissions::exec_finished.eq(exec_finished),
+            ))
+            .execute(&mut self.conn)
+            .map(|_| ())
+            .map_err(|e| {
+                Error::auto_msg(
+                    format!(
+                        "could not set status to {:?} for submission {}",
+                        status, sub.id
+                    ),
+                    e,
+                )
             })
     }
 }

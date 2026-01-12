@@ -8,7 +8,9 @@ use actix_web::{
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use id2202_autograder::{db::conn::DatabaseConnection, github, notify, settings::Settings};
+use id2202_autograder::{
+    config::tag_match, config::Settings, db::conn::DatabaseConnection, github,
+};
 
 use derive_more::derive::{Display, Error};
 
@@ -105,22 +107,10 @@ impl GitHubResponse {
     }
 }
 
-// From the autograder
-//    repo_full_name = self.payload['repository']['full_name']
-//    repo_name = self.payload['repository']['name']
-//
-//    if self.payload['head_commit'] is None: return "The grader has received this commit"
-//
-//    commit = self.payload['head_commit']['id']
-//    message = self.payload['head_commit']['message']
-//    pusher = self.payload['pusher']
-//
-//    if not repo_name.startswith(groupname_prefix): return "Not a repo to be graded"
-//
-//    if not self.payload['ref'] == 'refs/heads/master':
-//        return "Push on non-master branch, won't be graded"
-// We expect the payload from a "push" event
-// https://docs.github.com/en/enterprise-server@3.16/webhooks/webhook-events-and-payloads#push
+/// A serializable submission, based on the JSON blob that can be provided from
+/// the server.
+///
+/// https://docs.github.com/en/enterprise-server@3.16/webhooks/webhook-events-and-payloads#push
 #[derive(Debug, Serialize, Deserialize)]
 struct GitHubSubmission {
     repository: GhsRepository,
@@ -130,9 +120,19 @@ struct GitHubSubmission {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GhsRepository {
+    /// Full repository name (format: `{ORG}/{REPO}`)
     full_name: String,
+
+    /// Repository name within the organization
     name: String,
+
+    /// Organization name
     organization: String,
+
+    /// The base URL to be used for any API calls
+    ///
+    /// Expected format: `https://{DOMAIN}/api/v3/repos/{ORG}/{REPO}`
+    url: String,
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct GhsHeadCommit {
@@ -143,6 +143,49 @@ struct GhsHeadCommit {
 struct GhsPusher {
     name: String,
     email: String,
+}
+
+/// Convenient struct with the information necessary to create a commit message
+/// and a commit status.
+#[derive(Debug)]
+struct CommitMessageInfo<'a> {
+    settings: &'a Settings,
+    domain: &'a str,
+    sub: &'a GitHubSubmission,
+}
+
+impl<'a> CommitMessageInfo<'a> {
+    async fn post_msg_status<S: AsRef<str>>(
+        &self,
+        msg: S,
+        status: github::CommitState,
+        status_msg: Option<&str>,
+    ) -> Result<(), id2202_autograder::error::Error> {
+        github::create_commit_message(
+            self.settings,
+            self.domain,
+            &self.sub.repository.organization,
+            &self.sub.repository.name,
+            &self.sub.head_commit.id,
+            msg.as_ref(),
+        )
+        .await
+        .inspect_err(|e| log::error!("Error creating commit message: {e}"))?;
+
+        github::create_commit_status(
+            self.settings,
+            self.domain,
+            &self.sub.repository.organization,
+            &self.sub.repository.name,
+            &self.sub.head_commit.id,
+            status,
+            status_msg,
+        )
+        .await
+        .inspect_err(|e| log::error!("Error creating commit status: {e}"))?;
+
+        Ok(())
+    }
 }
 
 /// Submission from GitHub. Received a webhook
@@ -189,7 +232,7 @@ async fn github_submission(
         .to_string();
 
     let payload_bytes = payload
-        .to_bytes_limited(settings.github.max_payload)
+        .to_bytes_limited(settings.submission.github.max_payload)
         .await
         .map_err(|e| {
             log::warn!("Error reading payload: {e}");
@@ -200,12 +243,11 @@ async fn github_submission(
             ErrorResponse::bad_request(&req, "bad payload")
         })?;
 
-    let mut mac = HmacSha256::new_from_slice(settings.github.webhook_secret.as_bytes()).map_err(
-        |hmac_err| {
+    let mut mac = HmacSha256::new_from_slice(settings.submission.github.webhook_secret.as_bytes())
+        .map_err(|hmac_err| {
             log::error!("Could not create HMAC: {hmac_err:?}");
             ErrorResponse::internal_server_error(&req)
-        },
-    )?;
+        })?;
     mac.update(payload_bytes.chunk());
 
     let mac_output_vec = mac.finalize().into_bytes();
@@ -244,15 +286,44 @@ async fn github_submission(
 
     log::debug!("Received push event: {:?}", sub);
 
-    // Check if the repository belongs to the correct organization
-    if sub.repository.organization != settings.github.org {
-        if settings.github.allow_any_org {
-            log::warn!(
-                "Allowing submission from organization {}, although {} was expected.",
-                sub.repository.organization,
-                settings.github.org,
-            );
-        } else {
+    // Fetch the domain of the submission, verify that we have it configured as
+    // a source
+    let domain = reqwest::Url::parse(&sub.repository.url)
+        .map_err(|err| {
+            log::warn!("Received invalid repository URL: {err}");
+            ErrorResponse::bad_request(&req, "Invalid repository URL")
+        })?
+        .domain()
+        .map(String::from)
+        .ok_or_else(|| {
+            log::warn!("Received submission without domain in the repository URL");
+            ErrorResponse::bad_request(&req, "Invalid repository URL")
+        })?;
+
+    let instance_settings = settings
+        .submission
+        .github
+        .known_instances
+        .iter()
+        .find(|gh| gh.domain == domain)
+        .ok_or_else(|| {
+            log::warn!("Received request from unknown GitHub instance {domain}");
+            ErrorResponse::unauthorized(&req, "Unknown GitHub instance")
+        })?;
+
+    let commitinfo = CommitMessageInfo {
+        settings: &settings,
+        domain: &domain,
+        sub: &sub,
+    };
+
+    // Check if the repository belongs to a known organization
+    if instance_settings.allowed_orgs.len() > 0 {
+        if !instance_settings
+            .allowed_orgs
+            .iter()
+            .any(|org| *org == sub.repository.organization)
+        {
             let errmsg = format!(
                 "invalid GitHub organization \"{}\"",
                 sub.repository.organization
@@ -263,9 +334,8 @@ async fn github_submission(
     }
 
     // Check for allowed prefixes and rejected suffixes
-    if settings.github.allowed_repo_prefixes.len() > 0 {
-        let allowed_prefix = settings
-            .github
+    if instance_settings.allowed_repo_prefixes.len() > 0 {
+        let allowed_prefix = instance_settings
             .allowed_repo_prefixes
             .iter()
             .any(|pfx| sub.repository.name.starts_with(pfx));
@@ -277,9 +347,8 @@ async fn github_submission(
             return Ok(GitHubResponse::new(&req, "not a repository to be graded").to_http());
         }
     }
-    if settings.github.allowed_repo_suffixes.len() > 0 {
-        let allowed_suffix = settings
-            .github
+    if instance_settings.allowed_repo_suffixes.len() > 0 {
+        let allowed_suffix = instance_settings
             .allowed_repo_suffixes
             .iter()
             .any(|sfx| sub.repository.name.ends_with(sfx));
@@ -291,8 +360,7 @@ async fn github_submission(
             return Ok(GitHubResponse::new(&req, "not a repository to be graded").to_http());
         }
     }
-    let rejected_prefix = settings
-        .github
+    let rejected_prefix = instance_settings
         .prohibited_repo_prefixes
         .iter()
         .any(|pfx| sub.repository.name.starts_with(pfx));
@@ -303,8 +371,7 @@ async fn github_submission(
         );
         return Ok(GitHubResponse::new(&req, "not a repository to be graded").to_http());
     }
-    let rejected_suffix = settings
-        .github
+    let rejected_suffix = instance_settings
         .prohibited_repo_suffixes
         .iter()
         .any(|sfx| sub.repository.name.ends_with(sfx));
@@ -316,17 +383,28 @@ async fn github_submission(
         return Ok(GitHubResponse::new(&req, "not a repository to be graded").to_http());
     }
 
-    // Check for grading tags. Converting to BTreeSet to make them unique, then
-    // converting the set back to a vector.
-    let grading_tags: Vec<String> = BTreeSet::from_iter(
-        sub.head_commit
-            .message
-            .split(' ')
-            .filter(|s| s.starts_with('#') || s.starts_with("%"))
-            .map(|s| (&s[1..]).to_string()),
-    )
-    .into_iter()
-    .collect();
+    // Check for grading tags. First adding them to BTreeSet to remove any
+    // duplicates unique, then converting the set back to a vector.
+    let mut grading_tag_set: BTreeSet<&str> = BTreeSet::new();
+    let mut s: &str = sub.head_commit.message.as_ref();
+    while s.len() > 0 {
+        // We split at i + 1 because we are interested in the string that
+        // follows the tag symbol.
+        if let Some((_, s_after)) = s
+            .find(|c: char| c == '#' || c == '%')
+            .and_then(|i| s.split_at_checked(i + 1))
+        {
+            let (s_tag, s_rest) = tag_match(s_after);
+            grading_tag_set.insert(s_tag);
+            s = s_rest;
+        } else {
+            break;
+        }
+    }
+    let grading_tags: Vec<&str> = grading_tag_set
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
 
     if grading_tags.is_empty() {
         log::info!(
@@ -334,6 +412,31 @@ async fn github_submission(
             sub.repository.full_name
         );
         return Ok(GitHubResponse::new(&req, "no grading tags provided").to_http());
+    }
+
+    let tag_length = grading_tags
+        .iter()
+        .map(|s| s.len())
+        .reduce(|acc, e| acc + e)
+        .unwrap_or(0usize);
+    if tag_length >= settings.submission.max_tag_length {
+        // Respond to the commit message and set the commit status
+        commitinfo.post_msg_status(format!(
+            "## Submission Error\n\nThe provided grading tags {} exceed the limit of {} characters. Your submission will not be graded.",
+            grading_tags.iter().map(|s| format!("`{}`", s)).join(", "),
+            settings.submission.max_tag_length,
+        ), github::CommitState::Failure, Some("Tag Length Exceeded"))
+        .await
+        .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
+
+        return Ok(GitHubResponse::new(
+            &req,
+            &format!(
+                "maximum tag length exceeded (got {}, limit is {})",
+                tag_length, settings.submission.max_tag_length
+            ),
+        )
+        .to_http());
     }
 
     // Connect to database and insert the submission request
@@ -344,8 +447,8 @@ async fn github_submission(
 
     let submission_id = dbconn
         .register_github_submission(
-            &settings,
             &grading_tags,
+            &domain,
             &sub.pusher.name,
             &sub.repository.organization,
             &sub.repository.name,
@@ -357,37 +460,26 @@ async fn github_submission(
         })?;
 
     // Respond to the commit message and set the commit status
-    github::create_commit_message(
-        &settings,
-        &sub.repository.organization,
-        &sub.repository.name,
-        &sub.head_commit.id,
-        &format!(
-            "**[Submission ID: {} | {}]**\n\n{} {}",
-            submission_id,
-            grading_tags.iter().map(|t| format!("`{t}`")).join(", "),
-            "The autograder has successfully received your submission and will start grading as soon as a runner is available.",
-            "Additional information and results of your submission will be provided as comments here."
-        ),
-    )
+    commitinfo.post_msg_status(format!(
+        "**[Submission ID: {} | {}]**\n\n{} {}",
+        submission_id,
+        grading_tags.iter().map(|t| format!("`{t}`")).join(", "),
+        "The autograder has successfully received your submission and will start grading as soon as a runner is available.",
+        "Additional information and results of your submission will be provided as comments here."
+    ), github::CommitState::Pending, Some("Waiting In Queue"))
     .await
-    .unwrap_or_else(|e| {log::warn!("Could not submit commit message: {e}. Will not reject this submission since it is already created.");});
+    .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}. Will not reject this submission since it is already created."));
 
-    github::create_commit_status(
-        &settings,
-        &sub.repository.organization,
-        &sub.repository.name,
-        &sub.head_commit.id,
-        github::CommitState::Pending,
-        Some("Waiting In Queue"),
-    )
-    .await
-    .unwrap_or_else(|e| {log::warn!("Could not create commit status: {e}. Will not reject this submission since it is already created.");});
-
-    // Notifying the other runners
-    notify::ping(&settings).unwrap_or_else(|e| {
-        log::warn!("Could not ping the runners: {}", e);
+    // Notifying the other runners (TODO: make this name configurable)
+    dbconn.notify("submission").unwrap_or_else(|e| {
+        log::warn!(
+            "Could not notify the runners about the new submission: {}",
+            e
+        )
     });
+    //notify::ping(&settings).unwrap_or_else(|e| {
+    //    log::warn!("Could not ping the runners: {}", e);
+    //});
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");
     Ok(GitHubResponse::new(&req, &format!("submission {submission_id} received")).to_http())

@@ -6,8 +6,9 @@ This is inteded to be run in a Linux-based container using Docker or Podman.
 See further down in the README for information about how to run it as a
 standalone application during development.
 
-**NOTE: The autograder uses linux-specific features, such as inotify. You need
-to run the application on a Linux-based OS.**
+**NOTE: The autograder assumes a Linux-based OS and the existence of common
+user space programs. Certain aspects of the autograder might break if running
+on a different OS.**
 
 ## Build Docker Image
 
@@ -55,7 +56,7 @@ just setup-dirs
 # personal access token for the GitHub instance you are testing on.
 cat <<EOF > .env
 DATABASE_URL=postgres://autograder:ChangeMe@localhost/autograder
-AUTOGRADER_GITHUB_AUTH_TOKEN=<github_token>
+AUTOGRADER_GITHUB_AUTH_TOKENS=<domain>:<github_token>
 EOF
 
 # Start the database
@@ -128,6 +129,5 @@ kind = "run"
 bin = "my_echo"
 code = 0
 stdin = "Hello"
-ignore_stdout = false
-stdout = "Hello"
+stdout = ["Hello"]
 ```

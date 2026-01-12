@@ -4,5 +4,5 @@ Checks that hello world is printed to stderr, but nothing else is printed.
 
 [test.options]
 args = ["--stderr"]
-stdout = ""
-stderr = "Hello, World!"
+stdout = [""]
+stderr = ["Hello, World!"]

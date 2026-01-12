@@ -4,4 +4,3 @@ Checks that the file "subdir/world.txt" file exists.
 
 [test.options]
 path = "subdir/world.txt"
-ignore_mimetype = true

@@ -2,4 +2,5 @@
 /// tables.
 pub mod conn;
 pub mod models;
+pub mod notify;
 pub mod schema;

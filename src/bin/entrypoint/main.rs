@@ -8,10 +8,11 @@ use std::sync::mpsc;
 use subprocess::{Popen, PopenConfig};
 
 use id2202_autograder::{
+    config::Settings,
+    config::{TestGroup, Tests},
+    db::conn::DatabaseConnection,
     error::Error,
-    notify, podman,
-    settings::Settings,
-    test_config::{TestGroup, Tests},
+    podman,
     utils::systemtime_to_utc_string,
 };
 
@@ -46,11 +47,6 @@ enum Commands {
         /// A runner to assign to jobs
         #[arg(long)]
         assign_runner: Option<i32>,
-    },
-    TestNotify {
-        /// Path to the file to listen to
-        #[arg()]
-        file: String,
     },
     TestPodman {
         /// Test listing images
@@ -90,7 +86,6 @@ fn main() -> Result<(), Error> {
             all_submissions,
             assign_runner,
         } => check_database(s, all_submissions, assign_runner),
-        Commands::TestNotify { file } => test_notify(file),
         Commands::TestPodman {
             list_images,
             list_networks,
@@ -109,7 +104,7 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     let entrypoint_bin = std::env::current_exe()?;
     let binary_dir = entrypoint_bin
         .parent()
-        .ok_or("Could not get parent of the entrypoint binary")?
+        .ok_or_else(|| Error::runtime("could not get parent of the entrypoint binary"))?
         .canonicalize()?;
     let server_bin = binary_dir.join("server");
     let runner_bin = binary_dir.join("runner");
@@ -117,26 +112,14 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     log::debug!("Server binary: {}", server_bin.to_str().unwrap());
     log::debug!("Runner binary: {}", runner_bin.to_str().unwrap());
 
-    log::debug!("Creating the temp directory {}", &s.temp_dir);
-    std::fs::create_dir_all(&s.temp_dir)
-        .map_err(|e| {
-            let errmsg = format!("Error creating the temp directory {}: {}", &s.temp_dir, e);
-            log::error!("{}", errmsg);
-            Error::from(errmsg)
-        })
-        .unwrap();
-
-    // Verify that the notification file exists
-    notify::verify_path(s).unwrap();
-
     // Verify existence of podman image and networks
     log::debug!("Checking that the podman image exists");
     let podimgs = podman::images().unwrap();
     if !podimgs.contains(&s.runner.podman_image) {
-        log::info!("Pulling the runner image");
+        log::info!("Pulling the runner image {}", &s.runner.podman_image);
         podman::pull(&s.runner.podman_image).unwrap();
     }
-    log::debug!("Checking that the podman networks exits for each runner");
+    log::debug!("Checking that the podman networks exists for each runner");
     let podnets = podman::networks().unwrap();
     for runner_id in 0..s.runner.n_runners {
         let expected_net = format!("{}{}", s.runner.podman_network_prefix, runner_id);
@@ -229,14 +212,6 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
             }
         }
 
-        // Check that the notification file still exists. Otherwise all runner
-        // processes will just exit immediately since there is nothing to be
-        // watched.
-        notify::verify_path(s).unwrap_or_else(|e| {
-            log::error!("Fatal. Could not verify that the notification path exists: {e}");
-            running = false;
-        });
-
         let sleep_time = next_offset - init_time.elapsed();
         match sigc_recv.recv_timeout(sleep_time) {
             Ok(_) => {
@@ -265,9 +240,11 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
         }
     }
 
-    // Also write to the notification file here. As some runner threads may
-    // still be waiting for this file to be modified.
-    notify::ping(s).unwrap_or_else(|e| log::warn!("Could not ping notification file: {e}"));
+    // Also notify listeners in the database, as some runner threads may still
+    // be waiting for notifications on this channel.
+    DatabaseConnection::connect(s)
+        .and_then(|mut conn| conn.notify("submission"))
+        .unwrap_or_else(|e| log::warn!("Could not notify: {e:#}"));
 
     log::info!("Entrypoint process exiting");
     Ok(())
@@ -320,6 +297,7 @@ fn check_database(
     get_all_submissions: bool,
     assign_runner: Option<i32>,
 ) -> Result<(), Error> {
+    use diesel::{self, ExpressionMethods, QueryDsl, RunQueryDsl, SelectableHelper};
     use id2202_autograder::db::conn::DatabaseConnection;
 
     log::info!("CHECKING DATABASE");
@@ -329,7 +307,16 @@ fn check_database(
 
     if get_all_submissions {
         log::debug!("Fetching all submissions");
-        match dbconn.get_submissions(None, None) {
+        use id2202_autograder::db::{
+            models::Submission,
+            schema::submissions::{self, id},
+        };
+        match submissions::table
+            .select(Submission::as_select())
+            .order(id.desc())
+            .limit(100)
+            .load(&mut dbconn.conn)
+        {
             Ok(sub_vec) => {
                 for sub in sub_vec.iter() {
                     let d = systemtime_to_utc_string(&sub.date_submitted)
@@ -361,45 +348,12 @@ fn check_database(
 }
 
 /// Test the notification on a specific file
-fn test_notify(path: String) -> Result<(), Error> {
-    use id2202_autograder::notify;
-
-    let l = notify::Listener::new(&path, 5000)?;
-
-    loop {
-        match l.listen() {
-            Ok(res) => {
-                if !res.timedout {
-                    println!("received notification!");
-                    break;
-                } else {
-                    println!("timed out");
-                }
-            }
-            Err(e) => {
-                println!("Received error listening for timeout: {e}");
-                return Err(e);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Test the notification on a specific file
 fn test_podman(
-    s: Settings,
+    _s: Settings,
     list_images: bool,
     list_networks: bool,
     list_containers: bool,
 ) -> Result<(), Error> {
-    std::fs::create_dir_all(&s.temp_dir)
-        .map_err(|e| {
-            let errmsg = format!("Error creating the temp directory {}: {}", &s.temp_dir, e);
-            log::error!("{}", errmsg);
-            Error::from(errmsg)
-        })
-        .unwrap();
-
     if list_images {
         log::debug!("Listing images");
         match podman::images() {

@@ -5,10 +5,18 @@ use actix_web::{
     web::{self, ServiceConfig},
     HttpRequest, HttpResponse, HttpResponseBuilder, Responder,
 };
+use actix_web_static_files::ResourceFiles;
 use num_traits::FromPrimitive;
 use sailfish::TemplateSimple;
 
-use id2202_autograder::{settings::Settings, utils::systemtime_to_utc_string};
+use id2202_autograder::{config::Settings, reporting::Report, utils::systemtime_to_utc_string};
+use serde::Deserialize;
+
+// Used for generated static routes below
+// (See build.rs in root of the repository.)
+mod static_route_generator {
+    include!(concat!(env!("OUT_DIR"), "/generated_web_static.rs"));
+}
 
 // SAILFISH_ variables are used inside the templates
 static SAILFISH_HEADER_BAR_ROUTES: [(&str, &str); 2] = [("/", "Home"), ("/job_info", "Job Info")];
@@ -23,6 +31,16 @@ pub fn config(cfg: &mut ServiceConfig, settings: &Settings) {
         "/job_info",
         web::get().to(move |req| get_job_info(s.clone(), req)),
     );
+
+    let s = settings.clone();
+    cfg.service(
+        web::resource("/submission/{id}")
+            .route(web::get().to(move |req, id| get_submission(s.clone(), req, id))),
+    );
+
+    // Setup static routes
+    let generated = static_route_generator::generate();
+    cfg.service(ResourceFiles::new("/static", generated));
 }
 
 /// Default page to use if not found
@@ -37,6 +55,15 @@ struct ErrorMessageTemplate {
 }
 
 impl ErrorMessageTemplate {
+    /// Renders a 404 unauthorized page
+    pub fn unauthorized() -> Result<HttpResponse, actix_web::Error> {
+        ErrorMessageTemplate {
+            title: String::from("401: Unauthorized"),
+            current_route: None,
+            msg: String::from("401: Unauthorized \u{274C}"),
+        }
+        .render_errmsg_template(HttpResponse::Unauthorized())
+    }
     /// Renders a 404 not found page
     pub fn not_found() -> Result<HttpResponse, actix_web::Error> {
         ErrorMessageTemplate {
@@ -172,17 +199,100 @@ async fn get_job_info(
                     |c| match c {
                         SSC::NotStarted | SSC::Running => None,
                         SSC::Success => Some((
-                            settings.runner.md_settings.symbol_ok.to_owned(),
+                            settings.reporting.markdown.symbol_ok.to_owned(),
                             "text-success-emphasis".to_string(),
                         )),
                         _ => Some((
-                            settings.runner.md_settings.symbol_failed.to_owned(),
+                            settings.reporting.markdown.symbol_failed.to_owned(),
                             "text-danger-emphasis".to_string(),
                         )),
                     },
                 ),
             })
             .collect(),
+    };
+    let body: String = tpl
+        .render_once()
+        .map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
+
+    Ok(HttpResponse::Ok().body(body))
+}
+
+/// Template for showing job information
+#[derive(TemplateSimple)]
+#[template(path = "route/submission.stpl")]
+struct SubmissionTemplate {
+    // Common
+    title: String,
+    current_route: Option<String>,
+    // For this template only
+    submission_id: i64,
+    report_markdown: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubmissionQuery {
+    auth_key: String,
+}
+
+/// Display information about a single submission
+async fn get_submission(
+    settings: Settings,
+    req: HttpRequest,
+    submission_id: web::Path<String>,
+) -> Result<HttpResponse, actix_web::Error> {
+    use id2202_autograder::db::conn::DatabaseConnection;
+
+    let q = match web::Query::<SubmissionQuery>::from_query(req.query_string()) {
+        Ok(q) => q,
+        Err(_) => {
+            return ErrorMessageTemplate::unauthorized();
+        }
+    };
+
+    let parsed_id: i64 = match submission_id.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            log::error!("Bad submission id: {submission_id}");
+            return ErrorMessageTemplate::not_found();
+        }
+    };
+
+    let mut conn = match DatabaseConnection::connect(&settings) {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::error!("Could not open database connection: {e}");
+            return ErrorMessageTemplate::internal_server_error();
+        }
+    };
+
+    let subinfo = match conn.get_submission_info(parsed_id) {
+        Ok(subinfo) => subinfo,
+        Err(_) => {
+            log::error!("Submission id not found: {parsed_id}");
+            return ErrorMessageTemplate::not_found();
+        }
+    };
+
+    let sub = subinfo.get_submission();
+    let src = subinfo.get_source();
+    if src.auth_key != q.auth_key {
+        return ErrorMessageTemplate::unauthorized();
+    }
+
+    let report_markdown = match &sub.exec_report {
+        Some(v) => match Report::deserialize(v) {
+            Ok(r) => r.to_markdown(&settings.reporting.markdown),
+            Err(e) => format!("Invalid report: {:?}\n\n{}", e, v),
+        },
+        None => "No report generated.".to_string(),
+    };
+
+    let tpl = SubmissionTemplate {
+        title: format!("Submission {}", sub.id),
+        current_route: None,
+        submission_id: sub.id,
+        report_markdown: report_markdown,
     };
     let body: String = tpl
         .render_once()

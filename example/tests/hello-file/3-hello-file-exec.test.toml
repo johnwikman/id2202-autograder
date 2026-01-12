@@ -1,0 +1,12 @@
+description = """
+Runs the built executable "hello-file".
+"""
+
+[test]
+kind = "run"
+
+[test.options]
+bin = "hello-file"
+args = []
+code = [0]
+stdout = ["Hello, World!"]

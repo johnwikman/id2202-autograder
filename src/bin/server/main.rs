@@ -1,5 +1,5 @@
 use actix_web::{web, App, HttpRequest, HttpServer, Responder};
-use id2202_autograder::{error::Error, settings::Settings};
+use id2202_autograder::{config::Settings, error::Error};
 
 use clap::Parser;
 

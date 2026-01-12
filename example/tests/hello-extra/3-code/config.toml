@@ -6,6 +6,4 @@ description = "Only checks code output"
 kind = "run"
 
 [test.options]
-ignore_stdin = true
-ignore_stdout = true
-ignore_stderr = true
+stdin_ignore = true

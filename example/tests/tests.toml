@@ -21,56 +21,52 @@ build_allowed_binary_mimetypes = [
 [default.kind.run]
 bin = "cigrid"
 args = []
-code = 0
-ignore_stdin = true
 stdin = ""
-ignore_stdout = true
-trim_stdout = true
-strip_whitespace_stdout = false
-stdout = ""
-stdout_alternatives = []
-ignore_stderr = true
-trim_stderr = true
-strip_whitespace_stderr = false
-stderr = ""
-stderr_alternatives = []
+stdin_ignore = true
+code = [0]
+stdout = []
+stdout_trim = true
+stdout_strip_whitespace = false
+stderr = []
+stderr_trim = true
+stderr_strip_whitespace = false
+input_files = []
 auto_input_files = [".cpp"]
 
 # Note: ASM is generated to stdout. So it will never be ignored
 [default.kind.gen_asm_and_run]
 bin = "cigrid"
 args = ["--asm"]
-code = 0
-ignore_stdin = true
 stdin = ""
-ignore_stderr = true
-trim_stderr = true
-strip_whitespace_stderr = false
-stderr = ""
+stdin_ignore = true
+code = [0]
+stderr = []
+stderr_trim = true
+stderr_strip_whitespace = false
+input_files = []
 auto_input_files = [".cpp"]
-# Defaults for assembler and compiler
+# Defaults for assembler and compiler. <ASM_FILE> is a template which will be
+# replaced with the path to the generated assembly code.
 assemble_cmd = ["nasm", "-felf64", "<ASM_FILE>", "-o", "a.o"]
-assemble_code = 0
+assemble_code = [0]
 compile_cmd = ["gcc", "-no-pie", "a.o", "-o", "a.out"]
-compile_code = 0
+compile_code = [0]
 # Defaults for running the generated binary
 run_cmd = ["./a.out"]
-run_code = 0
-run_ignore_stdin = true
 run_stdin = ""
-run_ignore_stdout = true
-run_trim_stdout = true
-run_strip_whitespace_stdout = false
-run_stdout = ""
-run_ignore_stderr = true
-run_trim_stderr = true
-run_strip_whitespace_stderr = false
-run_stderr = ""
+run_stdin_ignore = true
+run_code = [0]
+run_stdout = []
+run_stdout_trim = true
+run_stdout_strip_whitespace = false
+run_stderr = []
+run_stderr_trim = true
+run_stderr_strip_whitespace = false
 
 [default.kind.check_file_exists]
 path = ""
-ignore_mimetype = true
 mimetype_prefix = ""
+mimetype_prefix_ignore = true
 
 # The test tags are specified below. Note that the source files are build once
 # for each tag. Hence all build configuration are specified in this file.
@@ -95,7 +91,7 @@ build.cmd = ["make"]
 [tags.hello-file]
 dirs = ["hello-file"]
 build.srcdir = "solutions/hello-file"
-build.cmd = ["echo"] # No build needed for this tag
+build.cmd = ["make"]
 
 # "Alias" tags which can be used to run invoke multiple tags
 [tag_groups]

@@ -7,6 +7,6 @@ Allows for arbitrary whitespaces in the output.
 
 [test.options]
 args = ["--stdout"]
-stdout = "     H   ell            \no, Wor                    ld!   "
-strip_whitespace_stdout = true
-stderr = ""
+stdout = ["     H   ell            \no, Wor                    ld!   "]
+stdout_strip_whitespace = true
+stderr = [""]

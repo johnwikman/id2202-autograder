@@ -6,4 +6,3 @@ description = "Checks that the program prints \"Hello, World!\" and then exits w
 kind = "run"
 [test.options]
 bin = "hello"
-ignore_stdout = false

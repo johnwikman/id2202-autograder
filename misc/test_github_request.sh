@@ -8,6 +8,7 @@ fi
 COMMIT_HASH="$1"
 MESSAGE="#hello-all"
 
+DOMAIN="gits-15.sys.kth.se"
 ORG="ID2202-jwikman-test"
 REPO="id2202-testgrader"
 SECRET_KEY="s3cr3t"
@@ -18,7 +19,8 @@ PAYLOAD=$(cat <<EOF
   "repository": {
     "name": "$REPO",
     "full_name": "$ORG/$REPO",
-    "organization": "$ORG"
+    "organization": "$ORG",
+    "url": "https://$DOMAIN/api/v3/repos/$ORG/$REPO"
   },
   "pusher": {
     "name": "test",

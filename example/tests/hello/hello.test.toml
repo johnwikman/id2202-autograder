@@ -1,2 +1,2 @@
 [test.options]
-stdout = "Hello, World!"
+stdout = ["Hello, World!"]

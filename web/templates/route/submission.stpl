@@ -1,0 +1,13 @@
+<% include!("../header.stpl"); %>
+
+<h1 class="display-1">Information about Submission <%= submission_id %></h1>
+
+<p class="lead">
+    This will show information about submission <%= submission_id %> eventually.
+</p>
+
+<p class="report">
+    <%= report_markdown %>
+</p>
+
+<% include!("../footer.stpl"); %>

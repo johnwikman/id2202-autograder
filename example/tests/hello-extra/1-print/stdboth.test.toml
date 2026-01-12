@@ -4,9 +4,9 @@ Checks that hello world is printed to both stdout and stderr.
 
 [test.options]
 args = ["--stdout", "--stderr"]
-stdout = "Hello, World!"
-stderr = "Hello, World!"
+stdout = ["Hello, World!"]
+stderr = ["Hello, World!"]
 
 # This should be ignored
-ignore_stdin = false
 stdin = "bla bla bla"
+stdin_ignore = false

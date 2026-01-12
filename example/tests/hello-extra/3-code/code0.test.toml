@@ -4,4 +4,4 @@ Checks that code 0 is returned when no arguments are provided.
 
 [test.options]
 args = []
-code = 0
+code = [0]

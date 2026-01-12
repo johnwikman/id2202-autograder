@@ -8,9 +8,7 @@ kind = "run"
 timeout = 5
 
 [test.options]
-code = 0
-ignore_stdin = true
-ignore_stdout = false
-ignore_stderr = false
-trim_stdout = true
-trim_stderr = true
+code = [0]
+stdin_ignore = true
+stdout_trim = true
+stderr_trim = true

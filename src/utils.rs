@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Error, SyscommandError};
 use chrono::DateTime;
 use std::{
     ffi::OsString,
@@ -41,15 +41,15 @@ pub fn single_linefeed_to_space<S: AsRef<str>>(s: S) -> String {
     }
 }
 
-/// Returns a markdown preformatted block <pre> containing the provided text s
-/// as verbatim, making sure to escape parts that could otherwise be
+/// Returns a markdown preformatted block <pre> containing the provided text
+/// `s` as verbatim, making sure to escape parts that could otherwise be
 /// interpreted as HTML.
 pub fn md_preformatted<S: AsRef<str>>(s: S) -> String {
     md_preformatted_with_truncation(s, None)
 }
 
-/// Returns a markdown preformatted block <pre> containing the provided text s
-/// as verbatim, making sure to escape parts that could otherwise be
+/// Returns a markdown preformatted block <pre> containing the provided text
+/// `s` as verbatim, making sure to escape parts that could otherwise be
 /// interpreted as HTML.
 pub fn md_preformatted_with_truncation<S: AsRef<str>>(s: S, truncate: Option<usize>) -> String {
     let mut ret_str = String::new();
@@ -96,13 +96,34 @@ pub fn md_preformatted_with_truncation<S: AsRef<str>>(s: S, truncate: Option<usi
     ret_str
 }
 
+/// Escapes markdown characters within the string `s`.
+///
+/// This escapes the following characters by putting a backslash `\` in front of them:
+///
+/// ```txt
+/// \ ` * _ { } [ ] ( ) # + - . !
+/// ```
+///
+/// See https://www.markdownlang.com/basic/escaping.html
+pub fn md_escape<S: AsRef<str>>(s: S) -> String {
+    const ESC_CHARS: &'static str = "\\`*_{}[]()#+-.!";
+    let mut ret_str = String::new();
+    for ch in s.as_ref().chars() {
+        if ESC_CHARS.contains(ch) {
+            ret_str.push('\\');
+        }
+        ret_str.push(ch);
+    }
+    ret_str
+}
+
 /// Joins two file system paths together.
 pub fn path_join<A: AsRef<Path>, B: AsRef<Path>>(a: A, b: B) -> Result<String, Error> {
     a.as_ref()
         .join(b.as_ref())
         .to_str()
         .map(String::from)
-        .ok_or(Error::from("Could not convert path to a string."))
+        .ok_or_else(|| Error::convert("path to string"))
 }
 
 /// Joins two file system paths together and returns the absolute path of the
@@ -111,7 +132,7 @@ pub fn path_absolute_join<A: AsRef<Path>, B: AsRef<Path>>(a: A, b: B) -> Result<
     std::path::absolute(a.as_ref().join(b.as_ref()))?
         .to_str()
         .map(String::from)
-        .ok_or(Error::from("Could not convert path to a string."))
+        .ok_or_else(|| Error::convert("path to string"))
 }
 
 /// Returns the absolute parent path of the provided string, which can succeed
@@ -121,7 +142,10 @@ pub fn path_absolute_parent<P: AsRef<Path>>(path: P) -> Result<String, Error> {
         .parent()
         .map(|e| e.to_owned())
         .and_then(|p| p.to_str().map(String::from))
-        .ok_or(Error::from("Internal error: Could not get parent of path."))
+        .ok_or(Error::fs(
+            "could not get parent of path",
+            path.as_ref().to_str().unwrap_or("no string representation"),
+        ))
 }
 
 /// Creates a directory if it does not already exist.
@@ -168,7 +192,7 @@ pub fn mimetype<P: AsRef<Path>>(path: P) -> Result<String, Error> {
             "--mime",
             path.as_ref()
                 .to_str()
-                .ok_or_else(|| Error::from("Invalid UTF-8 path for entry {entry}"))?,
+                .ok_or_else(|| Error::convert("path to string"))?,
         ],
         SyscommandSettings {
             max_stdout_length: Some(10000),
@@ -176,14 +200,14 @@ pub fn mimetype<P: AsRef<Path>>(path: P) -> Result<String, Error> {
         },
     )?;
     let mime_string = res.stdout.trim_ascii().to_string();
-    let mimetype = mime_string
-        .split(" ")
-        .next()
-        .ok_or(Error::from("Internal error"))?;
+    let mimetype = mime_string.split(" ").next().ok_or(Error::format(
+        "mimetype output from 'file -b --mime'",
+        &mime_string,
+    ))?;
     let mimetype = if mimetype.ends_with(";") {
         mimetype
             .split_at_checked(mimetype.len() - 1)
-            .ok_or(Error::from("Internal error"))?
+            .ok_or(Error::format("internal mimetype error", mimetype))?
             .0
     } else {
         mimetype
@@ -238,6 +262,14 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     cmd: CmdList,
     cmd_settings: SyscommandSettings,
 ) -> Result<SyscommandOutput, Error> {
+    // `syscmd_err` will be used to instantiate all other errors.
+    let mut syscmd_err = Error::syscommand(
+        cmd.as_ref()
+            .iter()
+            .map(|e| e.as_ref().to_string())
+            .collect(),
+    );
+
     let os_cmd: Vec<OsString> = cmd
         .as_ref()
         .iter()
@@ -247,13 +279,16 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     let stdin_filepath = match cmd_settings.stdin {
         Some(s) => {
             let mut f = tempfile::NamedTempFile::new()?;
+            let fname = f.path().to_str().map(String::from);
             f.write(s.as_bytes())?;
             Some(
                 f.keep()
                     .map_err(|e| {
-                        Error::from(format!(
-                            "Error marking the temp stdin file for keeping: {e}"
-                        ))
+                        Error::fs(
+                            "calling .keep() on temp stdin file in syscommand_timeout",
+                            fname.unwrap_or_else(|| "unknown filename".to_string()),
+                        )
+                        .with_cause(Box::new(e))
                     })?
                     .1,
             )
@@ -291,8 +326,9 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         },
     )
     .map_err(|e| {
+        // Make sure we clean up the stdin filepath before returning
         cleantemp(&stdin_filepath);
-        Error::from(format!("Could not create Popen process: {e}"))
+        (&syscmd_err).clone().as_error().with_cause(Box::new(e))
     })?;
 
     let mut buf_stdout: Vec<u8> = vec![];
@@ -312,12 +348,13 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         end_time: SystemTime,
         max_stdout_length: usize,
         max_stderr_length: usize,
+        syscmd_err: &SyscommandError,
     ) -> Result<Option<ExitStatus>, Error> {
-        static BUFFER_SIZE: usize = 4096 * 1024;
-        static EVENT_CAPACITY: usize = 1024;
-        static POLL_DURATION: Duration = Duration::from_millis(10);
+        const BUFFER_SIZE: usize = 1024 * 1024;
+        const EVENT_CAPACITY: usize = 1024;
+        const POLL_DURATION: Duration = Duration::from_millis(1);
 
-        let mut read_buf = [0u8; BUFFER_SIZE];
+        let mut read_buf: Box<[u8]> = vec![0u8; BUFFER_SIZE].into_boxed_slice();
 
         let mut poll = mio::Poll::new()
             .inspect_err(|e| log::error!("Received error when registering stderr: {e}"))?;
@@ -344,33 +381,32 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
 
         let mut stat = None;
 
+        // Reads a chunk from the provided file. Returns `Ok(true)` if it has
+        // filled up the entire read buffer when reading data.
+        let mut read_chunk = move |f: &mut File, output_buf: &mut Vec<u8>, maxlen: usize| {
+            let l = f.read(&mut read_buf)?;
+            output_buf.extend_from_slice(read_buf.split_at(l).0);
+            if output_buf.len() > maxlen {
+                return Err(syscmd_err.clone().limit_exceeded(maxlen).as_error());
+            } else {
+                Ok(l == BUFFER_SIZE)
+            }
+        };
+
         while SystemTime::now() < end_time && stat.is_none() {
             poll.poll(&mut events, Some(POLL_DURATION))?;
 
             for event in &events {
                 if event.token() == mio::Token(1) {
                     if let Some(f) = handle.stdout.as_mut() {
-                        let l = f.read(read_buf.as_mut_slice())?;
-                        buf_stdout.extend_from_slice(read_buf.split_at(l).0);
-                        if buf_stdout.len() > max_stdout_length {
-                            return Err(Error::SyscommandOutputLimitExceededError(
-                                max_stdout_length,
-                            ));
-                        }
+                        read_chunk(f, buf_stdout, max_stdout_length)?;
                     }
                 } else if event.token() == mio::Token(2) {
                     if let Some(f) = handle.stderr.as_mut() {
-                        let l = f.read(read_buf.as_mut_slice())?;
-                        buf_stderr.extend_from_slice(read_buf.split_at(l).0);
-                        if buf_stderr.len() > max_stderr_length {
-                            return Err(Error::SyscommandOutputLimitExceededError(
-                                max_stderr_length,
-                            ));
-                        }
+                        read_chunk(f, buf_stderr, max_stderr_length)?;
                     }
                 }
             }
-
             stat = handle.poll();
         }
 
@@ -378,28 +414,10 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         // stdout and stderr
         if stat.is_some() {
             if let Some(f) = handle.stdout.as_mut() {
-                loop {
-                    let l = f.read(read_buf.as_mut_slice())?;
-                    buf_stdout.extend_from_slice(read_buf.split_at(l).0);
-                    if buf_stdout.len() > max_stdout_length {
-                        return Err(Error::SyscommandOutputLimitExceededError(max_stdout_length));
-                    }
-                    if l < BUFFER_SIZE {
-                        break;
-                    }
-                }
+                while read_chunk(f, buf_stdout, max_stdout_length)? {}
             }
             if let Some(f) = handle.stderr.as_mut() {
-                loop {
-                    let l = f.read(read_buf.as_mut_slice())?;
-                    buf_stderr.extend_from_slice(read_buf.split_at(l).0);
-                    if buf_stderr.len() > max_stderr_length {
-                        return Err(Error::SyscommandOutputLimitExceededError(max_stderr_length));
-                    }
-                    if l < BUFFER_SIZE {
-                        break;
-                    }
-                }
+                while read_chunk(f, buf_stderr, max_stderr_length)? {}
             }
         }
 
@@ -413,6 +431,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         end_time,
         cmd_settings.max_stdout_length.unwrap_or(0),
         cmd_settings.max_stderr_length.unwrap_or(0),
+        &syscmd_err,
     )
     .inspect_err(|e| {
         log::warn!("(Terminating process) Runtime error when waiting for it to finish: {e}");
@@ -431,28 +450,34 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         Some(stat) => match stat {
             ExitStatus::Exited(ucode) => {
                 let code = ucode as i32;
-                if cmd_settings.expected_code.map_or(true, |ec| ec == code) {
-                    Ok(SyscommandOutput {
-                        code: code,
-                        stdout: stdout,
-                        stderr: stderr,
-                    })
-                } else {
-                    Err(format!("Exited with unexpected code {code}").into())
+                if let Some(ec) = cmd_settings.expected_code {
+                    if ec != code {
+                        syscmd_err.stdout = cmd_settings.max_stdout_length.map(|_| stdout);
+                        syscmd_err.stderr = cmd_settings.max_stderr_length.map(|_| stderr);
+                        return Err(syscmd_err.code_mismatch(code, ec).as_error());
+                    }
                 }
+                Ok(SyscommandOutput {
+                    code: code,
+                    stdout: stdout,
+                    stderr: stderr,
+                })
             }
-            ExitStatus::Signaled(sig) => Err(format!("Terminated by signal {sig}").into()),
-            ExitStatus::Other(v) => Err(format!("Unknown exit status {v}").into()),
-            ExitStatus::Undetermined => Err("Undetermined error".into()),
+            ExitStatus::Signaled(sig) => Err(syscmd_err
+                .msg(format!("terminated by signal {sig}"))
+                .as_error()),
+            ExitStatus::Other(v) => Err(syscmd_err
+                .msg(format!("unknown exit status {v}"))
+                .as_error()),
+            ExitStatus::Undetermined => Err(syscmd_err.msg("undetermined error").as_error()),
         },
         None => {
             handle
                 .kill()
                 .unwrap_or_else(|e| log::warn!("Could not killed timed out process: {e}"));
-            Err(Error::SyscommandTimeoutError {
-                stdout: Some(stdout),
-                stderr: Some(stderr),
-            })
+            syscmd_err.stdout = cmd_settings.max_stdout_length.map(|_| stdout);
+            syscmd_err.stderr = cmd_settings.max_stderr_length.map(|_| stderr);
+            Err(syscmd_err.timeout(cmd_settings.timeout).as_error())
         }
     }
 }
@@ -460,6 +485,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use asserting::prelude::*;
 
     #[test]
@@ -606,8 +632,10 @@ mod tests {
             },
         );
         assert_that!(&ret).is_err();
-        assert_that!(&ret).err().satisfies(|e| match e {
-            Error::SyscommandTimeoutError { .. } => true,
+        assert_that!(&ret).err().satisfies(|e| match e.kind {
+            ErrorKind::Syscommand(SyscommandError {
+                timeout: Some(_), ..
+            }) => true,
             _ => false,
         });
     }

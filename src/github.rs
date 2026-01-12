@@ -1,7 +1,7 @@
 // Various GitHub related utilities
 // https://docs.rs/reqwest/latest/reqwest/
 
-use crate::{error::Error, settings::Settings};
+use crate::{config::Settings, error::Error};
 use reqwest::{
     self,
     header::{HeaderMap, HeaderValue},
@@ -14,7 +14,18 @@ struct GhCommitMessage {
     body: String,
 }
 
-fn common_headers(settings: &Settings) -> Result<HeaderMap, Error> {
+fn common_headers(settings: &Settings, domain: &str) -> Result<HeaderMap, Error> {
+    let gh_instance = settings
+        .submission
+        .github
+        .known_instances
+        .iter()
+        .find(|gh| gh.domain == domain)
+        .ok_or_else(|| {
+            log::error!("No GitHub host configured for domain {domain}");
+            Error::runtime("Invalid GitHub domain")
+        })?;
+
     let mut headers = HeaderMap::new();
     headers.insert(
         "Accept",
@@ -26,11 +37,15 @@ fn common_headers(settings: &Settings) -> Result<HeaderMap, Error> {
     );
     headers.insert(
         "Authorization",
-        format!("Bearer {}", settings.github.auth_token)
+        format!("Bearer {}", gh_instance.auth_token)
             .parse()
-            .map_err(|_| {
+            .map_err(|e| {
                 log::error!("Could not convert github auth token to header value");
-                Error::from("Invalid header value")
+                Error::parse_type(
+                    "GitHub auth token header value".to_string(),
+                    gh_instance.auth_token.clone(),
+                )
+                .with_cause(Box::new(e))
             })?,
     );
     Ok(headers)
@@ -40,6 +55,7 @@ fn common_headers(settings: &Settings) -> Result<HeaderMap, Error> {
 /// https://docs.github.com/en/enterprise-server@3.16/rest/commits/comments?apiVersion=2022-11-28#create-a-commit-comment
 pub async fn create_commit_message(
     settings: &Settings,
+    domain: &str,
     organization_name: &str,
     repo_name: &str,
     commit_hash: &str,
@@ -49,33 +65,34 @@ pub async fn create_commit_message(
     let response = c
         .post(format!(
             "https://{}/api/v3/repos/{}/{}/commits/{}/comments",
-            settings.github.address, organization_name, repo_name, commit_hash
+            domain, organization_name, repo_name, commit_hash
         ))
-        .headers(common_headers(settings)?)
+        .headers(common_headers(settings, domain)?)
         .json(&GhCommitMessage {
-            body: format!("{}\n\n{}", message, settings.github.comment_signature),
+            body: format!(
+                "{}\n\n{}",
+                message, settings.submission.github.comment_signature
+            ),
         })
         .send()
         .await
         .map_err(|e| {
             log::error!("Error with GitHub commit: {e}");
-            e
+            Error::auto_msg("error with GitHub commit request", e)
         })?;
 
     if 200 <= response.status().as_u16() && response.status().as_u16() < 300 {
         log::debug!("Successfully posted comment to commit {}", commit_hash);
         Ok(())
     } else {
-        let errmsg = format!(
-            "Non-OK response code {} when submitting commit comment: {}",
-            response.status(),
+        Error::err_http_response(
+            "when submitting commit comment".to_string(),
+            response.status().as_u16(),
             response
                 .text()
                 .await
-                .unwrap_or("no text received".to_string())
-        );
-        log::error!("{}", errmsg);
-        Err(Error::from(errmsg))
+                .unwrap_or("no text received".to_string()),
+        )
     }
 }
 
@@ -106,6 +123,7 @@ struct GhCommitStatus {
 /// https://docs.github.com/en/enterprise-server@3.16/rest/commits/statuses?apiVersion=2022-11-28#create-a-commit-status
 pub async fn create_commit_status(
     settings: &Settings,
+    domain: &str,
     organization_name: &str,
     repo_name: &str,
     commit_hash: &str,
@@ -116,9 +134,9 @@ pub async fn create_commit_status(
     let response = c
         .post(format!(
             "https://{}/api/v3/repos/{}/{}/statuses/{}",
-            settings.github.address, organization_name, repo_name, commit_hash
+            domain, organization_name, repo_name, commit_hash
         ))
-        .headers(common_headers(settings)?)
+        .headers(common_headers(settings, domain)?)
         .json(&GhCommitStatus {
             state: state.to_str().to_string(),
             description: description.map(|s| s.to_owned()),
@@ -137,16 +155,14 @@ pub async fn create_commit_status(
         );
         Ok(())
     } else {
-        let errmsg = format!(
-            "Non-OK response code {} when creating commit status: {}",
-            response.status(),
+        Error::err_http_response(
+            "when creating commit status".to_string(),
+            response.status().as_u16(),
             response
                 .text()
                 .await
-                .unwrap_or("no text received".to_string())
-        );
-        log::error!("{}", errmsg);
-        Err(Error::from(errmsg))
+                .unwrap_or("no text received".to_string()),
+        )
     }
 }
 
@@ -154,6 +170,7 @@ pub async fn create_commit_status(
 /// and an error if there was something wrong with the request.
 pub async fn repo_exists(
     settings: &Settings,
+    domain: &str,
     organization_name: &str,
     repo_name: &str,
 ) -> Result<bool, Error> {
@@ -161,9 +178,9 @@ pub async fn repo_exists(
     let response = c
         .get(format!(
             "https://{}/api/v3/repos/{}/{}",
-            settings.github.address, organization_name, repo_name
+            domain, organization_name, repo_name
         ))
-        .headers(common_headers(settings)?)
+        .headers(common_headers(settings, domain)?)
         .send()
         .await
         .map_err(|e| {
@@ -193,6 +210,7 @@ struct GhCreateRepo {
 /// This should primarily be used to create shadow repositories.
 pub async fn create_repo(
     settings: &Settings,
+    domain: &str,
     organization_name: &str,
     repo_name: &str,
     private: bool,
@@ -201,9 +219,9 @@ pub async fn create_repo(
     let response = c
         .post(format!(
             "https://{}/api/v3/orgs/{}/repos",
-            settings.github.address, organization_name
+            domain, organization_name
         ))
-        .headers(common_headers(settings)?)
+        .headers(common_headers(settings, domain)?)
         .json(&GhCreateRepo {
             name: repo_name.to_owned(),
             private: private,
@@ -218,15 +236,13 @@ pub async fn create_repo(
     if 200 <= response.status().as_u16() && response.status().as_u16() < 300 {
         Ok(())
     } else {
-        let errmsg = format!(
-            "Non-OK response code {} when creating GitHub repo: {}",
-            response.status(),
+        Error::err_http_response(
+            "when creating GitHub repository".to_string(),
+            response.status().as_u16(),
             response
                 .text()
                 .await
-                .unwrap_or("no text received".to_string())
-        );
-        log::error!("{}", errmsg);
-        Err(Error::from(errmsg))
+                .unwrap_or("no text received".to_string()),
+        )
     }
 }
