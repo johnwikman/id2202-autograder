@@ -2,7 +2,7 @@ name: id2202-autograder
 
 services:
   autograder:
-    image: localhost/id2202-autograder:1.1.1
+    image: localhost/id2202-autograder:2.0.0-dev1
     depends_on:
       - postgres
     restart: unless-stopped
@@ -65,3 +65,35 @@ services:
       POSTGRES_USER: "autograder"
       POSTGRES_PASSWORD: "ChangeMe"
       PGDATA: /var/lib/postgresql/data/pgdata
+
+  gitlab:
+    image: docker.io/gitlab/gitlab-ce:18.11.5-ce.0
+    restart: unless-stopped
+    shm_size: 256m
+    ports:
+      - "8929:8929"
+      - "2424:22"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - type: bind
+        source: data/gitlab/config
+        target: /etc/gitlab
+        bind:
+          selinux: z
+      - type: bind
+        source: data/gitlab/logs
+        target: /var/log/gitlab
+        bind:
+          selinux: z
+      - type: bind
+        source: data/gitlab/data
+        target: /var/opt/gitlab
+        bind:
+          selinux: z
+    environment:
+      # Note: GitLab requires a "secure" password to create the root user
+      GITLAB_ROOT_PASSWORD: "4JVcnWxCv6SQaT"
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2424

@@ -416,6 +416,18 @@ fn record_to_shadow(
                 gh_src.domain, gh_src.org, gh_src.repo
             ),
         )?,
+        SubmissionInfo::GitLab {
+            sub: _,
+            src: _,
+            gl_src,
+            gl_info: _,
+        } => path_absolute_join(
+            &settings.runner.shadow_dir,
+            format!(
+                "gitlab/{}/{}/{}.git",
+                gl_src.domain, gl_src.namespace, gl_src.repo
+            ),
+        )?,
     };
     if !std::fs::exists(&shadow_repo)? {
         log::info!("The shadow repository does not exist. Creating new shadow repository at path {shadow_repo}");
@@ -521,8 +533,13 @@ fn record_to_shadow(
         }
     }
 
+    let mut cmdadd: Vec<&str> = vec!["git", "-C", &shadow_dir, "add", &date_dir];
+    if std::fs::exists(&snapshot_dir)? {
+        cmdadd.push(&snapshot_dir);
+    }
+
     syscommand_timeout(
-        &["git", "-C", &shadow_dir, "add", &date_dir, &snapshot_dir],
+        cmdadd.as_slice(),
         SyscommandSettings {
             expected_code: Some(0),
             ..Default::default()

@@ -19,12 +19,12 @@ poll_timeout_millisec = 5000
 # Configuration for incoming submissions
 [submission]
 max_tag_length = 128
+max_payload = 65536
+comment_signature = "(_This is an automated response from the autograder_ \U0001F916)"
 
 # Information about GitHub instances that can submit grading jobs
 [submission.github]
 webhook_secret = "s3cr3t"
-max_payload = 65536
-comment_signature = "(_This is an automated response from the autograder_ \U0001F916)"
 
 # Known GitHub servers that we can accept requests from
 [[submission.github.known_instances]]
@@ -35,6 +35,21 @@ allowed_repo_prefixes = ["id2202-"]
 allowed_repo_suffixes = []
 prohibited_repo_prefixes = []
 prohibited_repo_suffixes = ["-shadow"]
+
+# Information about GitLab instances that can submit grading jobs
+[submission.gitlab]
+webhook_secret = "s3cr3t"
+
+# Known GitLab instances that we can accept requests from
+[[submission.gitlab.known_instances]]
+domain = "localhost:8929"
+auth_token = "ChangeMe"
+allowed_namespaces = ["id2202-test", "id2202-2025-testing"]
+allowed_repo_prefixes = ["id2202-"]
+allowed_repo_suffixes = []
+prohibited_repo_prefixes = []
+prohibited_repo_suffixes = []
+use_https = false
 
 # Postgres configuration
 [postgres]

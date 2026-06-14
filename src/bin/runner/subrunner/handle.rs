@@ -195,70 +195,52 @@ impl SubmissionRunnerHandle {
         // After this point we need to make sure that the workspace_dir is
         // deleted when the TestRunnerHandle is dropped.
 
-        match subinfo {
-            SubmissionInfo::GitHub {
-                sub: _,
-                src: _,
-                gh_src,
-                gh_info,
-            } => {
-                // A way to check out a specific commit, without the cloning the whole history
-                let gitcmd_settings = SyscommandSettings {
-                    expected_code: Some(0),
-                    ..Default::default()
-                };
-                std::fs::create_dir_all(&source_dir)
-                    .map_err(Error::from)
-                    .and_then(|_| {
-                        syscommand_timeout(
-                            &["git", "-C", &source_dir, "init"],
-                            gitcmd_settings.to_owned(),
-                        )
-                    })
-                    .and_then(|_| {
-                        syscommand_timeout(
-                            &[
-                                "git",
-                                "-C",
-                                &source_dir,
-                                "remote",
-                                "add",
-                                "origin",
-                                &format!(
-                                    "git@{}:{}/{}.git",
-                                    &gh_src.domain, &gh_src.org, &gh_src.repo,
-                                ),
-                            ],
-                            gitcmd_settings.to_owned(),
-                        )
-                    })
-                    .and_then(|_| {
-                        syscommand_timeout(
-                            &[
-                                "git",
-                                "-C",
-                                &source_dir,
-                                "fetch",
-                                "--depth",
-                                "1",
-                                "origin",
-                                &gh_info.commit,
-                            ],
-                            gitcmd_settings.to_owned(),
-                        )
-                    })
-                    .and_then(|_| {
-                        syscommand_timeout(
-                            &["git", "-C", &source_dir, "checkout", "FETCH_HEAD"],
-                            gitcmd_settings.to_owned(),
-                        )
-                    })
-                    .map_err(|e| {
-                        log::error!("Error cloning repository {}: {e}", &gh_src.repo);
-                        internal_error_report()
-                    })?;
-            }
-        }
+        let (ssh_url, commit) = subinfo.ssh_url_and_commit();
+
+        // A way to check out a specific commit, without the cloning the whole history
+        let gitcmd_settings = SyscommandSettings {
+            expected_code: Some(0),
+            ..Default::default()
+        };
+        std::fs::create_dir_all(&source_dir)
+            .map_err(Error::from)
+            .and_then(|_| {
+                syscommand_timeout(
+                    &["git", "-C", &source_dir, "init"],
+                    gitcmd_settings.to_owned(),
+                )
+            })
+            .and_then(|_| {
+                syscommand_timeout(
+                    &["git", "-C", &source_dir, "remote", "add", "origin", ssh_url],
+                    gitcmd_settings.to_owned(),
+                )
+            })
+            .and_then(|_| {
+                syscommand_timeout(
+                    &[
+                        "git",
+                        "-C",
+                        &source_dir,
+                        "fetch",
+                        "--depth",
+                        "1",
+                        "origin",
+                        commit,
+                    ],
+                    gitcmd_settings.to_owned(),
+                )
+            })
+            .and_then(|_| {
+                syscommand_timeout(
+                    &["git", "-C", &source_dir, "checkout", "FETCH_HEAD"],
+                    gitcmd_settings.to_owned(),
+                )
+            })
+            .map_err(|e| {
+                log::error!("Error cloning repository from {}: {e}", ssh_url);
+                internal_error_report()
+            })?;
 
         let deadline_time = SystemTime::now()
             .checked_add(Duration::from_secs(tests.default.timeout_total.into()))

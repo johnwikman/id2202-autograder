@@ -47,7 +47,9 @@ CREATE TABLE "submission_source_github" (
 
     "domain" TEXT NOT NULL, -- domain, e.g. github.foo.bar.com
 	"org" TEXT NOT NULL,    -- the organization of the repository
-	"repo" TEXT NOT NULL,    -- repository name, excluding the organization
+	"repo" TEXT NOT NULL,   -- repository name, excluding the organization
+
+	"ssh_url" TEXT NOT NULL, -- URL used to clone repo over SSH
 
 	UNIQUE ("domain", "org", "repo")
 );

@@ -53,7 +53,7 @@ curl -L -v -X POST \
   -H "X-GitHub-Hook-Installation-Target-ID: 26328" \
   -H "X-GitHub-Hook-Installation-Target-Type: organization" \
   -H "X-Hub-Signature-256: sha256=$HMAC_OUTPUT" \
- "http://127.0.0.1:8080/api/github-submit" \
+ "http://127.0.0.1:8080/api/submit/github" \
  -d "$PAYLOAD"
 
 echo

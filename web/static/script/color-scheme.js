@@ -7,8 +7,8 @@
 (() => {
   "use strict";
 
-  const getStoredTheme = () => localStorage.getItem("theme");
-  const setStoredTheme = (theme) => localStorage.setItem("theme", theme);
+  const getStoredTheme = () => localStorage.getItem("autograder-color-scheme");
+  const setStoredTheme = (theme) => localStorage.setItem("autograder-color-scheme", theme);
 
   const getPreferredTheme = () => {
     const storedTheme = getStoredTheme();

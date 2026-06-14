@@ -688,7 +688,7 @@ impl MismatchInfo<String> {
         ));
 
         if self.allowed_alternatives.len() == 1 {
-            outstr.push_str(&format!("**Expected {}**:\n\n", output_name));
+            outstr.push_str(&format!("\n\n**Expected {}**:\n\n", output_name));
             outstr.push_str(&md_preformatted_with_truncation(
                 &self.allowed_alternatives.get(0).unwrap(),
                 Some(settings.truncate_len),

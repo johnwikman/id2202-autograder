@@ -87,9 +87,21 @@ pub struct SubmissionSettings {
     #[config(env = "AUTOGRADER_SUBMISSION_MAX_TAG_LENGTH")]
     pub max_tag_length: usize,
 
+    /// Maximum size of incoming JSON payload
+    #[config(env = "AUTOGRADER_SUBMISSION_MAX_PAYLOAD")]
+    pub max_payload: usize,
+
+    /// A signature to place at the end of every comment made on GitLab
+    #[config(env = "AUTOGRADER_SUBMISSION_COMMENT_SIGNATURE")]
+    pub comment_signature: String,
+
     /// Settings for submissions coming from a GitHub instance
     #[config(nested)]
     pub github: GitHubSettings,
+
+    /// Settings for submissions coming from a GitLab instance
+    #[config(nested)]
+    pub gitlab: GitLabSettings,
 }
 
 /// Settings specific to incoming GitHub requests. See `ServerSettings` for
@@ -100,17 +112,7 @@ pub struct GitHubSettings {
     #[config(env = "AUTOGRADER_SUBMISSION_GITHUB_WEBHOOK_SECRET")]
     pub webhook_secret: String,
 
-    /// Maximum size of incoming JSON payload
-    #[config(env = "AUTOGRADER_SUBMISSION_GITHUB_MAX_PAYLOAD")]
-    pub max_payload: usize,
-
-    /// A signature to place at the end of every comment made on GitHub
-    #[config(env = "AUTOGRADER_SUBMISSION_GITHUB_COMMENT_SIGNATURE")]
-    pub comment_signature: String,
-
     /// Information for specific instances.
-    ///
-    /// (Not configurable using environment variables.)
     pub known_instances: Vec<GitHubServerSettings>,
 }
 
@@ -142,6 +144,56 @@ pub struct GitHubServerSettings {
     /// A repository is not allowed to end with one of these strings to be
     /// graded.
     pub prohibited_repo_suffixes: Vec<String>,
+}
+
+/// Settings specific to incoming GitLab requests. See `ServerSettings` for
+/// generic HTTP settings that applies to all incoming requests.
+#[derive(Config, Deserialize, Debug, Clone)]
+pub struct GitLabSettings {
+    /// Webhook secret used to validate incoming requests
+    #[config(env = "AUTOGRADER_SUBMISSION_GITLAB_WEBHOOK_SECRET")]
+    pub webhook_secret: String,
+
+    /// Information for specific instances.
+    pub known_instances: Vec<GitLabServerSettings>,
+}
+
+/// Settings for a single GitLab server. See `GitLabSettings` for settings that
+/// apply to all GitLab servers.
+#[derive(Config, Deserialize, Debug, Clone)]
+pub struct GitLabServerSettings {
+    /// The domain address at which the GitLab instance is hosted at
+    pub domain: String,
+
+    /// GitLab authorization token for using the API
+    pub auth_token: String,
+
+    /// GitLab namespaces to accept grading requests from. If not empty, the
+    /// repository must be part of one of these namespaces.
+    pub allowed_namespaces: Vec<String>,
+
+    /// Allowed repository prefixes: If not empty, a repository must start with
+    /// one of these prefix strings to be graded.
+    pub allowed_repo_prefixes: Vec<String>,
+
+    /// Allowed repository suffixes: If not empty, a repository must end with
+    /// one of these suffix strings to be graded.
+    pub allowed_repo_suffixes: Vec<String>,
+
+    /// A repository is not allowed to start with one of these strings to be
+    /// graded.
+    pub prohibited_repo_prefixes: Vec<String>,
+
+    /// A repository is not allowed to end with one of these strings to be
+    /// graded.
+    pub prohibited_repo_suffixes: Vec<String>,
+
+    /// Whether or not HTTPS should be used when invoking the API
+    ///
+    /// ### Warning
+    /// This should only ever be used when testing against a local GitLab
+    /// instance. Use with caution.
+    pub use_https: bool,
 }
 
 #[derive(Config, Deserialize, Debug, Clone)]
@@ -285,9 +337,9 @@ impl Settings {
 
         // Additional environment variables not captured by confique
         if let Ok(values) = std::env::var("AUTOGRADER_GITHUB_AUTH_TOKENS") {
-            // Format: domain1:token;domain2:token
+            // Format: domain1=token;domain2=token
             for v in values.split(";") {
-                match v.split(":").collect::<Vec<_>>().as_slice() {
+                match v.split("=").collect::<Vec<_>>().as_slice() {
                     &[domain, token] => {
                         match s
                             .submission
@@ -309,6 +361,36 @@ impl Settings {
                     _ => {
                         log::warn!(
                             "Invalid format for environment variable AUTOGRADER_GITHUB_AUTH_TOKENS"
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Ok(values) = std::env::var("AUTOGRADER_GITLAB_AUTH_TOKENS") {
+            for v in values.split(";") {
+                match v.split("=").collect::<Vec<_>>().as_slice() {
+                    &[domain, token] => {
+                        match s
+                            .submission
+                            .gitlab
+                            .known_instances
+                            .iter_mut()
+                            .find(|gl| gl.domain == domain.trim())
+                        {
+                            Some(gl_instance) => {
+                                gl_instance.auth_token = token.to_string();
+                            }
+                            None => {
+                                log::warn!(
+                                    "Unrecognized domain in environment variable AUTOGRADER_GITLAB_AUTH_TOKENS"
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        log::warn!(
+                            "Invalid format for environment variable AUTOGRADER_GITLAB_AUTH_TOKENS"
                         );
                     }
                 }

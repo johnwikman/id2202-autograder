@@ -14,11 +14,16 @@ struct Args {
     settings: String,
 }
 
-async fn not_found(req: HttpRequest) -> Result<impl Responder, actix_web::Error> {
+async fn not_found(
+    data: web::Data<Settings>,
+    req: HttpRequest,
+) -> Result<impl Responder, actix_web::Error> {
+    let settings = data.get_ref();
+
     if req.path().starts_with("/api") {
         api::not_found(req)
     } else {
-        route::not_found()
+        route::not_found(settings)
     }
 }
 
@@ -31,8 +36,9 @@ async fn main() -> Result<(), Error> {
     HttpServer::new(move || {
         let s = s_clone1.clone();
         App::new()
+            .app_data(web::Data::new(s.clone()))
             .configure(|cfg| route::config(cfg, &s))
-            .configure(|cfg| api::config(cfg, &s))
+            .configure(|cfg| api::config(cfg, &s, "/api"))
             .default_service(web::to(not_found))
     })
     .bind((s.server.address, s.server.port))?

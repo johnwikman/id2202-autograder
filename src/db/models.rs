@@ -59,12 +59,14 @@ impl std::fmt::Display for SubmissionStatusCode {
 #[derive(Debug, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum SubmissionSourceKind {
     GitHub = 0,
+    GitLab = 1,
 }
 
 impl std::fmt::Display for SubmissionSourceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::GitHub => write!(f, "GitHub"),
+            Self::GitLab => write!(f, "GitLab"),
         }
     }
 }
@@ -125,6 +127,7 @@ pub struct SubmissionSourceGitHub {
     pub domain: String,
     pub org: String,
     pub repo: String,
+    pub ssh_url: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -134,6 +137,7 @@ pub struct NewSubmissionSourceGitHub {
     pub domain: String,
     pub org: String,
     pub repo: String,
+    pub ssh_url: String,
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable, Associations)]
@@ -159,6 +163,50 @@ pub struct NewSubmissionInfoGitHub {
     pub commit: String,
 }
 
+#[derive(Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable)]
+#[diesel(table_name = crate::db::schema::submission_source_gitlab)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct SubmissionSourceGitLab {
+    pub id: i64,
+    pub domain: String,
+    pub namespace: String,
+    pub repo: String,
+    pub ssh_url: String,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::db::schema::submission_source_gitlab)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct NewSubmissionSourceGitLab {
+    pub domain: String,
+    pub namespace: String,
+    pub repo: String,
+    pub ssh_url: String,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable, Associations)]
+#[diesel(belongs_to(Submission))]
+#[diesel(belongs_to(SubmissionSourceGitLab, foreign_key = gitlab_source_id))]
+#[diesel(table_name = crate::db::schema::submission_info_gitlab)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct SubmissionInfoGitLab {
+    pub id: i64,
+    pub submission_id: i64,
+    pub gitlab_source_id: i64,
+    pub user: String,
+    pub commit: String,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::db::schema::submission_info_gitlab)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct NewSubmissionInfoGitLab {
+    pub submission_id: i64,
+    pub gitlab_source_id: i64,
+    pub user: String,
+    pub commit: String,
+}
+
 /// Enumerator containing information over the possible sources
 #[derive(Debug, Clone)]
 pub enum SubmissionInfo {
@@ -168,17 +216,37 @@ pub enum SubmissionInfo {
         gh_src: SubmissionSourceGitHub,
         gh_info: SubmissionInfoGitHub,
     },
+    GitLab {
+        sub: Submission,
+        src: SubmissionSource,
+        gl_src: SubmissionSourceGitLab,
+        gl_info: SubmissionInfoGitLab,
+    },
 }
 
 impl SubmissionInfo {
     pub fn get_submission(&self) -> &Submission {
         match self {
             Self::GitHub { sub, .. } => sub,
+            Self::GitLab { sub, .. } => sub,
         }
     }
     pub fn get_source(&self) -> &SubmissionSource {
         match self {
             Self::GitHub { src, .. } => src,
+            Self::GitLab { src, .. } => src,
+        }
+    }
+
+    /// Returns a tuple containing `(SSH URL, Commit)`
+    pub fn ssh_url_and_commit(&self) -> (&str, &str) {
+        match self {
+            Self::GitHub {
+                gh_src, gh_info, ..
+            } => (&gh_src.ssh_url, &gh_info.commit),
+            Self::GitLab {
+                gl_src, gl_info, ..
+            } => (&gl_src.ssh_url, &gl_info.commit),
         }
     }
 }

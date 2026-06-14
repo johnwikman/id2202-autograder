@@ -1,7 +1,10 @@
 // Various GitHub related utilities
 // https://docs.rs/reqwest/latest/reqwest/
 
-use crate::{config::Settings, error::Error};
+use crate::{
+    config::{settings::GitHubServerSettings, Settings},
+    error::Error,
+};
 use reqwest::{
     self,
     header::{HeaderMap, HeaderValue},
@@ -14,18 +17,11 @@ struct GhCommitMessage {
     body: String,
 }
 
-fn common_headers(settings: &Settings, domain: &str) -> Result<HeaderMap, Error> {
-    let gh_instance = settings
-        .submission
-        .github
-        .known_instances
-        .iter()
-        .find(|gh| gh.domain == domain)
-        .ok_or_else(|| {
-            log::error!("No GitHub host configured for domain {domain}");
-            Error::runtime("Invalid GitHub domain")
-        })?;
-
+/// Common HTTP headers for GitHub API calls.
+fn common_headers(
+    _settings: &Settings,
+    instance: &GitHubServerSettings,
+) -> Result<HeaderMap, Error> {
     let mut headers = HeaderMap::new();
     headers.insert(
         "Accept",
@@ -37,13 +33,13 @@ fn common_headers(settings: &Settings, domain: &str) -> Result<HeaderMap, Error>
     );
     headers.insert(
         "Authorization",
-        format!("Bearer {}", gh_instance.auth_token)
+        format!("Bearer {}", instance.auth_token)
             .parse()
             .map_err(|e| {
                 log::error!("Could not convert github auth token to header value");
                 Error::parse_type(
                     "GitHub auth token header value".to_string(),
-                    gh_instance.auth_token.clone(),
+                    instance.auth_token.clone(),
                 )
                 .with_cause(Box::new(e))
             })?,
@@ -55,7 +51,7 @@ fn common_headers(settings: &Settings, domain: &str) -> Result<HeaderMap, Error>
 /// https://docs.github.com/en/enterprise-server@3.16/rest/commits/comments?apiVersion=2022-11-28#create-a-commit-comment
 pub async fn create_commit_message(
     settings: &Settings,
-    domain: &str,
+    instance: &GitHubServerSettings,
     organization_name: &str,
     repo_name: &str,
     commit_hash: &str,
@@ -65,14 +61,11 @@ pub async fn create_commit_message(
     let response = c
         .post(format!(
             "https://{}/api/v3/repos/{}/{}/commits/{}/comments",
-            domain, organization_name, repo_name, commit_hash
+            instance.domain, organization_name, repo_name, commit_hash
         ))
-        .headers(common_headers(settings, domain)?)
+        .headers(common_headers(settings, instance)?)
         .json(&GhCommitMessage {
-            body: format!(
-                "{}\n\n{}",
-                message, settings.submission.github.comment_signature
-            ),
+            body: format!("{}\n\n{}", message, settings.submission.comment_signature),
         })
         .send()
         .await
@@ -123,7 +116,7 @@ struct GhCommitStatus {
 /// https://docs.github.com/en/enterprise-server@3.16/rest/commits/statuses?apiVersion=2022-11-28#create-a-commit-status
 pub async fn create_commit_status(
     settings: &Settings,
-    domain: &str,
+    instance: &GitHubServerSettings,
     organization_name: &str,
     repo_name: &str,
     commit_hash: &str,
@@ -134,9 +127,9 @@ pub async fn create_commit_status(
     let response = c
         .post(format!(
             "https://{}/api/v3/repos/{}/{}/statuses/{}",
-            domain, organization_name, repo_name, commit_hash
+            instance.domain, organization_name, repo_name, commit_hash
         ))
-        .headers(common_headers(settings, domain)?)
+        .headers(common_headers(settings, instance)?)
         .json(&GhCommitStatus {
             state: state.to_str().to_string(),
             description: description.map(|s| s.to_owned()),
@@ -170,7 +163,7 @@ pub async fn create_commit_status(
 /// and an error if there was something wrong with the request.
 pub async fn repo_exists(
     settings: &Settings,
-    domain: &str,
+    instance: &GitHubServerSettings,
     organization_name: &str,
     repo_name: &str,
 ) -> Result<bool, Error> {
@@ -178,9 +171,9 @@ pub async fn repo_exists(
     let response = c
         .get(format!(
             "https://{}/api/v3/repos/{}/{}",
-            domain, organization_name, repo_name
+            instance.domain, organization_name, repo_name
         ))
-        .headers(common_headers(settings, domain)?)
+        .headers(common_headers(settings, instance)?)
         .send()
         .await
         .map_err(|e| {
@@ -210,7 +203,7 @@ struct GhCreateRepo {
 /// This should primarily be used to create shadow repositories.
 pub async fn create_repo(
     settings: &Settings,
-    domain: &str,
+    instance: &GitHubServerSettings,
     organization_name: &str,
     repo_name: &str,
     private: bool,
@@ -219,9 +212,9 @@ pub async fn create_repo(
     let response = c
         .post(format!(
             "https://{}/api/v3/orgs/{}/repos",
-            domain, organization_name
+            instance.domain, organization_name
         ))
-        .headers(common_headers(settings, domain)?)
+        .headers(common_headers(settings, instance)?)
         .json(&GhCreateRepo {
             name: repo_name.to_owned(),
             private: private,

@@ -459,6 +459,13 @@ impl _UntreatedTest {
                     // Override options from ut_opts
                     let mut new_opts = ut_opts.to_owned();
                     for (k, v) in opts.iter() {
+                        // Check if we should "unignore a key"
+                        match k.as_str() {
+                            "stdin" | "run_stdin" | "mimetype_prefix" => {
+                                new_opts.insert(format!("{k}_ignore"), toml::Value::Boolean(false));
+                            }
+                            _ => {}
+                        }
                         new_opts.insert(k.to_owned(), v.to_owned());
                     }
                     new_ut.options = Some(new_opts);
@@ -677,17 +684,6 @@ impl TestGroup {
                         .as_error()
                         .with_cause(Box::new(e))
                 })?;
-                // If any option has an "ignore" flag, we set that to false by
-                // default if specified
-                for k in opts.keys() {
-                    let ignore_key = format!("{k}_ignore");
-                    match run_opts.get(&ignore_key) {
-                        Some(toml::Value::Boolean(_)) => {
-                            run_opts.insert(ignore_key, toml::Value::Boolean(false));
-                        }
-                        _ => {}
-                    }
-                }
                 for (k, v) in opts {
                     if !run_opts.contains_key(&k) {
                         return Err(tc_err.msg("invalid test.option key").key(k).into());

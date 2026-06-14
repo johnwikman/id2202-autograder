@@ -1,13 +1,42 @@
 <% include!("../header.stpl"); %>
 
-<h1 class="display-1">Information about Submission <%= submission_id %></h1>
+<div class="py-4 text-center">
+  <h1 class="h2">Submission <%= submission_id %></h1>
+</div>
 
-<p class="lead">
-    This will show information about submission <%= submission_id %> eventually.
-</p>
-
-<p class="report">
-    <%= report_markdown %>
-</p>
+<div class="row g-5">
+    <div class="col-lg-5 col-xl-4 order-lg-last">
+    <% for list in &status_lists { %>
+        <% if let Some(list_title) = &list.title { %>
+          <div class="py-2 text-center">
+            <% if let Some(url) = &list.title_href { %>
+            <a href="<%= url %>">
+            <% } %>
+            <h5 class="my-0">
+              <%= list_title %>
+            </h5>
+            <% if list.title_href.is_some() { %>
+            </a>
+            <% } %>
+          </div>
+        <% } %>
+        <ul class="list-group mb-3">
+        <% for item in &list.items { %>
+          <li class="list-group-item d-flex justify-content-between lh-sm <%= item.li_class %>">
+            <div>
+              <h6 class="my-0 me-3"><%= item.label %></h6>
+            </div>
+            <span class="text-body-secondary d-inline-block text-truncate <%= item.value_span_class %>">
+              <%= item.value %>
+            </span>
+          </li>
+        <% } %>
+        </ul>
+    <% } %>
+    </div>
+    <div class="col-lg-7 col-xl-8">
+        <%= report %>
+    </div>
+</div>
 
 <% include!("../footer.stpl"); %>

@@ -11,11 +11,12 @@ use std::time::SystemTime;
 use crate::{
     config::Settings,
     db::models::{
-        NewSubmission, Submission, SubmissionInfo, SubmissionInfoGitHub, SubmissionSource,
-        SubmissionSourceGitHub, SubmissionSourceKind, SubmissionStatusCode,
+        NewSubmission, Submission, SubmissionInfo, SubmissionInfoGitHub, SubmissionInfoGitLab,
+        SubmissionSource, SubmissionSourceGitHub, SubmissionSourceGitLab, SubmissionSourceKind,
+        SubmissionStatusCode,
     },
     error::Error,
-    github,
+    github, gitlab,
     reporting::Report,
 };
 
@@ -76,6 +77,7 @@ impl DatabaseConnection {
         user: &str,
         org: &str,
         repo: &str,
+        ssh_url: &str,
         commit: &str,
     ) -> Result<i64, Error> {
         use crate::db::{
@@ -111,6 +113,7 @@ impl DatabaseConnection {
                     domain: domain.to_string(),
                     org: org.to_string(),
                     repo: repo.to_string(),
+                    ssh_url: ssh_url.to_string(),
                 })
                 .on_conflict_do_nothing()
                 .returning(SubmissionSourceGitHub::as_returning())
@@ -197,11 +200,131 @@ impl DatabaseConnection {
         })
     }
 
+    /// Registers an incoming GitLab submission in the database.
+    ///
+    /// See `register_github_submission` for more details.
+    pub fn register_gitlab_submission(
+        &mut self,
+        grading_tags: &Vec<&str>,
+        domain: &str,
+        user: &str,
+        namespace: &str,
+        repo: &str,
+        ssh_url: &str,
+        commit: &str,
+    ) -> Result<i64, Error> {
+        use crate::db::{
+            models::{NewSubmissionInfoGitLab, SubmissionSourceGitLab},
+            schema::{submission_info_gitlab, submissions},
+        };
+
+        let (src, gh_src) = self.conn.transaction(|conn| {
+                use crate::db::{
+                    models::{
+                        NewSubmissionSource, NewSubmissionSourceGitLab,
+                    },
+                    schema::{
+                        submission_source_gitlab::{self, columns as glsrc_col},
+                        submission_sources::{self, columns as src_col},
+                    },
+                };
+                let glsrc_insert_check = diesel::insert_into(submission_source_gitlab::table)
+                    .values(NewSubmissionSourceGitLab {
+                        domain: domain.to_string(),
+                        namespace: namespace.to_string(),
+                        repo: repo.to_string(),
+                        ssh_url: ssh_url.to_string(),
+                    })
+                    .on_conflict_do_nothing()
+                    .returning(SubmissionSourceGitLab::as_returning())
+                    .get_result(conn)
+                    .optional()?;
+
+                if let Some(new_gl_src) = glsrc_insert_check {
+                    // Inserted a new row into the GitHub submissions, so need to
+                    // insert a row into the submission_source table too. Also
+                    // generate a random auth_key for this source.
+                    let mut key: Vec<u8> = vec![0u8; 32];
+                    rand::rng().fill_bytes(key.as_mut_slice());
+
+                    let src = diesel::insert_into(submission_sources::table)
+                        .values(NewSubmissionSource {
+                            kind: SubmissionSourceKind::GitLab as i32,
+                            kind_id: new_gl_src.id,
+                            auth_key: bs58::encode(key).into_string(),
+                        })
+                        .returning(SubmissionSource::as_returning())
+                        .get_result(conn)
+                        .inspect_err(|e: &diesel::result::Error| {
+                            log::error!(
+                                    "Could not insert a submission source for GitHub source id {}: {}",
+                                    new_gl_src.id,
+                                e,
+                            )
+                        })?;
+
+                    Ok::<_, diesel::result::Error>((src, new_gl_src))
+                } else {
+                    let gl_src = submission_source_gitlab::table
+                        .select(SubmissionSourceGitLab::as_select())
+                        .filter(glsrc_col::domain.eq(domain))
+                        .filter(glsrc_col::namespace.eq(namespace))
+                        .filter(glsrc_col::repo.eq(repo))
+                        .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitLab source in the database with {} {} {}: {}", domain, namespace, repo, e)})?;
+
+                    let src = submission_sources::table
+                        .select(SubmissionSource::as_select())
+                        .filter(src_col::kind.eq(SubmissionSourceKind::GitLab as i32))
+                        .filter(src_col::kind_id.eq(gl_src.id))
+                        .first(conn)
+                        .inspect_err(|e: &diesel::result::Error| {
+                            log::error!("Expected to find a submission source referencing GitLab source with id {}: {}", gl_src.id, e)
+                        })?;
+
+                    Ok((src, gl_src))
+                }
+            })?;
+
+        self.conn.transaction(|conn| {
+            let sub: Submission = diesel::insert_into(submissions::table)
+                .values(NewSubmission {
+                    date_submitted: std::time::SystemTime::now(),
+                    grading_tags: grading_tags.join(";"),
+                    exec_finished: false,
+                    exec_status_code: SubmissionStatusCode::NotStarted as i32,
+                    source_id: src.id,
+                })
+                .returning(Submission::as_returning())
+                .get_result(conn)
+                .map_err(|e: diesel::result::Error| {
+                    log::error!("Could not insert new submission into database: {e}");
+                    Error::auto_msg("could not insert new submission into database", e)
+                })?;
+
+            diesel::insert_into(submission_info_gitlab::table)
+                .values(NewSubmissionInfoGitLab {
+                    submission_id: sub.id,
+                    gitlab_source_id: gh_src.id,
+                    commit: commit.to_string(),
+                    user: user.to_string(),
+                })
+                .execute(conn)
+                .map_err(|e: diesel::result::Error| {
+                    log::error!("Could not insert GitLab info into database: {e}");
+                    Error::auto_msg("could not insert new submission into database", e)
+                })?;
+
+            Ok(sub.id)
+        })
+    }
+
     /// Returns all information submission with the specified submission id.
     pub fn get_submission_info(&mut self, sub_id: i64) -> Result<SubmissionInfo, Error> {
         use crate::db::schema::{
             submission_info_github::{self, columns as ghinfo_col},
+            submission_info_gitlab::{self, columns as glinfo_col},
             submission_source_github::{self, columns as ghsrc_col},
+            submission_source_gitlab::{self, columns as glsrc_col},
             submission_sources::{self, columns as subsrc_col},
             submissions::{self, columns as sub_col},
         };
@@ -242,6 +365,25 @@ impl DatabaseConnection {
                     src: src,
                     gh_src: gh_src,
                     gh_info: gh_info,
+                })
+            }
+            Some(SubmissionSourceKind::GitLab) => {
+                let gl_src = submission_source_gitlab::table
+                    .select(SubmissionSourceGitLab::as_select())
+                    .filter(glsrc_col::id.eq(src.kind_id))
+                    .first(&mut self.conn)?;
+
+                let gl_info = submission_info_gitlab::table
+                    .select(SubmissionInfoGitLab::as_select())
+                    .filter(glinfo_col::submission_id.eq(sub.id))
+                    .filter(glinfo_col::gitlab_source_id.eq(gl_src.id))
+                    .first(&mut self.conn)?;
+
+                Ok(SubmissionInfo::GitLab {
+                    sub: sub,
+                    src: src,
+                    gl_src: gl_src,
+                    gl_info: gl_info,
                 })
             }
             None => Error::err_runtime(format!(
@@ -420,43 +562,118 @@ impl DatabaseConnection {
                 let (domain, org, repo, commit) =
                     (&gh_src.domain, &gh_src.org, &gh_src.repo, &gh_info.commit);
 
-                rt.block_on(async {
-                    github::create_commit_message(
-                        settings,
-                        domain,
-                        org,
-                        repo,
-                        commit,
-                        &report.to_markdown(&settings.reporting.markdown),
-                    )
-                    .await
-                })
-                .unwrap_or_else(|e| {
-                    log::warn!("Could not create message for commit {commit} on {repo}: {e}");
-                });
+                if let Some(instance) = settings
+                    .submission
+                    .github
+                    .known_instances
+                    .iter()
+                    .find(|ki| ki.domain == *domain)
+                {
+                    rt.block_on(async {
+                        github::create_commit_message(
+                            settings,
+                            instance,
+                            org,
+                            repo,
+                            commit,
+                            &report.to_markdown(&settings.reporting.markdown),
+                        )
+                        .await
+                    })
+                    .unwrap_or_else(|e| {
+                        log::warn!("Could not create message for commit {commit} on {repo}: {e}");
+                    });
 
-                let gh_state: github::CommitState = match status {
-                    SSC::NotStarted | SSC::Running => GHCS::Pending,
-                    SSC::Success => GHCS::Success,
-                    SSC::SubmissionError
-                    | SSC::BuildError
-                    | SSC::BuildTimedOut
-                    | SSC::TestCasesFailed
-                    | SSC::TestCasesTimedOut
-                    | SSC::OutputLimitExceeded
-                    | SSC::SubmissionTimedOut => GHCS::Failure,
-                    SSC::AutograderFailure => GHCS::Failure,
-                };
+                    let gh_state: github::CommitState = match status {
+                        SSC::NotStarted | SSC::Running => GHCS::Pending,
+                        SSC::Success => GHCS::Success,
+                        SSC::SubmissionError
+                        | SSC::BuildError
+                        | SSC::BuildTimedOut
+                        | SSC::TestCasesFailed
+                        | SSC::TestCasesTimedOut
+                        | SSC::OutputLimitExceeded
+                        | SSC::SubmissionTimedOut => GHCS::Failure,
+                        SSC::AutograderFailure => GHCS::Failure,
+                    };
 
-                rt.block_on(async {
-                    github::create_commit_status(
-                        settings, domain, org, repo, commit, gh_state, None,
-                    )
-                    .await
-                })
-                .unwrap_or_else(|e| {
-                    log::warn!("Could not set status for commit {commit} on {repo}: {e}");
-                });
+                    rt.block_on(async {
+                        github::create_commit_status(
+                            settings, instance, org, repo, commit, gh_state, None,
+                        )
+                        .await
+                    })
+                    .unwrap_or_else(|e| {
+                        log::warn!("Could not set status for commit {commit} on {repo}: {e}");
+                    });
+                } else {
+                    log::warn!("Could not set statis for commit {commit}: No GitHub instance configured for domain {domain}.");
+                }
+            }
+            SubmissionInfo::GitLab {
+                sub,
+                src: _,
+                gl_src,
+                gl_info,
+            } => {
+                use crate::gitlab::CommitState as GLCS;
+
+                log::debug!("Setting commit information for submission {}", sub.id);
+                let (domain, namespace, repo, commit) = (
+                    &gl_src.domain,
+                    &gl_src.namespace,
+                    &gl_src.repo,
+                    &gl_info.commit,
+                );
+
+                if let Some(instance) = settings
+                    .submission
+                    .gitlab
+                    .known_instances
+                    .iter()
+                    .find(|ki| ki.domain == *domain)
+                {
+                    rt.block_on(async {
+                        gitlab::create_commit_message(
+                            settings,
+                            instance,
+                            namespace,
+                            repo,
+                            commit,
+                            &report.to_markdown(&settings.reporting.markdown),
+                        )
+                        .await
+                    })
+                    .unwrap_or_else(|e| {
+                        log::warn!("Could not create message for commit {commit} on {repo}: {e}");
+                    });
+
+                    let gl_state: gitlab::CommitState = match status {
+                        SSC::NotStarted => GLCS::Pending,
+                        SSC::Running => GLCS::Running,
+                        SSC::Success => GLCS::Success,
+                        SSC::SubmissionError
+                        | SSC::BuildError
+                        | SSC::BuildTimedOut
+                        | SSC::TestCasesFailed
+                        | SSC::TestCasesTimedOut
+                        | SSC::OutputLimitExceeded
+                        | SSC::SubmissionTimedOut => GLCS::Failed,
+                        SSC::AutograderFailure => GLCS::Canceled,
+                    };
+
+                    rt.block_on(async {
+                        gitlab::set_commit_status(
+                            settings, instance, namespace, repo, commit, gl_state, None,
+                        )
+                        .await
+                    })
+                    .unwrap_or_else(|e| {
+                        log::warn!("Could not set status for commit {commit} on {repo}: {e}");
+                    });
+                } else {
+                    log::warn!("Could not set statis for commit {commit}: No GitLab instance configured for domain {domain}.");
+                }
             }
         }
 

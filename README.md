@@ -20,61 +20,24 @@ the docker image:
 sudo just build-image
 ```
 
-## Development Practice
+## Test Structure
+The structure of the tests cases are shown in `example/tests`. At the root of this directory sits the file `tests.toml` that specify overarching test configuration such as default values and grading tags.
 
-Development is easiest when running the autograder locally on your computer.
+The configuration is specified in a hierarchical TOML structure. A test case is specified as a file ending with `.test.toml`. That file can specify every detail of the test case. Anything that is not specified is inherited by a `config.toml` file located in the same directory. This inheritence is repeated until the root of the test directory.
 
-### Dev Dependencies
+A test is specified as follows:
 
-The following dependencies are required to install on your system:
+```toml
+[test]
+kind = "run"
 
-* Rust (`cargo` should be present on the path)
-* PostgreSQL client libraries (e.g. `pacman -S postgresql-libs` on Arch Linux)
-* Docker
-* Docker Compose
-
-Run the following in the terminal to install rust dependencies:
-
-```sh
-cargo build
-cargo install diesel_cli --no-default-features --features "postgres"
-```
-
-### Dev Workflow
-
-Development is best done by running the rust code on the host environment. The
-following steps will set up the development environment:
-
-```sh
-# Setup docker compose directories
-just setup-dirs
-
-# Setup .env file (needed by diesel cli)
-#
-# For safety's sake, the GitHub auth token is placed here as well to avoid it
-# being committed to the repository by mistake. Replace <github_token> by your
-# personal access token for the GitHub instance you are testing on.
-cat <<EOF > .env
-DATABASE_URL=postgres://autograder:ChangeMe@localhost/autograder
-AUTOGRADER_GITHUB_AUTH_TOKENS=<domain>:<github_token>
-EOF
-
-# Start the database
-sudo docker compose up -d --remove-orphans postgres
-
-# Setup autograder tables using diesel
-# (Only necessary to do the first time or if a new migration has been added)
-diesel migration run
-```
-
-To start a local instance of the autograder:
-
-```sh
-# Ensures that the GitHub token is available to the autograder
-export $(cat .env)
-
-# Start the autograder
-./target/debug/entrypoint -s example/settings.toml start
+# Options of how the test is supposed to be run. These options are specific to
+# to specified kind above.
+[test.options]
+bin = "my_echo"
+code = [0]
+stdin = "Hello"
+stdout = ["Hello"]
 ```
 
 
@@ -112,22 +75,95 @@ A diagram to illustrate the setup (entrypoint omitted):
                                                ...
 ```
 
-## Test Structure
-The structure of the tests cases are shown in `example/tests`. At the root of this directory sits the file `tests.toml` that specify overarching test configuration such as default values and grading tags.
+## Development Practice
 
-The configuration is specified in a hierarchical TOML structure. A test case is specified as a file ending with `.test.toml`. That file can specify every detail of the test case. Anything that is not specified is inherited by a `config.toml` file located in the same directory. This inheritence is repeated until the root of the test directory.
+Development is easiest when running the autograder locally on your computer.
 
-A test is specified as follows:
+### Dev Dependencies
 
-```toml
-[test]
-kind = "run"
+The following dependencies are required to install on your system:
 
-# Options of how the test is supposed to be run. These options are specific to
-# to specified kind above.
-[test.options]
-bin = "my_echo"
-code = 0
-stdin = "Hello"
-stdout = ["Hello"]
+* Rust (`cargo` should be present on the path)
+* PostgreSQL client libraries (e.g. `pacman -S postgresql-libs` on Arch Linux)
+* Docker
+* Docker Compose
+
+Run the following in the terminal to install rust dependencies:
+
+```sh
+cargo build
+cargo install diesel_cli --no-default-features --features "postgres"
+```
+
+### Dev Workflow
+
+Development is best done by running the rust code on the host environment. The
+following steps will set up the development environment:
+
+```sh
+# Setup docker compose directories
+just setup-dirs
+
+# Setup .env file (needed by diesel cli)
+#
+# For safety's sake, the GitHub auth token is placed here as well to avoid it
+# being committed to the repository by mistake. Replace <github_token> by your
+# personal access token for the GitHub instance you are testing on.
+cat <<EOF > .env
+DATABASE_URL=postgres://autograder:ChangeMe@localhost/autograder
+AUTOGRADER_GITHUB_AUTH_TOKENS=<domain>=<github_token>
+EOF
+
+# Start the database
+sudo docker compose up -d --remove-orphans postgres
+
+# Setup autograder tables using diesel
+# (Only necessary to do the first time or if a new migration has been added)
+diesel migration run
+```
+
+To start a local instance of the autograder:
+
+```sh
+# Ensures that the GitHub token is available to the autograder
+export $(cat .env)
+
+# Start the autograder
+./target/debug/entrypoint -s example/settings.toml start
+```
+
+### Notes on Setting Up The GitLab Instance
+
+**IMPORTANT: These notes are for development/testing only, and are not
+suitable for a production environment.** 
+
+A small GitLab Community Edition instance is preconfigured in the
+`compose.yaml` file. The instance will be available over port 8929 for HTTP and
+over port 2424 for SSH. However, some configuration needs to be done manually
+on first startup:
+
+ * The external hostname for the autograder needs to be added to the allowed
+   network hosts. See the following for more information:
+   https://docs.gitlab.com/security/webhooks/#allow-outbound-requests-to-certain-ip-addresses-and-domains
+    1. Log in as the `root` user.
+    2. Click `Admin` in top right.
+    3. On the left, select `Settings` > `Network`.
+    4. Under `Outbound requests`, add `host.docker.internal:8080`.
+
+ * The webhook can now be added to your GitLab repositories. Add the webhook
+   URL `http://host.docker.internal:8080/api/submit/gitlab`. Make sure that the
+   following options are properly set:
+
+    - Set secret token to `s3cr3t`.
+    - Trigger on push events.
+    - Disable SSL verification.
+
+
+When starting the autograder to test with a local GitLab instance, make sure to
+configure that the server listens on IP address `0.0.0.0` (otherwise
+inaccessible from the docker container):
+
+```sh
+export $(cat .env)
+AUTOGRADER_SERVER_ADDRESS=0.0.0.0 ./target/debug/entrypoint -s example/settings.toml start
 ```

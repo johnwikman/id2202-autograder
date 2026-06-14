@@ -11,11 +11,32 @@ diesel::table! {
 }
 
 diesel::table! {
+    submission_info_gitlab (id) {
+        id -> Int8,
+        submission_id -> Int8,
+        gitlab_source_id -> Int8,
+        user -> Text,
+        commit -> Text,
+    }
+}
+
+diesel::table! {
     submission_source_github (id) {
         id -> Int8,
         domain -> Text,
         org -> Text,
         repo -> Text,
+        ssh_url -> Text,
+    }
+}
+
+diesel::table! {
+    submission_source_gitlab (id) {
+        id -> Int8,
+        domain -> Text,
+        namespace -> Text,
+        repo -> Text,
+        ssh_url -> Text,
     }
 }
 
@@ -46,11 +67,15 @@ diesel::table! {
 
 diesel::joinable!(submission_info_github -> submission_source_github (github_source_id));
 diesel::joinable!(submission_info_github -> submissions (submission_id));
+diesel::joinable!(submission_info_gitlab -> submission_source_gitlab (gitlab_source_id));
+diesel::joinable!(submission_info_gitlab -> submissions (submission_id));
 diesel::joinable!(submissions -> submission_sources (source_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     submission_info_github,
+    submission_info_gitlab,
     submission_source_github,
+    submission_source_gitlab,
     submission_sources,
     submissions,
 );

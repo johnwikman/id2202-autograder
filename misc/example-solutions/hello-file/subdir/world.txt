@@ -1,0 +1,1 @@
+I am a file to be checked for inside a subdirectory.
