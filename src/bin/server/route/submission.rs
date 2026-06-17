@@ -1,4 +1,5 @@
 use actix_web::{
+    body::BoxBody,
     error::InternalError,
     http::StatusCode,
     web::{self},
@@ -7,23 +8,26 @@ use actix_web::{
 use num_traits::FromPrimitive;
 use sailfish::TemplateSimple;
 
-use id2202_autograder::{config::Settings, reporting::Report, utils::systemtime_to_utc_string};
+use id2202_autograder::{
+    config::Settings, db::models::SubmissionInfo, reporting::Report,
+    utils::systemtime_to_utc_string,
+};
 use serde::Deserialize;
 
 use crate::route::{
-    common::{CommonInformation, RenderOptionString, RenderReport, ReportRenderOptions},
+    common::{CommonInformation, RenderOptionString, RenderReport},
     error_msg::ErrorMessageTemplate,
 };
 
 /// Template for showing job information
 #[derive(TemplateSimple)]
 #[template(path = "route/submission.stpl")]
-struct SubmissionTemplate {
+struct SubmissionTemplate<'a> {
     common: CommonInformation,
     // For this template only
     submission_id: i64,
     status_lists: Vec<SubmissionStatusList>,
-    report: RenderReport,
+    report: RenderReport<'a>,
 }
 
 struct SubmissionStatusList {
@@ -45,30 +49,27 @@ struct SubmissionQuery {
     auth_key: String,
 }
 
-/// Display information about a single submission
-pub async fn get_submission(
-    data: web::Data<Settings>,
-    req: HttpRequest,
-    submission_id: web::Path<String>,
-) -> Result<HttpResponse, actix_web::Error> {
-    use id2202_autograder::db::{
-        conn::DatabaseConnection, models::SubmissionInfo, models::SubmissionStatusCode as SSC,
-    };
-
-    let settings = data.get_ref();
+/// Helper function for authenticating and fetching the submission and the
+/// report.
+fn fetch_submission_and_report(
+    settings: &Settings,
+    req: &HttpRequest,
+    submission_id_string: &str,
+) -> Result<(SubmissionInfo, Option<Report>), Result<HttpResponse, actix_web::Error>> {
+    use id2202_autograder::db::conn::DatabaseConnection;
 
     let q = match web::Query::<SubmissionQuery>::from_query(req.query_string()) {
         Ok(q) => q,
         Err(_) => {
-            return ErrorMessageTemplate::unauthorized(settings);
+            return Err(ErrorMessageTemplate::unauthorized(settings));
         }
     };
 
-    let parsed_id: i64 = match submission_id.parse() {
+    let parsed_id: i64 = match submission_id_string.parse() {
         Ok(v) => v,
         Err(_) => {
-            log::error!("Bad submission id: {submission_id}");
-            return ErrorMessageTemplate::not_found(settings);
+            log::error!("Bad submission id: {submission_id_string}");
+            return Err(ErrorMessageTemplate::not_found(settings));
         }
     };
 
@@ -76,7 +77,7 @@ pub async fn get_submission(
         Ok(conn) => conn,
         Err(e) => {
             log::error!("Could not open database connection: {e}");
-            return ErrorMessageTemplate::internal_server_error(settings);
+            return Err(ErrorMessageTemplate::internal_server_error(settings));
         }
     };
 
@@ -84,26 +85,45 @@ pub async fn get_submission(
         Ok(subinfo) => subinfo,
         Err(_) => {
             log::error!("Submission id not found: {parsed_id}");
-            return ErrorMessageTemplate::not_found(settings);
+            return Err(ErrorMessageTemplate::not_found(settings));
         }
     };
 
     let sub = subinfo.get_submission();
     let src = subinfo.get_source();
     if src.auth_key != q.auth_key {
-        return ErrorMessageTemplate::unauthorized(settings);
+        return Err(ErrorMessageTemplate::unauthorized(settings));
     }
 
-    let report = match &sub.exec_report {
-        Some(v) => match Report::deserialize(v) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                log::warn!("Invalid report: {:?}\n\n{}", e, v);
-                None
-            }
-        },
-        None => None,
+    let report = match conn.get_submission_report(sub.id) {
+        Ok(maybe_r) => maybe_r,
+        Err(e) => {
+            log::warn!("Could not fetch report: {:?}", e);
+            None
+        }
     };
+
+    Ok((subinfo, report))
+}
+
+/// Display information about a single submission
+pub async fn get_submission(
+    data: web::Data<Settings>,
+    req: HttpRequest,
+    submission_id: web::Path<String>,
+) -> Result<HttpResponse, actix_web::Error> {
+    use id2202_autograder::db::models::SubmissionStatusCode as SSC;
+
+    let settings = data.get_ref();
+
+    let (subinfo, opt_report) =
+        match fetch_submission_and_report(settings, &req, submission_id.as_str()) {
+            Ok(tup) => tup,
+            Err(e) => {
+                return e;
+            }
+        };
+    let sub = subinfo.get_submission();
 
     let mut status_lists: Vec<SubmissionStatusList> = vec![];
 
@@ -177,8 +197,12 @@ pub async fn get_submission(
             sub: _,
             src: _,
             gh_src,
-            gh_info: _,
+            gh_info,
         } => {
+            statlist_source.title_href = Some(format!(
+                "https://{}/{}/{}/commit/{}",
+                gh_src.domain, gh_src.org, gh_src.repo, gh_info.commit
+            ));
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Origin".to_string(),
                 value: "GitHub".to_string(),
@@ -187,6 +211,21 @@ pub async fn get_submission(
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Domain".to_string(),
                 value: gh_src.domain.clone(),
+                ..Default::default()
+            });
+            statlist_source.items.push(SubmissionStatusListItem {
+                label: "Organization".to_string(),
+                value: gh_src.org.clone(),
+                ..Default::default()
+            });
+            statlist_source.items.push(SubmissionStatusListItem {
+                label: "Repository".to_string(),
+                value: gh_src.repo.clone(),
+                ..Default::default()
+            });
+            statlist_source.items.push(SubmissionStatusListItem {
+                label: "Commit".to_string(),
+                value: gh_info.commit.clone(),
                 ..Default::default()
             });
         }
@@ -248,18 +287,38 @@ pub async fn get_submission(
         submission_id: sub.id,
         status_lists: status_lists,
         report: RenderReport {
-            v: report,
-            options: ReportRenderOptions {
-                symbol_ok: settings.reporting.markdown.symbol_ok.clone(),
-                symbol_failed: settings.reporting.markdown.symbol_failed.clone(),
-            },
+            v: opt_report,
+            settings: settings,
         },
     };
-    tpl.common.include_syntax_highlighting = true;
+    tpl.common.include_syntax_highlighting = false;
 
     let body: String = tpl
         .render_once()
         .map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
 
     Ok(HttpResponse::Ok().body(body))
+}
+
+/// Display information about a single submission
+pub async fn get_submission_markdown(
+    data: web::Data<Settings>,
+    req: HttpRequest,
+    submission_id: web::Path<String>,
+) -> Result<HttpResponse, actix_web::Error> {
+    use actix_web::http::header;
+
+    let settings = data.get_ref();
+
+    let md_text = match fetch_submission_and_report(settings, &req, submission_id.as_str()) {
+        Ok((_, Some(report))) => format!("{}", report.formatter_markdown(&settings.reporting)),
+        Ok(_) => "No report generated for this submission".to_string(),
+        Err(e) => {
+            return e;
+        }
+    };
+
+    Ok(HttpResponse::Ok()
+        .insert_header(header::ContentType::plaintext())
+        .body(BoxBody::new(md_text)))
 }

@@ -340,6 +340,7 @@ auto_convert_error!(reqwest::Error, "reqwest error");
 auto_convert_error!(serde_json::Error, "serde JSON error");
 auto_convert_error!(std::io::Error, "IO error");
 auto_convert_error!(std::time::SystemTimeError, "system time error");
+auto_convert_error!(std::fmt::Error, "fmt error");
 auto_convert_error!(toml::ser::Error, "toml serialization error");
 auto_convert_error!(toml::de::Error, "toml deserialization error");
 auto_convert_error!(subprocess::PopenError, "subprocess popen error");

@@ -39,7 +39,7 @@ pub async fn create_commit_message(
     namespace: &str,
     repo_name: &str,
     commit_hash: &str,
-    message: &str,
+    message: &impl std::fmt::Display,
 ) -> Result<(), Error> {
     let c = ReqwestClient::new();
 

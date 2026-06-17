@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use actix_web::{
     web::{self, Buf},
     HttpRequest, Responder,
@@ -18,7 +20,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 use crate::api::{
     common::{extract_grading_tags, validate_repo_prefix_suffix},
-    response::{ErrorResponse, SubmissionResponse},
+    response::{ErrorResponse, SubmitResponse},
 };
 
 /// A serializable submission, based on the JSON blob that is provided by the
@@ -72,9 +74,9 @@ struct CommitMessageInfo<'a> {
 }
 
 impl<'a> CommitMessageInfo<'a> {
-    async fn post_msg_status<S: AsRef<str>>(
+    async fn post_msg_status(
         &self,
-        msg: S,
+        msg: &impl Display,
         status: github::CommitState,
         status_msg: Option<&str>,
     ) -> Result<(), id2202_autograder::error::Error> {
@@ -84,7 +86,7 @@ impl<'a> CommitMessageInfo<'a> {
             &self.sub.repository.organization,
             &self.sub.repository.name,
             &self.sub.head_commit.id,
-            msg.as_ref(),
+            msg,
         )
         .await
         .inspect_err(|e| log::error!("Error creating commit message: {e}"))?;
@@ -114,10 +116,12 @@ impl<'a> CommitMessageInfo<'a> {
 ///   X-Github-Event:      push | ping
 ///   X-Hub-Signature-256: sha265=<lower case hex>
 pub async fn github_submission(
-    settings: Settings,
+    data: web::Data<Settings>,
     req: HttpRequest,
     payload: web::Payload,
 ) -> Result<impl Responder, actix_web::Error> {
+    let settings = data.get_ref();
+
     log::info!(
         "GitHub submission request from {} (Hook ID: {})",
         req.peer_addr()
@@ -182,7 +186,7 @@ pub async fn github_submission(
 
     // Validate the github event
     if gh_event == "ping" {
-        return Ok(SubmissionResponse::new(&req, "ping was authenticated").to_http());
+        return Ok(SubmitResponse::new(&req, "ping was authenticated").to_http());
     }
 
     // We only care about push events after this point
@@ -248,7 +252,7 @@ pub async fn github_submission(
             sub.repository.full_name,
             rejection,
         );
-        return Ok(SubmissionResponse::new(&req, "not a repository to be graded").to_http());
+        return Ok(SubmitResponse::new(&req, "not a repository to be graded").to_http());
     }
 
     let grading_tags: Vec<&str> =
@@ -257,14 +261,14 @@ pub async fn github_submission(
             Err(rep) => {
                 commitinfo
                     .post_msg_status(
-                        &rep.to_markdown(&settings.reporting.markdown),
+                        &rep.formatter_markdown(&settings.reporting),
                         github::CommitState::Failure,
                         Some("Invalid Grading Tags"),
                     )
                     .await
                     .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
 
-                return Ok(SubmissionResponse::new(&req, "bad grading tags").to_http());
+                return Ok(SubmitResponse::new(&req, "bad grading tags").to_http());
             }
         };
 
@@ -273,7 +277,7 @@ pub async fn github_submission(
             "Push from {} will not be considered for grading, no grading tags provided",
             sub.repository.full_name
         );
-        return Ok(SubmissionResponse::new(&req, "no grading tags provided").to_http());
+        return Ok(SubmitResponse::new(&req, "no grading tags provided").to_http());
     }
 
     // Connect to database and insert the submission request
@@ -298,10 +302,10 @@ pub async fn github_submission(
         })?;
 
     // Respond to the commit message and set the commit status
-    commitinfo.post_msg_status(format!(
+    commitinfo.post_msg_status(&format!(
         "**[Submission ID: {} | {}]**\n\n{} {}",
         submission_id,
-        grading_tags.iter().map(|t| format!("`{t}`")).join(", "),
+        grading_tags.iter().format_with(", ", |t, f| f(&format_args!("`{t}`"))),
         "The autograder has successfully received your submission and will start grading as soon as a runner is available.",
         "Additional information and results of your submission will be provided as comments here."
     ), github::CommitState::Pending, Some("Waiting In Queue"))
@@ -317,5 +321,5 @@ pub async fn github_submission(
     });
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");
-    Ok(SubmissionResponse::new(&req, &format!("submission {submission_id} received")).to_http())
+    Ok(SubmitResponse::new(&req, &format!("submission {submission_id} received")).to_http())
 }

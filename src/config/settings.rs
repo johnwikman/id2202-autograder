@@ -224,6 +224,19 @@ pub struct ServerSettings {
     /// The port that the server binary will to listen on
     #[config(env = "AUTOGRADER_SERVER_PORT")]
     pub port: u16,
+
+    /// Secrets used for client authentication
+    #[config(nested)]
+    pub secrets: ServerSecretsSettings,
+}
+
+#[derive(Config, Deserialize, Debug, Clone)]
+pub struct ServerSecretsSettings {
+    /// API auth tokens that can be used to fetch submission results over the
+    /// REST API. Using the environment variable, multiple tokens can be
+    /// specified using `;` separators, e.g. `TOKEN1;TOKEN2;TOKEN3`, etc.
+    #[config(env = "AUTOGRADER_SERVER_API_AUTH_TOKENS", parse_env = confique::env::parse::list_by_semicolon)]
+    pub api_auth_tokens: Vec<String>,
 }
 
 /// Settings for runner processes

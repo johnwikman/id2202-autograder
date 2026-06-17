@@ -50,7 +50,7 @@ pub fn extract_grading_tags<'a>(
             reports: vec![
                 Report::Message(ReportMessage { msg: format!(
                     "The provided grading tags {} exceed the limit of {} characters. Your submission will not be graded.",
-                    grading_tags.iter().map(|s| format!("`{}`", s)).join(", "),
+                    grading_tags.iter().format_with(", ", |t, f| f(&format_args!("`{t}`"))),
                     settings.submission.max_tag_length,
                 )})
             ]

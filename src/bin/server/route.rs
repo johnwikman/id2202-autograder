@@ -27,10 +27,17 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     );
 
     cfg.service(web::resource("/submission/{id}").route(web::get().to(submission::get_submission)));
+    cfg.service(
+        web::resource("/submission/{id}/markdown")
+            .route(web::get().to(submission::get_submission_markdown)),
+    );
 
     // Setup static routes
     let generated = static_route_generator::generate();
     cfg.service(ResourceFiles::new("/static", generated));
+
+    // Favicon should point to a static resource
+    cfg.service(web::redirect("/favicon.ico", "/static/image/favicon.ico"));
 }
 
 /// Default page to use if not found

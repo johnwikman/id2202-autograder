@@ -7,6 +7,7 @@ use id2202_autograder::config::Settings;
 
 mod common;
 mod response;
+mod submission;
 mod submit_github;
 mod submit_gitlab;
 
@@ -15,16 +16,20 @@ mod submit_gitlab;
 /// The provided `api` can be the empty string or something like "/api". The
 /// reason for this being configurable is to allow for future API versions,
 /// such as "/api/v1", etc.
-pub fn config(cfg: &mut ServiceConfig, settings: &Settings, prefix: &str) {
-    let s = settings.clone();
+pub fn config(cfg: &mut ServiceConfig, _settings: &Settings, prefix: &str) {
     cfg.route(
         &format!("{prefix}/submit/github"),
-        web::post().to(move |req, pl| submit_github::github_submission(s.clone(), req, pl)),
+        web::post().to(submit_github::github_submission),
     );
 
     cfg.route(
         &format!("{prefix}/submit/gitlab"),
         web::post().to(submit_gitlab::gitlab_submit_webhook),
+    );
+
+    cfg.route(
+        &format!("{prefix}/submission/{}", "{id}"),
+        web::get().to(submission::get_submission),
     );
 }
 

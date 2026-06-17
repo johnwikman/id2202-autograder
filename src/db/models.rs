@@ -4,11 +4,12 @@ use num_traits::ToPrimitive;
 use diesel::prelude::{
     Associations, Identifiable, Insertable, Queryable, QueryableByName, Selectable,
 };
+use serde::Serialize;
 use std::time::SystemTime;
 
 /// Cheekily using HTTP-like codes here, although they have nothing to do with
 /// the HTTP protocol.
-#[derive(Debug, Clone, Copy, FromPrimitive, ToPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive)]
 pub enum SubmissionStatusCode {
     NotStarted = 0,
     Running = 100,
@@ -71,11 +72,36 @@ impl std::fmt::Display for SubmissionSourceKind {
     }
 }
 
+/// Struct for selecting a submission entry in the database.
+///
+/// ### Note
+/// This does not include the generated report, as that is often very large and
+/// should only ever be fetched when necessary.
 #[derive(Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable, Associations)]
 #[diesel(belongs_to(SubmissionSource, foreign_key = source_id))]
 #[diesel(table_name = crate::db::schema::submissions)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Submission {
+    pub id: i64,
+    pub date_submitted: SystemTime,
+    pub assigned_runner_id: Option<i32>,
+    pub grading_tags: String,
+    pub exec_finished: bool,
+    pub exec_status_code: i32,
+    pub exec_status_text: Option<String>,
+    pub exec_date_started: Option<SystemTime>,
+    pub exec_date_finished: Option<SystemTime>,
+    pub source_id: i64,
+}
+
+/// Same as `Submission`, but this also includes the `exec_report`.
+#[derive(
+    Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable, Associations, Serialize,
+)]
+#[diesel(belongs_to(SubmissionSource, foreign_key = source_id))]
+#[diesel(table_name = crate::db::schema::submissions)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct SubmissionWithReport {
     pub id: i64,
     pub date_submitted: SystemTime,
     pub assigned_runner_id: Option<i32>,

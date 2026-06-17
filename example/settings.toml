@@ -58,10 +58,14 @@ password = "ChangeMe"
 host = "127.0.0.1"
 port = 5432
 
-# Server-specific configuration (should contain the GitHub secret here)
+# Server-specific configuration
 [server]
 address = "127.0.0.1" # this only works outside containers
 port = 8080
+
+# Secrets that allow external entities to access information
+[server.secrets]
+api_auth_tokens = []
 
 # Runner-specific configuration
 [runner]

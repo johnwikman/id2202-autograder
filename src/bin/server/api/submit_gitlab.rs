@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use actix_web::{
     web::{self, Buf},
     HttpRequest, Responder,
@@ -13,7 +15,7 @@ use id2202_autograder::{
 
 use crate::api::{
     common::{extract_grading_tags, validate_repo_prefix_suffix},
-    response::{ErrorResponse, SubmissionResponse},
+    response::{ErrorResponse, SubmitResponse},
 };
 
 /// A serializable GitLab submission, based on the JSON blob that is provided
@@ -60,9 +62,9 @@ struct CommitMessageInfo<'a> {
 }
 
 impl<'a> CommitMessageInfo<'a> {
-    async fn post_msg_status<S: AsRef<str>>(
+    async fn post_msg_status(
         &self,
-        msg: S,
+        msg: &impl Display,
         status: gitlab::CommitState,
         status_msg: Option<&str>,
     ) -> Result<(), id2202_autograder::error::Error> {
@@ -72,7 +74,7 @@ impl<'a> CommitMessageInfo<'a> {
             self.namespace,
             &self.sub.project.name,
             &self.sub.after,
-            msg.as_ref(),
+            msg,
         )
         .await
         .inspect_err(|e| log::error!("Error creating commit message: {e}"))?;
@@ -102,8 +104,6 @@ pub async fn gitlab_submit_webhook(
     payload: web::Payload,
 ) -> Result<impl Responder, actix_web::Error> {
     let settings = data.get_ref();
-
-    //eprintln!("GitLab Request Headers:\n{:?}", req.headers());
 
     log::info!(
         "GitLab submission request from {} (Hook UUID: {})",
@@ -218,7 +218,7 @@ pub async fn gitlab_submit_webhook(
     let commit_to_grade = match sub.commits.iter().find(|c| c.id == sub.after) {
         Some(c) => c,
         None => {
-            return Ok(SubmissionResponse::new(
+            return Ok(SubmitResponse::new(
                 &req,
                 "pushed commits do not point to the head of the repository",
             )
@@ -247,7 +247,7 @@ pub async fn gitlab_submit_webhook(
             sub.project.path_with_namespace,
             rejection,
         );
-        return Ok(SubmissionResponse::new(&req, "not a repository to be graded").to_http());
+        return Ok(SubmitResponse::new(&req, "not a repository to be graded").to_http());
     }
 
     let grading_tags: Vec<&str> = match extract_grading_tags(&settings, &commit_to_grade.message) {
@@ -255,14 +255,14 @@ pub async fn gitlab_submit_webhook(
         Err(rep) => {
             commitinfo
                 .post_msg_status(
-                    &rep.to_markdown(&settings.reporting.markdown),
+                    &rep.formatter_markdown(&settings.reporting),
                     gitlab::CommitState::Canceled,
                     Some("Invalid Grading Tags"),
                 )
                 .await
                 .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
 
-            return Ok(SubmissionResponse::new(&req, "bad grading tags").to_http());
+            return Ok(SubmitResponse::new(&req, "bad grading tags").to_http());
         }
     };
 
@@ -271,7 +271,7 @@ pub async fn gitlab_submit_webhook(
             "Push from {} will not be considered for grading, no grading tags provided",
             sub.project.path_with_namespace
         );
-        return Ok(SubmissionResponse::new(&req, "no grading tags provided").to_http());
+        return Ok(SubmitResponse::new(&req, "no grading tags provided").to_http());
     }
 
     // Connect to database and insert the submission request
@@ -296,10 +296,10 @@ pub async fn gitlab_submit_webhook(
         })?;
 
     // Respond to the commit message and set the commit status
-    commitinfo.post_msg_status(format!(
+    commitinfo.post_msg_status(&format!(
             "**[Submission ID: {} | {}]**\n\n{} {}",
             submission_id,
-            grading_tags.iter().map(|t| format!("`{t}`")).join(", "),
+            grading_tags.iter().format_with(", ", |t, f| f(&format_args!("`{t}`"))),
             "The autograder has successfully received your submission and will start grading as soon as a runner is available.",
             "Additional information and results of your submission will be provided as comments here."
         ), gitlab::CommitState::Pending, Some("Waiting In Queue"))
@@ -315,5 +315,5 @@ pub async fn gitlab_submit_webhook(
     });
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");
-    Ok(SubmissionResponse::new(&req, &format!("submission {submission_id} received")).to_http())
+    Ok(SubmitResponse::new(&req, &format!("submission {submission_id} received")).to_http())
 }

@@ -6,6 +6,7 @@ use diesel::{
 };
 use num_traits::FromPrimitive;
 use rand::Rng;
+use serde::Deserialize;
 use std::time::SystemTime;
 
 use crate::{
@@ -393,6 +394,36 @@ impl DatabaseConnection {
         }
     }
 
+    /// Returns the report for the submission with the specified ID. Returns
+    /// Ok(None) if no report could be found.
+    pub fn get_submission_report(&mut self, sub_id: i64) -> Result<Option<Report>, Error> {
+        use crate::db::{
+            models::SubmissionWithReport,
+            schema::submissions::{self, columns as sub_col},
+        };
+
+        let swr: SubmissionWithReport = submissions::table
+            .select(SubmissionWithReport::as_select())
+            .filter(sub_col::id.eq(sub_id))
+            .first(&mut self.conn)
+            .map_err(|e: diesel::result::Error| {
+                Error::auto_msg(
+                    format!("could not get submission {sub_id} with report from database"),
+                    e,
+                )
+            })?;
+
+        match swr.exec_report {
+            Some(v) => Report::deserialize(v).map(|r| Some(r)).map_err(|e| {
+                Error::auto_msg(
+                    format!("Could not deserialize report for submission {sub_id}"),
+                    e,
+                )
+            }),
+            None => Ok(None),
+        }
+    }
+
     /// Return all the queued submissions in the database, oldest first
     pub fn queued_submissions(&mut self) -> Result<Vec<Submission>, Error> {
         use crate::db::schema::submissions::{
@@ -569,14 +600,11 @@ impl DatabaseConnection {
                     .iter()
                     .find(|ki| ki.domain == *domain)
                 {
+                    let mut md_output = String::new();
+                    report.render_markdown(&settings.reporting, &mut md_output)?;
                     rt.block_on(async {
                         github::create_commit_message(
-                            settings,
-                            instance,
-                            org,
-                            repo,
-                            commit,
-                            &report.to_markdown(&settings.reporting.markdown),
+                            settings, instance, org, repo, commit, &md_output,
                         )
                         .await
                     })
@@ -633,14 +661,11 @@ impl DatabaseConnection {
                     .iter()
                     .find(|ki| ki.domain == *domain)
                 {
+                    let mut md_output = String::new();
+                    report.render_markdown(&settings.reporting, &mut md_output)?;
                     rt.block_on(async {
                         gitlab::create_commit_message(
-                            settings,
-                            instance,
-                            namespace,
-                            repo,
-                            commit,
-                            &report.to_markdown(&settings.reporting.markdown),
+                            settings, instance, namespace, repo, commit, &md_output,
                         )
                         .await
                     })

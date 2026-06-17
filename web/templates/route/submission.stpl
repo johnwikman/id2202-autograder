@@ -1,7 +1,7 @@
 <% include!("../header.stpl"); %>
 
 <div class="py-4 text-center">
-  <h1 class="h2">Submission <%= submission_id %></h1>
+  <h1 class="display-3">Submission <%= submission_id %></h1>
 </div>
 
 <div class="row g-5">

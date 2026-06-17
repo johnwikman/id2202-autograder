@@ -15,16 +15,16 @@ use crate::route::error_msg::ErrorMessageTemplate;
 /// Template for showing job information
 #[derive(TemplateSimple)]
 #[template(path = "route/job_info.stpl")]
-struct JobInfoTemplate {
+struct JobInfoTemplate<'a> {
     common: CommonInformation,
     // For this template only
-    job_info_vec: Vec<JobInfo>,
+    job_info_vec: Vec<JobInfo<'a>>,
 }
 
-struct JobInfo {
+struct JobInfo<'a> {
     id: i64,
     date_submitted: String,
-    grading_tags: Vec<String>,
+    grading_tags: Vec<&'a str>,
     status: String,
     /// ("symbol", "span class")
     status_symbol_and_class: Option<(String, String)>,
@@ -76,9 +76,7 @@ pub async fn get_job_info(
                 id: sub.id,
                 date_submitted: systemtime_to_utc_string(&sub.date_submitted)
                     .unwrap_or("NO_TIME".to_string()),
-                grading_tags: sub.grading_tags.split(";").map(String::from).collect(),
-                //.map(|s| format!("<code>{s}</code>"))
-                //.join(", "),
+                grading_tags: sub.grading_tags.split(";").collect(),
                 status: SSC::from_i32(sub.exec_status_code)
                     .map_or("Unknown".to_string(), |c| format!("{c}")),
                 status_symbol_and_class: SSC::from_i32(sub.exec_status_code).and_then(

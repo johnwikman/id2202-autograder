@@ -41,82 +41,6 @@ pub fn single_linefeed_to_space<S: AsRef<str>>(s: S) -> String {
     }
 }
 
-/// Returns a markdown preformatted block <pre> containing the provided text
-/// `s` as verbatim, making sure to escape parts that could otherwise be
-/// interpreted as HTML.
-pub fn md_preformatted<S: AsRef<str>>(s: S) -> String {
-    md_preformatted_with_truncation(s, None)
-}
-
-/// Returns a markdown preformatted block <pre> containing the provided text
-/// `s` as verbatim, making sure to escape parts that could otherwise be
-/// interpreted as HTML.
-pub fn md_preformatted_with_truncation<S: AsRef<str>>(s: S, truncate: Option<usize>) -> String {
-    let mut ret_str = String::new();
-    ret_str.push_str("<pre>\n");
-
-    fn push_escape(ret_str: &mut String, src: &str) {
-        for c in src.chars() {
-            match c {
-                '<' => ret_str.push_str("&lt;"),
-                '>' => ret_str.push_str("&gt;"),
-                '&' => ret_str.push_str("&amp;"),
-                _ => ret_str.push(c),
-            }
-        }
-    }
-
-    let s = s.as_ref();
-    let l = s.len();
-    if let Some(offset) = truncate {
-        let half_offset = offset.div_ceil(2);
-        match if let Some(half_rev_offset) = s.len().checked_sub(half_offset) {
-            (
-                s.split_at_checked(half_offset),
-                s.split_at_checked(half_rev_offset),
-                offset < l,
-            )
-        } else {
-            (None, None, false)
-        } {
-            (Some(l_split), Some(r_split), true) => {
-                push_escape(&mut ret_str, l_split.0);
-                ret_str.push_str("\n...\nTRUNCATED\n...\n");
-                push_escape(&mut ret_str, r_split.1);
-            }
-            _ => {
-                push_escape(&mut ret_str, s);
-            }
-        }
-    } else {
-        push_escape(&mut ret_str, s);
-    }
-
-    ret_str.push_str("\n</pre>");
-    ret_str
-}
-
-/// Escapes markdown characters within the string `s`.
-///
-/// This escapes the following characters by putting a backslash `\` in front of them:
-///
-/// ```txt
-/// \ ` * _ { } [ ] ( ) # + - . !
-/// ```
-///
-/// See https://www.markdownlang.com/basic/escaping.html
-pub fn md_escape<S: AsRef<str>>(s: S) -> String {
-    const ESC_CHARS: &'static str = "\\`*_{}[]()#+-.!";
-    let mut ret_str = String::new();
-    for ch in s.as_ref().chars() {
-        if ESC_CHARS.contains(ch) {
-            ret_str.push('\\');
-        }
-        ret_str.push(ch);
-    }
-    ret_str
-}
-
 /// Joins two file system paths together.
 pub fn path_join<A: AsRef<Path>, B: AsRef<Path>>(a: A, b: B) -> Result<String, Error> {
     a.as_ref()
@@ -508,49 +432,6 @@ mod tests {
             .is_equal_to("foo bar\n\nbabar");
         assert_that!(single_linefeed_to_space("\nfoo\nbar\n\n\nbabar  \n"))
             .is_equal_to("foo bar\n\n\nbabar");
-    }
-
-    #[test]
-    fn test_md_preformatted() {
-        assert_that!(md_preformatted("foo")).is_equal_to("<pre>\nfoo\n</pre>");
-        assert_that!(md_preformatted("int foo() {return 1 < 2;}"))
-            .is_equal_to("<pre>\nint foo() {return 1 &lt; 2;}\n</pre>");
-        assert_that!(md_preformatted(
-            "bool bar(int x) {\n  return x < 2 && x >= 2;\n}"
-        ))
-        .is_equal_to(
-            "<pre>\nbool bar(int x) {\n  return x &lt; 2 &amp;&amp; x &gt;= 2;\n}\n</pre>",
-        );
-    }
-
-    #[test]
-    fn test_md_preformatted_truncated() {
-        assert_that!(md_preformatted_with_truncation("foo", Some(3)))
-            .is_equal_to("<pre>\nfoo\n</pre>");
-
-        assert_that!(md_preformatted_with_truncation(
-            "int foo() {return 1 < 2;}",
-            Some(400)
-        ))
-        .is_equal_to("<pre>\nint foo() {return 1 &lt; 2;}\n</pre>");
-
-        assert_that!(md_preformatted_with_truncation(
-            "bool bar(int x) {\n  return x < 2 && x >= 2;\n}",
-            Some(400)
-        ))
-        .is_equal_to(
-            "<pre>\nbool bar(int x) {\n  return x &lt; 2 &amp;&amp; x &gt;= 2;\n}\n</pre>",
-        );
-
-        // Actual splits
-        assert_that!(md_preformatted_with_truncation("foo", Some(2)))
-            .is_equal_to("<pre>\nf\n...\nTRUNCATED\n...\no\n</pre>");
-
-        assert_that!(md_preformatted_with_truncation(
-            "int foo() {return 1 < 2;}",
-            Some(12)
-        ))
-        .is_equal_to("<pre>\nint fo\n...\nTRUNCATED\n...\n &lt; 2;}\n</pre>");
     }
 
     #[test]

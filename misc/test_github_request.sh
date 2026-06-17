@@ -20,7 +20,8 @@ PAYLOAD=$(cat <<EOF
     "name": "$REPO",
     "full_name": "$ORG/$REPO",
     "organization": "$ORG",
-    "url": "https://$DOMAIN/api/v3/repos/$ORG/$REPO"
+    "url": "https://$DOMAIN/api/v3/repos/$ORG/$REPO",
+    "ssh_url": "git@$DOMAIN:$ORG/$REPO.git"
   },
   "pusher": {
     "name": "test",
