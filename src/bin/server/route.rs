@@ -28,6 +28,9 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
 
     cfg.service(web::resource("/submission/{id}").route(web::get().to(submission::get_submission)));
     cfg.service(
+        web::resource("/submission/{id}/").route(web::get().to(submission::get_submission)),
+    );
+    cfg.service(
         web::resource("/submission/{id}/markdown")
             .route(web::get().to(submission::get_submission_markdown)),
     );
@@ -43,5 +46,5 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
 /// Default page to use if not found
 /// this function is configured in main.rs
 pub fn not_found(settings: &Settings) -> Result<HttpResponse, actix_web::Error> {
-    error_msg::ErrorMessageTemplate::not_found(settings)
+    error_msg::not_found(settings)
 }

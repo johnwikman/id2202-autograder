@@ -5,7 +5,7 @@ use signal_hook::{
 };
 use std::ffi::OsString;
 use std::sync::mpsc;
-use subprocess::{Popen, PopenConfig};
+use subprocess::{Exec, Job};
 
 use id2202_autograder::{
     config::Settings,
@@ -129,8 +129,8 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     }
 
     // Using the .take() function to set these to None in the loop
-    let mut proc_handle_server: Option<Popen> = None;
-    let mut proc_handles_runner: Vec<Option<Popen>> = vec![];
+    let mut proc_handle_server: Option<Job> = None;
+    let mut proc_handles_runner: Vec<Option<Job>> = vec![];
     for _ in 0..s.runner.n_runners {
         proc_handles_runner.push(None); // a .init function would be nicer...
     }
@@ -156,12 +156,12 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     while running {
         next_offset += interval;
         log::debug!("Checking if binaries are still running");
-        if let Some(exitstat_server) = proc_handle_server.as_mut().and_then(Popen::poll) {
+        if let Some(exitstat_server) = proc_handle_server.as_ref().and_then(Job::poll) {
             log::error!("server process ended prematurely with exit status {exitstat_server:?}");
             proc_handle_server.take();
         }
         for handle_runner in proc_handles_runner.iter_mut() {
-            if let Some(exitstat_runner) = handle_runner.as_mut().and_then(Popen::poll) {
+            if let Some(exitstat_runner) = handle_runner.as_ref().and_then(Job::poll) {
                 log::error!(
                     "runner process ended prematurely with exit status {exitstat_runner:?}"
                 );
@@ -171,14 +171,13 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
 
         if proc_handle_server.is_none() {
             log::info!("Spawning a new server process");
-            match Popen::create(
-                &[
-                    server_bin.as_os_str(),
+            match Exec::cmd(server_bin.as_os_str())
+                .args(&[
                     &OsString::from("--settings"),
                     &OsString::from(&args.settings),
-                ],
-                PopenConfig::default(),
-            ) {
+                ])
+                .start()
+            {
                 Ok(proc) => {
                     proc_handle_server = Some(proc);
                 }
@@ -190,20 +189,19 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
         for (i, handle_runner) in proc_handles_runner.iter_mut().enumerate() {
             if handle_runner.is_none() {
                 log::info!("Spawning a new runner process (ID: {i})");
-                match Popen::create(
-                    &[
-                        runner_bin.as_os_str(),
+                match Exec::cmd(runner_bin.as_os_str())
+                    .args([
                         &OsString::from("--settings"),
                         &OsString::from(&args.settings),
                         &OsString::from("--runner-id"),
                         &OsString::from(i.to_string()),
-                    ],
-                    PopenConfig::default(),
-                ) {
-                    Ok(proc) => {
+                    ])
+                    .start()
+                {
+                    Ok(job) => {
                         // We know that the previous value is None
                         #[allow(unused)]
-                        handle_runner.insert(proc);
+                        handle_runner.insert(job);
                     }
                     Err(popen_err) => {
                         log::error!("Could not start runner (index={i}) process: {popen_err}");
@@ -235,7 +233,7 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
         }
     }
     for (i, handle_runner) in proc_handles_runner.iter_mut().enumerate() {
-        if let Some(Err(e)) = handle_runner.as_mut().map(Popen::terminate) {
+        if let Some(Err(e)) = handle_runner.as_ref().map(Job::terminate) {
             log::warn!("Got error {e} when terminating the runner (index={i}) process");
         }
     }
@@ -392,7 +390,7 @@ fn test_syscommand(
     if let Some(s) = example_stdin {
         log::info!("Testing stdin for string \"{s}\"");
         match syscommand_timeout(
-            &["bash", "-c", "cat"],
+            ["bash", "-c", "cat"],
             SyscommandSettings {
                 stdin: Some(s),
                 max_stdout_length: Some(64 * 1024),
@@ -408,7 +406,7 @@ fn test_syscommand(
     if let Some(lc) = std_lines {
         log::info!("Outputting {lc} lines to stdout");
         match syscommand_timeout(
-            &[
+            [
                 "bash",
                 "-c",
                 &format!(

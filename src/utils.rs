@@ -5,10 +5,10 @@ use std::{
     fs::File,
     io::{Read, Write},
     os::fd::AsRawFd,
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use subprocess::{ExitStatus, Popen, PopenConfig, Redirection};
+use subprocess::{Exec, ExitStatus, Job, Redirection};
 use tempfile;
 
 /// Trims single newlines from the input string, returning a new string with
@@ -110,7 +110,7 @@ pub fn systemtime_to_fsfriendly_utc_string(systime: &SystemTime) -> Option<Strin
 /// specified path.
 pub fn mimetype<P: AsRef<Path>>(path: P) -> Result<String, Error> {
     let res = syscommand_timeout(
-        &[
+        [
             "file",
             "-b",
             "--mime",
@@ -194,11 +194,12 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
             .collect(),
     );
 
-    let os_cmd: Vec<OsString> = cmd
-        .as_ref()
-        .iter()
-        .map(|s| OsString::from(s.as_ref()))
-        .collect();
+    let (cmd, args) = match cmd.as_ref() {
+        [cmd, args @ ..] => (cmd, args),
+        _ => {
+            return Err(syscmd_err.msg("empty command").as_error());
+        }
+    };
 
     let stdin_filepath = match cmd_settings.stdin {
         Some(s) => {
@@ -220,40 +221,33 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         None => None,
     };
 
-    /// Convenience function for cleaning up the possibly dangling stdin tempfile.
-    fn cleantemp(p: &Option<PathBuf>) -> () {
-        p.as_ref()
+    // Set up a guard for cleaning up the possibly dangling stdin tempfile.
+    scopeguard::defer! {
+        stdin_filepath.as_ref()
             .inspect(|p| std::fs::remove_file(p).unwrap_or(()));
     }
 
-    let mut handle = Popen::create(
-        &os_cmd,
-        PopenConfig {
-            stdin: match &stdin_filepath {
-                Some(path) => {
-                    let f = File::open(path).inspect_err(|_| cleantemp(&stdin_filepath))?;
-                    Redirection::File(f)
-                }
-                None => Redirection::None,
-            },
-            stdout: if cmd_settings.max_stdout_length.is_some() {
-                Redirection::Pipe
-            } else {
-                Redirection::None
-            },
-            stderr: if cmd_settings.max_stderr_length.is_some() {
-                Redirection::Pipe
-            } else {
-                Redirection::None
-            },
-            ..Default::default()
-        },
-    )
-    .map_err(|e| {
-        // Make sure we clean up the stdin filepath before returning
-        cleantemp(&stdin_filepath);
-        (&syscmd_err).clone().as_error().with_cause(Box::new(e))
-    })?;
+    let mut job = Exec::cmd(cmd.as_ref())
+        .args(args.as_ref().iter().map(|s| OsString::from(s.as_ref())))
+        .stdin(match &stdin_filepath {
+            Some(path) => {
+                let f = File::open(path)?;
+                Redirection::File(f)
+            }
+            None => Redirection::None,
+        })
+        .stdout(if cmd_settings.max_stdout_length.is_some() {
+            Redirection::Pipe
+        } else {
+            Redirection::None
+        })
+        .stderr(if cmd_settings.max_stderr_length.is_some() {
+            Redirection::Pipe
+        } else {
+            Redirection::None
+        })
+        .start()
+        .map_err(|e| (&syscmd_err).clone().as_error().with_cause(Box::new(e)))?;
 
     let mut buf_stdout: Vec<u8> = vec![];
     let mut buf_stderr: Vec<u8> = vec![];
@@ -266,7 +260,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     /// running. This is used to ensure that the process is killed even if
     /// something goes wrong with the IO.
     fn wrapped_read_and_wait(
-        handle: &mut Popen,
+        job: &mut Job,
         buf_stdout: &mut Vec<u8>,
         buf_stderr: &mut Vec<u8>,
         end_time: SystemTime,
@@ -284,7 +278,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
             .inspect_err(|e| log::error!("Received error when registering stderr: {e}"))?;
         let mut events = mio::Events::with_capacity(EVENT_CAPACITY);
 
-        if let Some(f) = &handle.stdout {
+        if let Some(f) = &job.stdout {
             poll.registry()
                 .register(
                     &mut mio::unix::SourceFd(&f.as_raw_fd()),
@@ -293,7 +287,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
                 )
                 .inspect_err(|e| log::error!("Received error when registering stdout: {e}"))?;
         }
-        if let Some(f) = &handle.stderr {
+        if let Some(f) = &job.stderr {
             poll.registry()
                 .register(
                     &mut mio::unix::SourceFd(&f.as_raw_fd()),
@@ -313,7 +307,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
             if output_buf.len() > maxlen {
                 return Err(syscmd_err.clone().limit_exceeded(maxlen).as_error());
             } else {
-                Ok(l == BUFFER_SIZE)
+                Ok(l)
             }
         };
 
@@ -322,26 +316,26 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
 
             for event in &events {
                 if event.token() == mio::Token(1) {
-                    if let Some(f) = handle.stdout.as_mut() {
+                    if let Some(f) = job.stdout.as_mut() {
                         read_chunk(f, buf_stdout, max_stdout_length)?;
                     }
                 } else if event.token() == mio::Token(2) {
-                    if let Some(f) = handle.stderr.as_mut() {
+                    if let Some(f) = job.stderr.as_mut() {
                         read_chunk(f, buf_stderr, max_stderr_length)?;
                     }
                 }
             }
-            stat = handle.poll();
+            stat = job.poll();
         }
 
         // If we did not time out, make sure that we read the last data from
         // stdout and stderr
         if stat.is_some() {
-            if let Some(f) = handle.stdout.as_mut() {
-                while read_chunk(f, buf_stdout, max_stdout_length)? {}
+            if let Some(f) = job.stdout.as_mut() {
+                while read_chunk(f, buf_stdout, max_stdout_length)? > 0 {}
             }
-            if let Some(f) = handle.stderr.as_mut() {
-                while read_chunk(f, buf_stderr, max_stderr_length)? {}
+            if let Some(f) = job.stderr.as_mut() {
+                while read_chunk(f, buf_stderr, max_stderr_length)? > 0 {}
             }
         }
 
@@ -349,7 +343,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     }
 
     let wait_result = wrapped_read_and_wait(
-        &mut handle,
+        &mut job,
         &mut buf_stdout,
         &mut buf_stderr,
         end_time,
@@ -359,20 +353,16 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     )
     .inspect_err(|e| {
         log::warn!("(Terminating process) Runtime error when waiting for it to finish: {e}");
-        handle
-            .kill()
+        job.kill()
             .unwrap_or_else(|e| log::error!("Could not kill process: {e}"));
-        cleantemp(&stdin_filepath);
     })?;
-
-    cleantemp(&stdin_filepath);
 
     let stdout = String::from_utf8_lossy(buf_stdout.as_slice()).into_owned();
     let stderr = String::from_utf8_lossy(buf_stderr.as_slice()).into_owned();
 
     match wait_result {
-        Some(stat) => match stat {
-            ExitStatus::Exited(ucode) => {
+        Some(stat) => {
+            if let Some(ucode) = stat.code() {
                 let code = ucode as i32;
                 if let Some(ec) = cmd_settings.expected_code {
                     if ec != code {
@@ -386,18 +376,16 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
                     stdout: stdout,
                     stderr: stderr,
                 })
+            } else if let Some(sig) = stat.signal() {
+                Err(syscmd_err
+                    .msg(format!("terminated by signal {sig}"))
+                    .as_error())
+            } else {
+                Err(syscmd_err.msg("undetermined error").as_error())
             }
-            ExitStatus::Signaled(sig) => Err(syscmd_err
-                .msg(format!("terminated by signal {sig}"))
-                .as_error()),
-            ExitStatus::Other(v) => Err(syscmd_err
-                .msg(format!("unknown exit status {v}"))
-                .as_error()),
-            ExitStatus::Undetermined => Err(syscmd_err.msg("undetermined error").as_error()),
-        },
+        }
         None => {
-            handle
-                .kill()
+            job.kill()
                 .unwrap_or_else(|e| log::warn!("Could not killed timed out process: {e}"));
             syscmd_err.stdout = cmd_settings.max_stdout_length.map(|_| stdout);
             syscmd_err.stderr = cmd_settings.max_stderr_length.map(|_| stderr);

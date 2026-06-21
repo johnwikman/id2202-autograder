@@ -4,6 +4,7 @@ use id2202_autograder::{config::Settings, error::Error};
 use clap::Parser;
 
 mod api;
+mod auth;
 mod route;
 
 #[derive(Parser, Debug)]
@@ -29,6 +30,8 @@ async fn not_found(
 
 #[actix_web::main]
 async fn main() -> Result<(), Error> {
+    use actix_web::middleware::Logger;
+
     let args: Args = Args::parse();
     let s = Settings::load(&args.settings)?;
     s.setup_logging("server")?;
@@ -36,6 +39,8 @@ async fn main() -> Result<(), Error> {
     HttpServer::new(move || {
         let s = s_clone1.clone();
         App::new()
+            .wrap(Logger::default())
+            .wrap(actix_web::middleware::from_fn(auth::authenticate))
             .app_data(web::Data::new(s.clone()))
             .configure(|cfg| route::config(cfg, &s))
             .configure(|cfg| api::config(cfg, &s, "/api"))

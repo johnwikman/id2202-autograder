@@ -31,6 +31,22 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings, prefix: &str) {
         &format!("{prefix}/submission/{}", "{id}"),
         web::get().to(submission::get_submission),
     );
+
+    // JSON schemas for responses
+    cfg.route(
+        &format!("{prefix}/schema/error"),
+        web::get().to(response::schema_callback!(response::ErrorResponse)),
+    );
+
+    cfg.route(
+        &format!("{prefix}/schema/submit"),
+        web::get().to(response::schema_callback!(response::SubmitResponse)),
+    );
+
+    cfg.route(
+        &format!("{prefix}/schema/submission"),
+        web::get().to(response::schema_callback!(response::SubmissionResponse)),
+    );
 }
 
 /// "404: Not found" response for API requests.

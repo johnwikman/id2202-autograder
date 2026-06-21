@@ -13,7 +13,7 @@ use id2202_autograder::{
     github,
 };
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -172,7 +172,7 @@ pub async fn github_submission(
     mac.update(payload_bytes.chunk());
 
     let mac_output_vec = mac.finalize().into_bytes();
-    let hmac256_computed = format!("sha256={:x}", mac_output_vec);
+    let hmac256_computed = format!("sha256={}", hex::encode(mac_output_vec));
 
     log::debug!("Computed hash: \"{}\"", hmac256_computed);
     log::debug!("Received hash: \"{}\"", hmac256_received);
@@ -186,7 +186,7 @@ pub async fn github_submission(
 
     // Validate the github event
     if gh_event == "ping" {
-        return Ok(SubmitResponse::new(&req, "ping was authenticated").to_http());
+        return Ok(SubmitResponse::without_id(&req, "ping was authenticated").to_http());
     }
 
     // We only care about push events after this point
@@ -252,7 +252,7 @@ pub async fn github_submission(
             sub.repository.full_name,
             rejection,
         );
-        return Ok(SubmitResponse::new(&req, "not a repository to be graded").to_http());
+        return Ok(SubmitResponse::without_id(&req, "not a repository to be graded").to_http());
     }
 
     let grading_tags: Vec<&str> =
@@ -268,7 +268,7 @@ pub async fn github_submission(
                     .await
                     .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
 
-                return Ok(SubmitResponse::new(&req, "bad grading tags").to_http());
+                return Ok(SubmitResponse::without_id(&req, "bad grading tags").to_http());
             }
         };
 
@@ -277,7 +277,7 @@ pub async fn github_submission(
             "Push from {} will not be considered for grading, no grading tags provided",
             sub.repository.full_name
         );
-        return Ok(SubmitResponse::new(&req, "no grading tags provided").to_http());
+        return Ok(SubmitResponse::without_id(&req, "no grading tags provided").to_http());
     }
 
     // Connect to database and insert the submission request
@@ -321,5 +321,5 @@ pub async fn github_submission(
     });
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");
-    Ok(SubmitResponse::new(&req, &format!("submission {submission_id} received")).to_http())
+    Ok(SubmitResponse::new(&req, "submission received", submission_id).to_http())
 }

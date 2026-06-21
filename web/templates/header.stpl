@@ -69,20 +69,20 @@
                 %>
 
                 <!-- Color Selector -->
-                <li class="nav-item py-2 py-lg-1 col-12 col-lg-auto">
-                    <div class="vr d-none d-lg-flex h-100 mx-lg-2 text-auto"></div>
-                    <hr class="d-lg-none my-2 text-auto-50">
+                <li class="nav-item py-2 py-md-1 col-12 col-md-auto">
+                    <div class="vr d-none d-md-flex h-100 mx-md-2 text-auto"></div>
+                    <hr class="d-md-none my-2 text-auto-50">
                 </li>
                     <li class="nav-item dropdown">
                         <button id="bd-theme"
-                                class="btn btn-link nav-link px-0 px-lg-2 py-2 dropdown-toggle d-flex align-items-center"
+                                class="btn btn-link nav-link px-0 px-md-2 py-2 dropdown-toggle d-flex align-items-center"
                                 type="button"
                                 aria-expanded="false"
                                 data-bs-toggle="dropdown"
                                 data-bs-display="static"
                                 aria-label="Toggle theme (auto)">
                                 <svg class="bi my-1 theme-icon-active" aria-hidden="true"><use href="#circle-half"></use></svg>
-                                <span class="d-lg-none ms-2" id="bd-theme-text">Toggle theme</span>
+                                <span class="d-md-none ms-2" id="bd-theme-text">Toggle theme</span>
                                 </button>
                         <ul class="dropdown-menu dropdown-menu-end"
                             aria-labelledby="bd-theme-text">

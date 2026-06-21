@@ -7,6 +7,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{config::ReportingSettings, error::Error};
@@ -128,12 +129,17 @@ fn html_formatter_str<'a>(s: &'a str, escape: bool) -> HTMLFormatterStr<'a> {
 }
 
 /// Common report interface.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub enum Report {
+    #[serde(rename = "wrapper")]
     Wrapper(ReportWrapper),
+    #[serde(rename = "invalid_tag")]
     InvalidTag(ReportInvalidTag),
+    #[serde(rename = "message")]
     Message(ReportMessage),
+    #[serde(rename = "submission")]
     Submission(ReportSubmission),
+    #[serde(rename = "tag_grading")]
     TagGrading(ReportTagGrading),
 }
 
@@ -196,7 +202,7 @@ impl<'a> std::fmt::Display for MarkdownFormatterReport<'a> {
 
 /// Wraps one or more reports into a single report, with the option to include
 /// some surrounding metadata.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReportWrapper {
     /// Optional title to include
     pub title: Option<String>,
@@ -252,7 +258,7 @@ impl ReportWrapper {
 }
 
 /// A report stating that an invalid tag has been received.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReportInvalidTag {
     /// The tag name that was received
     pub tag_name: String,
@@ -366,7 +372,7 @@ impl ReportInvalidTag {
 }
 
 /// A simple message reported as a raw string.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReportMessage {
     /// The message to display
     pub msg: String,
@@ -401,7 +407,7 @@ impl ReportMessage {
 }
 
 /// A report of a complete submission, constituting of variable number of grading tags.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReportSubmission {
     /// Optional reason for why a grading process ended prematurely
     pub premature_exit_reason: Option<String>,
@@ -551,7 +557,7 @@ impl ReportSubmission {
 }
 
 /// A report of grading a single tag.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReportTagGrading {
     /// The name of the graded tag
     pub tag_name: String,
@@ -648,9 +654,6 @@ impl ReportTagGrading {
                     settings.markdown.symbol_tagsuccess
                 )?;
             }
-            if details.len() > 0 {
-                dst.write_str(" See details below.")?;
-            }
 
             dst.write_str("\n\n")?;
             for atg in annot_tgs {
@@ -739,7 +742,7 @@ impl ReportTagGrading {
 }
 
 /// Details for tag groups when creating a ReportTagGrading report.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct DetailsTagGradingGroup {
     pub group_title: String,
     pub subgroups: Vec<DetailsTagGradingGroup>,
@@ -932,7 +935,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
 }
 
 /// Detailed information about a failed build.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
 pub struct DetailsBuildFailure {
     /// A message describing the kind of build failure
     pub msg: String,
@@ -1077,7 +1080,7 @@ impl DetailsBuildFailure {
 }
 
 /// Detailed information when a test case has failed.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
 pub struct DetailsTestFailure {
     /// Additional reasons to state as failure causes
     pub additional_failure_causes: Vec<String>,
@@ -1219,23 +1222,7 @@ impl DetailsTestFailure {
 
         if let Some(mm) = &self.code_mismatch {
             component_spacing(dst, &mut spacing_state)?;
-            dst.write_str("### Return Code Mismatch\n\n")?;
-            for msg in &mm.msgs {
-                write!(dst, "{}\n\n", msg)?;
-            }
-            write!(dst, "Received return code `{}`. Expected ", mm.received)?;
-            if mm.allowed_alternatives.len() == 1 {
-                write!(dst, "`{}`.", mm.allowed_alternatives.get(0).unwrap())?;
-            } else {
-                write!(dst, "one of ")?;
-                for (i, a) in mm.allowed_alternatives.iter().enumerate() {
-                    if i > 0 {
-                        dst.write_str(", ")?;
-                    }
-                    write!(dst, "`{}`", a)?;
-                }
-                dst.write_str(".")?;
-            }
+            mm.render_markdown(settings, dst, "Return Code Mismatch", "code")?;
         }
 
         if let Some(mm) = &self.stdout_mismatch {
@@ -1345,38 +1332,13 @@ impl DetailsTestFailure {
         }
 
         if let Some(mm) = &self.code_mismatch {
-            dst.write_str("<div class=\"mt-3 p-3 border border-2 border-danger rounded\">")?;
-            dst.write_str("<h4>Return Code Mismatch</h4>")?;
-            for msg in &mm.msgs {
-                dst.write_str("<p>")?;
-                html_write_str(dst, msg, escape)?;
-                dst.write_str("</p>")?;
-            }
-            write!(
+            mm.render_html(
+                settings,
                 dst,
-                "<span>Received return code <code>{}</code>. Expected ",
-                mm.received
+                escape,
+                header_level + 1,
+                "Return Code Mismatch",
             )?;
-            match mm.allowed_alternatives.as_slice() {
-                &[expected] => {
-                    write!(dst, "<code>{expected}</code>.")?;
-                }
-                many_expected => {
-                    dst.write_str("one of ")?;
-                    for (i, expected) in many_expected.iter().enumerate() {
-                        if i > 0 {
-                            dst.write_str(", ")?;
-                        }
-                        if (i + 1) == many_expected.len() {
-                            dst.write_str("or ")?;
-                        }
-                        write!(dst, "<code>{expected}</code>")?;
-                    }
-                    dst.write_str(".")?;
-                }
-            }
-            dst.write_str("</span>")?;
-            dst.write_str("</div>")?;
         }
 
         if let Some(mm) = &self.stdout_mismatch {
@@ -1421,7 +1383,7 @@ impl DetailsTestFailure {
 
 /// Information about a mismatch when comparing what was received to the
 /// allowed alternatives.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct MismatchInfo<A> {
     /// The output that was received from the program
     pub received: A,
@@ -1429,6 +1391,48 @@ pub struct MismatchInfo<A> {
     pub allowed_alternatives: Vec<A>,
     /// Optional additional messages
     pub msgs: Vec<String>,
+}
+
+impl<A> MismatchInfo<A> {
+    fn render_markdown_header(&self, dst: &mut impl Write, title: &str) -> Result<(), Error> {
+        write!(dst, "### {}\n\n", title)?;
+
+        for msg in &self.msgs {
+            write!(dst, "{}\n\n", msg)?;
+        }
+
+        Ok(())
+    }
+
+    fn render_html_begin(
+        &self,
+        dst: &mut impl Write,
+        escape: bool,
+        title: &str,
+    ) -> Result<(), Error> {
+        dst.write_str("<div class=\"card mt-3 border border-2 border-danger rounded\">")?;
+        write!(
+            dst,
+            "<h4 class=\"card-header border-danger bg-danger-subtle\">{}</h4>",
+            html_formatter_str(title, escape)
+        )?;
+        dst.write_str("<div class=\"card-body\">")?;
+        for msg in &self.msgs {
+            write!(
+                dst,
+                "<p><mark>{}</mark></p>",
+                html_formatter_str(msg, escape)
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn render_html_end(&self, dst: &mut impl Write) -> Result<(), Error> {
+        dst.write_str("</div></div>")?;
+
+        Ok(())
+    }
 }
 
 impl MismatchInfo<String> {
@@ -1441,11 +1445,8 @@ impl MismatchInfo<String> {
         title: &str,
         output_name: &str,
     ) -> Result<(), Error> {
-        write!(dst, "### {}\n\n", title)?;
+        self.render_markdown_header(dst, title)?;
 
-        for msg in &self.msgs {
-            write!(dst, "{}\n\n", msg)?;
-        }
         write!(dst, "**Received {}**:\n\n", output_name)?;
 
         markdown_write_preformatted_with_truncation(
@@ -1487,15 +1488,8 @@ impl MismatchInfo<String> {
         _header_level: usize,
         title: &str,
     ) -> Result<(), Error> {
-        dst.write_str("<div class=\"mt-3 p-3 border border-2 border-danger rounded\">")?;
-        dst.write_str("<h4>")?;
-        html_write_str(dst, title, escape)?;
-        dst.write_str("</h4>")?;
-        for msg in &self.msgs {
-            dst.write_str("<p>")?;
-            html_write_str(dst, msg, escape)?;
-            dst.write_str("</p>")?;
-        }
+        self.render_html_begin(dst, escape, title)?;
+
         dst.write_str("<h6>Received</h6>")?;
         html_write_codeblock(dst, &self.received, escape)?;
         dst.write_str("<h6 class=\"mt-2\">Expected")?;
@@ -1509,14 +1503,79 @@ impl MismatchInfo<String> {
             }
             html_write_codeblock(dst, expected, escape)?;
         }
-        dst.write_str("</div>")?;
+
+        self.render_html_end(dst)
+    }
+}
+
+impl MismatchInfo<i32> {
+    /// For strings, we assume that each string corresponds to a code block,
+    /// and will be presented in verbatim.
+    fn render_markdown(
+        &self,
+        _settings: &ReportingSettings,
+        dst: &mut impl Write,
+        title: &str,
+        _output_name: &str,
+    ) -> Result<(), Error> {
+        self.render_markdown_header(dst, title)?;
+
+        write!(dst, "Received return code `{}`. Expected ", self.received)?;
+        match self.allowed_alternatives.as_slice() {
+            &[expected] => {
+                write!(dst, "`{expected}`.")?;
+            }
+            many_expected => {
+                write!(
+                    dst,
+                    "one of {}.",
+                    many_expected
+                        .iter()
+                        .format_with(", ", |ex, f| f(&format_args!("`{ex}`")))
+                )?;
+            }
+        }
 
         Ok(())
+    }
+
+    fn render_html(
+        &self,
+        _settings: &ReportingSettings,
+        dst: &mut impl Write,
+        escape: bool,
+        _header_level: usize,
+        title: &str,
+    ) -> Result<(), Error> {
+        self.render_html_begin(dst, escape, title)?;
+
+        write!(
+            dst,
+            "<span>Received return code <code>{}</code>. Expected ",
+            self.received
+        )?;
+        match self.allowed_alternatives.as_slice() {
+            &[expected] => {
+                write!(dst, "<code>{expected}</code>.")?;
+            }
+            many_expected => {
+                write!(
+                    dst,
+                    "one of {}.",
+                    many_expected
+                        .iter()
+                        .format_with(", ", |ex, f| f(&format_args!("<code>{ex}</code>")))
+                )?;
+            }
+        }
+        dst.write_str("</span>")?;
+
+        self.render_html_end(dst)
     }
 }
 
 /// Information about a source file to be displayed
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
 pub struct SourceFileInfo {
     /// The contents of the file. This must always be present.
     pub content: String,
@@ -1558,7 +1617,7 @@ impl SourceFileInfo {
 }
 
 /// Information about a MIME-type check
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
 pub struct MIMETypeInfo {
     /// The path that was checked
     pub path: String,

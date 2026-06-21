@@ -218,7 +218,7 @@ pub async fn gitlab_submit_webhook(
     let commit_to_grade = match sub.commits.iter().find(|c| c.id == sub.after) {
         Some(c) => c,
         None => {
-            return Ok(SubmitResponse::new(
+            return Ok(SubmitResponse::without_id(
                 &req,
                 "pushed commits do not point to the head of the repository",
             )
@@ -247,7 +247,7 @@ pub async fn gitlab_submit_webhook(
             sub.project.path_with_namespace,
             rejection,
         );
-        return Ok(SubmitResponse::new(&req, "not a repository to be graded").to_http());
+        return Ok(SubmitResponse::without_id(&req, "not a repository to be graded").to_http());
     }
 
     let grading_tags: Vec<&str> = match extract_grading_tags(&settings, &commit_to_grade.message) {
@@ -262,7 +262,7 @@ pub async fn gitlab_submit_webhook(
                 .await
                 .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
 
-            return Ok(SubmitResponse::new(&req, "bad grading tags").to_http());
+            return Ok(SubmitResponse::without_id(&req, "bad grading tags").to_http());
         }
     };
 
@@ -271,7 +271,7 @@ pub async fn gitlab_submit_webhook(
             "Push from {} will not be considered for grading, no grading tags provided",
             sub.project.path_with_namespace
         );
-        return Ok(SubmitResponse::new(&req, "no grading tags provided").to_http());
+        return Ok(SubmitResponse::without_id(&req, "no grading tags provided").to_http());
     }
 
     // Connect to database and insert the submission request
@@ -315,5 +315,5 @@ pub async fn gitlab_submit_webhook(
     });
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");
-    Ok(SubmitResponse::new(&req, &format!("submission {submission_id} received")).to_http())
+    Ok(SubmitResponse::new(&req, "submission received", submission_id).to_http())
 }

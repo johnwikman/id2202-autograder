@@ -343,7 +343,6 @@ auto_convert_error!(std::time::SystemTimeError, "system time error");
 auto_convert_error!(std::fmt::Error, "fmt error");
 auto_convert_error!(toml::ser::Error, "toml serialization error");
 auto_convert_error!(toml::de::Error, "toml deserialization error");
-auto_convert_error!(subprocess::PopenError, "subprocess popen error");
 
 impl Error {
     /// Converts the error `e` into this error kind and specifies a custom

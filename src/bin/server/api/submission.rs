@@ -1,15 +1,17 @@
 use actix_web::{
     web::{self},
-    HttpRequest, Responder,
+    HttpMessage, HttpRequest, Responder,
 };
-use itertools::Itertools;
 
 use id2202_autograder::{
     config::Settings,
     db::{conn::DatabaseConnection, models::SubmissionWithReport},
 };
 
-use crate::api::response::{ErrorResponse, SubmissionResponse};
+use crate::{
+    api::response::{ErrorResponse, SubmissionResponse},
+    auth::AuthorizationInfo,
+};
 
 /// Fetching submissions from the database
 ///
@@ -25,39 +27,14 @@ pub async fn get_submission(
 
     let settings = data.get_ref();
 
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .and_then(|hv| hv.to_str().ok())
-        .ok_or(ErrorResponse::unauthorized(
-            &req,
-            "missing Authorization header",
-        ))?;
-
-    let auth_token = match auth_header.split_whitespace().collect_vec().as_slice() {
-        &[method, key] => {
-            if method.eq_ignore_ascii_case("bearer") {
-                key
-            } else {
-                return Err(
-                    ErrorResponse::unauthorized(&req, "invalid Authorization header").into(),
-                );
-            }
-        }
-        _ => {
-            return Err(ErrorResponse::unauthorized(&req, "invalid Authorization header").into());
-        }
-    };
-
-    if !settings
-        .server
-        .secrets
-        .api_auth_tokens
-        .iter()
-        .any(|t| t == auth_token)
-    {
-        log::error!("Attempted request with bad auth token");
-        return Err(ErrorResponse::unauthorized(&req, "bad token").into());
+    let auth_info = req
+        .extensions()
+        .get::<AuthorizationInfo>()
+        .ok_or_else(|| ErrorResponse::unauthorized(&req, "missing Authorization header"))?
+        .clone();
+    if !auth_info.api_auth_ok {
+        // API authentication failed
+        return Err(ErrorResponse::unauthorized(&req, "API authentication failed").into());
     }
 
     // Request is Authorized

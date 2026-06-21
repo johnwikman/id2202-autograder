@@ -9,8 +9,7 @@ use sailfish::TemplateSimple;
 
 use id2202_autograder::{config::Settings, utils::systemtime_to_utc_string};
 
-use crate::route::common::CommonInformation;
-use crate::route::error_msg::ErrorMessageTemplate;
+use crate::route::{common::CommonInformation, error_msg};
 
 /// Template for showing job information
 #[derive(TemplateSimple)]
@@ -46,7 +45,7 @@ pub async fn get_job_info(
         Ok(conn) => conn,
         Err(e) => {
             log::error!("Could not open database connection: {e}");
-            return ErrorMessageTemplate::internal_server_error(settings);
+            return error_msg::internal_server_error(settings);
         }
     };
 
@@ -63,7 +62,7 @@ pub async fn get_job_info(
             Ok(v) => v,
             Err(e) => {
                 log::error!("Could not get submissions from database: {e}");
-                return ErrorMessageTemplate::internal_server_error(settings);
+                return error_msg::internal_server_error(settings);
             }
         }
     };

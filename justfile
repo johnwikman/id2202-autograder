@@ -1,4 +1,4 @@
-image_version := "2.0.0-dev1"
+image_version := "2.0.0-dev2"
 image_name    := "localhost/id2202-autograder"
 image_tag     := image_name + ":" + image_version
 
