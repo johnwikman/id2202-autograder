@@ -4,11 +4,11 @@ SHELL [ "/bin/bash", "-c" ]
 WORKDIR /root
 
 # Copy over the repo (except for the Docker files)
-ADD .gitignore README.md LICENSE Cargo.toml diesel.toml /autograder/
+ADD .gitignore README.md LICENSE Cargo.toml build.rs diesel.toml sailfish.toml /autograder/
 ADD diesel    /autograder/diesel
 ADD example   /autograder/example
 ADD src       /autograder/src
-ADD templates /autograder/templates
+ADD web       /autograder/web
 
 # Install rust
 RUN dnf -y install gcc libpq-devel git file \

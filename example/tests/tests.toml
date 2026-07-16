@@ -68,25 +68,36 @@ path = ""
 mimetype_prefix = ""
 mimetype_prefix_ignore = true
 
-# The test tags are specified below. Note that the source files are build once
+# The test tags are specified below. Note that the source files are built once
 # for each tag. Hence all build configuration are specified in this file.
 #
 # Any configuration on how the tests are run can be customly specified for each
 # test case.
+#
+# A tag may contain arbitrary metadata fields or none at all. These are opaque
+# to the autograder, and are just treated as some serializable field that can
+# be converted to JSON, TOML, etc. This is useful for external services making
+# use of the autograder.
 [tags.hello]
 dirs = ["hello"]
+task_file = "hello/task.md"
 build.srcdir = "solutions/hello"
 build.cmd = ["make"]
+metadata.version = 1
 
 [tags.hello-extra]
 dirs = ["hello-extra"]
 build.srcdir = "solutions/hello-extra"
 build.cmd = ["make"]
+metadata.version = 2
+metadata.date = "2026-01-30"
 
 [tags.hello-asm]
 dirs = ["hello-asm"]
 build.srcdir = "solutions/hello-asm"
 build.cmd = ["make"]
+metadata.version = 1
+metadata.optional = true
 
 [tags.hello-file]
 dirs = ["hello-file"]

@@ -9,4 +9,5 @@ pub use settings::{
 
 pub use tests::{
     tag_is_valid, tag_match, Tag, TagBuildConfig, Test, TestDefault, TestGroup, Testkind, Tests,
+    TestsLoadingOptions,
 };

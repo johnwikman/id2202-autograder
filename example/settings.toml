@@ -44,7 +44,7 @@ webhook_secret = "s3cr3t"
 [[submission.gitlab.known_instances]]
 domain = "localhost:8929"
 auth_token = "ChangeMe"
-allowed_namespaces = ["id2202-test", "id2202-2025-testing"]
+allowed_namespaces = ["id2202-test", "id2202-2025-testing", "autograder-testing"]
 allowed_repo_prefixes = ["id2202-"]
 allowed_repo_suffixes = []
 prohibited_repo_prefixes = []

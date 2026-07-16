@@ -1,6 +1,6 @@
 use actix_web::{
     web::{self},
-    HttpMessage, HttpRequest, Responder,
+    HttpRequest, Responder,
 };
 
 use id2202_autograder::{
@@ -8,10 +8,7 @@ use id2202_autograder::{
     db::{conn::DatabaseConnection, models::SubmissionWithReport},
 };
 
-use crate::{
-    api::response::{ErrorResponse, SubmissionResponse},
-    auth::AuthorizationInfo,
-};
+use crate::api::response::{ErrorResponse, SubmissionResponse};
 
 /// Fetching submissions from the database
 ///
@@ -26,16 +23,6 @@ pub async fn get_submission(
     use id2202_autograder::db::schema::submissions::{self, columns as sub_col};
 
     let settings = data.get_ref();
-
-    let auth_info = req
-        .extensions()
-        .get::<AuthorizationInfo>()
-        .ok_or_else(|| ErrorResponse::unauthorized(&req, "missing Authorization header"))?
-        .clone();
-    if !auth_info.api_auth_ok {
-        // API authentication failed
-        return Err(ErrorResponse::unauthorized(&req, "API authentication failed").into());
-    }
 
     // Request is Authorized
     let parsed_id: i64 = match submission_id.parse() {

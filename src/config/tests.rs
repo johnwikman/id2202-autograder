@@ -1,4 +1,7 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_value::Value as SerdeValue;
+use smart_default::SmartDefault;
 use std::collections::BTreeMap;
 
 use crate::{
@@ -208,7 +211,7 @@ pub struct TestDefault {
 }
 
 /// Configuration related to building the project for a test tag.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct TagBuildConfig {
     /// The source directory that contains the files to build
     pub srcdir: String,
@@ -237,6 +240,8 @@ pub struct TagConfig {
     pub name: String,
     pub dirs: Vec<String>,
     pub build: TagBuildConfig,
+    pub metadata: BTreeMap<String, SerdeValue>,
+    pub task_file: Option<String>,
 }
 
 /// A test case to run.
@@ -260,7 +265,19 @@ pub struct TestGroup {
 /// A test tag that can be invoked and graded.
 #[derive(Debug, Clone)]
 pub struct Tag {
+    /// Tag name identifier.
     pub name: String,
+
+    /// Optional path to a file containing the instructions for the task that
+    /// this is running the test cases for. This is an optional field, and the
+    /// content of this file is opaque to the autograder. If provided, the
+    /// autograder will check that this actually points to a file.
+    pub task_file: Option<String>,
+
+    /// Opaque metadata for the tag. This will never be inspected by the
+    /// autograder.
+    pub metadata: BTreeMap<String, SerdeValue>,
+
     pub test_groups: Vec<TestGroup>,
     pub build: TagBuildConfig,
 }
@@ -271,9 +288,25 @@ pub struct Tests {
     pub tag_groups: BTreeMap<String, Vec<Tag>>,
 }
 
+/// Options to set when loading tests.
+#[derive(Debug, SmartDefault)]
+pub struct TestsLoadingOptions {
+    /// Only include information about the tags themselves, and skip loading
+    /// any of the tests cases. This will cause the `test_groups` field under
+    /// `Tag` to be empty vectors for all tags, and the tests will not be
+    /// checked as well.
+    #[default = false]
+    pub taginfo_only: bool,
+}
+impl AsRef<TestsLoadingOptions> for TestsLoadingOptions {
+    fn as_ref(&self) -> &TestsLoadingOptions {
+        self
+    }
+}
+
 impl Tests {
     /// Load test configuration from path
-    pub fn load(path: &str) -> Result<Self, Error> {
+    pub fn load(path: &str, options: impl AsRef<TestsLoadingOptions>) -> Result<Self, Error> {
         // "Hidden" structs that are only used for deserialization
         #[derive(Deserialize, Debug, Clone)]
         struct _UntreatedTests {
@@ -286,6 +319,8 @@ impl Tests {
         struct _UntreatedExtensibleTag {
             extends: String,
             dirs: Vec<String>,
+            metadata: Option<BTreeMap<String, SerdeValue>>,
+            task_file: Option<String>,
         }
 
         #[derive(Deserialize, Debug, Clone)]
@@ -302,7 +337,11 @@ impl Tests {
         struct _UntreatedTag {
             dirs: Vec<String>,
             build: _UntreatedTagBuild,
+            metadata: Option<BTreeMap<String, SerdeValue>>,
+            task_file: Option<String>,
         }
+
+        let options = options.as_ref();
 
         log::debug!("Loading root test configuration from {path}");
 
@@ -327,10 +366,16 @@ impl Tests {
                             let uetg: _UntreatedExtensibleTag =
                                 data.to_owned().try_into().map_err(Error::from)?;
                             if let Some(t_found) = tag_configs.get(&uetg.extends) {
+                                let mut extended_metadata = t_found.metadata.clone();
+                                if let Some(metadata) = uetg.metadata {
+                                    extended_metadata.extend(metadata.into_iter());
+                                }
                                 let t = TagConfig {
                                     name: name.to_owned(),
                                     dirs: [t_found.dirs.to_owned(), uetg.dirs].concat(),
                                     build: t_found.build.to_owned(),
+                                    metadata: extended_metadata,
+                                    task_file: uetg.task_file.or_else(|| t_found.task_file.clone()),
                                 };
                                 log::debug!("Found tag {t:?}");
                                 found.push(name.to_string());
@@ -362,6 +407,8 @@ impl Tests {
                                             ut.default.build_allowed_binary_mimetypes.clone(),
                                         ),
                                 },
+                                metadata: utg.metadata.unwrap_or_else(|| BTreeMap::new()),
+                                task_file: utg.task_file,
                             };
                             log::debug!("Found tag {t:?}");
                             found.push(name.to_string());
@@ -397,7 +444,7 @@ impl Tests {
         for (k, v) in tag_configs.iter() {
             // While this technically is a .map() operation, we do it as a loop
             // to propagate the error from .to_tag().
-            tags.insert(k.to_owned(), v.to_tag(&ut.default, &root_dir)?);
+            tags.insert(k.to_owned(), v.to_tag(&ut.default, &root_dir, options)?);
         }
 
         let mut tag_groups: BTreeMap<String, Vec<Tag>> = tags
@@ -487,7 +534,12 @@ impl TagConfig {
     /// The `defaults` variable provide standard default values to provide for
     /// each test kind and build variables that may be absent.
     /// The `root_dir` is the directory from which every path is relative to.
-    fn to_tag(self: &Self, defaults: &TestDefault, root_dir: &str) -> Result<Tag, Error> {
+    fn to_tag(
+        self: &Self,
+        defaults: &TestDefault,
+        root_dir: &str,
+        options: &TestsLoadingOptions,
+    ) -> Result<Tag, Error> {
         log::debug!("Instantiating tag \"{}\"", self.name);
         if !tag_is_valid(&self.name) {
             return Err(Error::test_config_msg("invalid tag name")
@@ -495,26 +547,46 @@ impl TagConfig {
                 .into());
         }
 
+        let task_file = if let Some(p) = &self.task_file {
+            let abs_path = path_absolute_join(root_dir, p)?;
+            if !std::fs::exists(&abs_path)? {
+                return Err(
+                    Error::test_config_msg(format!("task file \"{abs_path}\" not found"))
+                        .tag(&self.name)
+                        .into(),
+                );
+            }
+            Some(abs_path)
+        } else {
+            None
+        };
+
         let mut t = Tag {
             name: self.name.to_owned(),
+            metadata: self.metadata.to_owned(),
+            task_file: task_file,
             test_groups: vec![],
             build: self.build.to_owned(),
         };
 
-        log::debug!("Converting each directory to a test group");
-        for dir in self.dirs.iter() {
-            log::debug!("Scanning directory {dir}");
-            let absdir = path_absolute_join(root_dir, &dir)?;
-            t.test_groups.push(TestGroup::new(
-                &absdir,
-                defaults,
-                &_UntreatedTest {
-                    kind: None,
-                    timeout: None,
-                    options: None,
-                },
-                vec![],
-            )?);
+        if !options.taginfo_only {
+            log::debug!("Converting each directory to a test group");
+            for dir in self.dirs.iter() {
+                log::debug!("Scanning directory {dir}");
+                let absdir = path_absolute_join(root_dir, &dir)?;
+                t.test_groups.push(TestGroup::new(
+                    &absdir,
+                    defaults,
+                    &_UntreatedTest {
+                        kind: None,
+                        timeout: None,
+                        options: None,
+                    },
+                    vec![],
+                )?);
+            }
+        } else {
+            log::debug!("Skipping the loading of test groups due to the taginfo_only flag.");
         }
 
         Ok(t)
@@ -759,7 +831,8 @@ mod tests {
 
     #[test]
     fn test_load_example_tests_toml() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         // Verify default values are loaded correctly
         assert_that!(tests.default.timeout_build).is_equal_to(60);
@@ -773,7 +846,8 @@ mod tests {
 
     #[test]
     fn test_example_tags_exist() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         // Verify all expected tags exist
         assert_that!(tests.tag_groups.contains_key("hello")).is_true();
@@ -785,7 +859,8 @@ mod tests {
 
     #[test]
     fn test_example_tag_group_hello_all() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         // Verify hello-all tag group contains all expected tags
         let hello_all = tests
@@ -803,7 +878,8 @@ mod tests {
 
     #[test]
     fn test_example_hello_tag_has_tests() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         let hello_tags = tests.tag_groups.get("hello").expect("hello tag not found");
         assert_that!(hello_tags.len()).is_equal_to(1);
@@ -819,7 +895,8 @@ mod tests {
 
     #[test]
     fn test_example_build_config() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         let hello_tags = tests.tag_groups.get("hello").expect("hello tag not found");
         let hello_tag = &hello_tags[0];
@@ -878,7 +955,8 @@ mod tests {
 
     #[test]
     fn test_example_default_kind_run() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         // Verify default kind.run configuration
         let run_config = &tests.default.kind.run;
@@ -892,7 +970,8 @@ mod tests {
 
     #[test]
     fn test_example_default_kind_gen_asm_and_run() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         // Verify default kind.gen_asm_and_run configuration
         let asm_config = &tests.default.kind.gen_asm_and_run;
@@ -905,7 +984,8 @@ mod tests {
 
     #[test]
     fn test_example_allowed_binary_files() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML).expect("Failed to load example tests.toml");
+        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+            .expect("Failed to load example tests.toml");
 
         // Verify allowed binary files
         assert_that!(tests

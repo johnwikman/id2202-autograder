@@ -8,8 +8,7 @@ use std::sync::mpsc;
 use subprocess::{Exec, Job};
 
 use id2202_autograder::{
-    config::Settings,
-    config::{TestGroup, Tests},
+    config::{Settings, TestGroup, Tests, TestsLoadingOptions},
     db::conn::DatabaseConnection,
     error::Error,
     podman,
@@ -258,7 +257,7 @@ fn validate_settings(
     dbg!(&s);
 
     log::debug!("Loading test config");
-    let tc = Tests::load(&s.runner.test_config)?;
+    let tc = Tests::load(&s.runner.test_config, TestsLoadingOptions::default())?;
 
     if print_test_config {
         log::debug!("Printing the entire test configuration");

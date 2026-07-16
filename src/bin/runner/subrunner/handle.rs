@@ -5,7 +5,7 @@ use std::{
 };
 
 use id2202_autograder::{
-    config::{Settings, Tests},
+    config::{Settings, Tests, TestsLoadingOptions},
     db::models::{SubmissionInfo, SubmissionStatusCode},
     error::Error,
     reporting::{Report, ReportInvalidTag, ReportMessage, ReportSubmission, ReportTagGrading},
@@ -79,10 +79,11 @@ impl SubmissionRunnerHandle {
 
         let sub = subinfo.get_submission();
 
-        let tests = Tests::load(&settings.runner.test_config).map_err(|e| {
-            log::error!("Could not load test configuration: {e}");
-            internal_error_report()
-        })?;
+        let tests = Tests::load(&settings.runner.test_config, TestsLoadingOptions::default())
+            .map_err(|e| {
+                log::error!("Could not load test configuration: {e}");
+                internal_error_report()
+            })?;
 
         // Step 1: Set up the workspace and information about the directories within.
         let workspace_dir = path_absolute_join(

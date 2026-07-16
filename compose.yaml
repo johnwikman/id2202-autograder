@@ -2,7 +2,7 @@ name: id2202-autograder
 
 services:
   autograder:
-    image: localhost/id2202-autograder:2.0.0-dev1
+    image: localhost/id2202-autograder:2.0.0-dev3
     depends_on:
       - postgres
     restart: unless-stopped
@@ -26,11 +26,13 @@ services:
         read_only: true
         bind:
           selinux: z
+        # Ensure that containers are saved between autograder restarts
       - type: bind
         source: data/containers
         target: /var/lib/containers/storage
         bind:
           selinux: z
+        # Necessary for the autograder to be able to fetch repositories
       - type: bind
         source: data/ssh
         target: /root/.ssh
@@ -39,8 +41,9 @@ services:
     environment:
       AUTOGRADER_LOG_DIR: "/tmp/id2202/log"
       AUTOGRADER_RUNNER_WORKSPACE_DIR: "/tmp/id2202/workspace"
-      #AUTOGRADER_GITHUB_WEBHOOK_SECRET: "5up3rS3cr3t"
+      #AUTOGRADER_SUBMISSION_GITHUB_WEBHOOK_SECRET: "5up3rS3cr3t"
       AUTOGRADER_GITHUB_AUTH_TOKENS: "${AUTOGRADER_GITHUB_AUTH_TOKENS}"
+      AUTOGRADER_GITLAB_AUTH_TOKENS: "${AUTOGRADER_GITLAB_AUTH_TOKENS}"
       AUTOGRADER_SERVER_ADDRESS: "0.0.0.0"
       AUTOGRADER_SERVER_PORT: "8080"
       AUTOGRADER_POSTGRES_USER: "autograder"

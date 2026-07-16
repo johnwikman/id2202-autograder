@@ -1,16 +1,29 @@
 # ID2202 Autograder
-The autograder for the ID2202 course at KTH. This is used to run students'
-solutions against a variety of test cases.
+The autograder originally created for the course ID2202 at KTH Royal Institute
+of Technology. This allows students to submit their solutions to be checked
+against a variety of test cases.
 
 This is inteded to be run in a Linux-based container using Docker or Podman.
 See further down in the README for information about how to run it as a
 standalone application during development.
 
+The autograder requires a PostgreSQL database to run. An example configuration
+is provided in the docker compose file `compose.yaml`. While docker compose is
+optional, it simplifies the setup with the database.
+
 **NOTE: The autograder assumes a Linux-based OS and the existence of common
 user space programs. Certain aspects of the autograder might break if running
 on a different OS.**
 
-## Build Docker Image
+## Getting Started
+To use the autograder, we will build it as a docker image and run it through
+docker compose.
+
+The autograder container will itself spawn additional podman containers, hence
+it requires careful configuration of the docker compose file. See the
+`autograder` service in `compose.yaml` for a valid configuration. More
+specifically, see the configuration options for `cap_add`, `devices`,
+`security_opt`, `privileged`, and `init`.
 
 We use [`just`](https://github.com/casey/just) as the command runner. To build
 the docker image:
@@ -20,10 +33,83 @@ the docker image:
 sudo just build-image
 ```
 
-## Test Structure
-The structure of the tests cases are shown in `example/tests`. At the root of this directory sits the file `tests.toml` that specify overarching test configuration such as default values and grading tags.
+Now we can run the autograder using the provided reference `compose.yaml`.
 
-The configuration is specified in a hierarchical TOML structure. A test case is specified as a file ending with `.test.toml`. That file can specify every detail of the test case. Anything that is not specified is inherited by a `config.toml` file located in the same directory. This inheritence is repeated until the root of the test directory.
+### First time usage
+
+Create the necessary directories that will be mounted in the docker containers:
+
+```sh
+mkdir -p data/containers data/log data/postgres data/ssh
+```
+
+Copy over the SSH keys that will be used to authenticate against the
+GitLab/GitHub instance (replace `id_id25519` if you are using a different key
+name):
+
+```sh
+cp ~/.ssh/id_ed25519     data/ssh
+cp ~/.ssh/id_ed25519.pub data/ssh
+sudo chown root:root data/ssh/id_ed25519*
+```
+
+Start the postgres database and initialize the schema:
+
+```sh
+# Start the postgres instance
+sudo docker compose up -d postgres
+
+# Run the diesel migration which will initialize the tables
+# (Replace "ChangeMe" in DATABASE_URL when changing the postgres password in compose.yaml)
+sudo docker compose run --rm \
+    -e "DATABASE_URL=postgres://autograder:ChangeMe@postgres/autograder" \
+    autograder diesel migration run
+```
+
+Start the autograder:
+
+```sh
+sudo docker compose up -d autograder
+
+# It will take some time (~10 minutes) for the autograder to start since it
+# needs to download the image that will be used for grading submissions, so
+# monitor the progress to see when it is ready:
+sudo docker compose logs -f autograder
+
+# Once you see the following it should be up and running:
+#  > Spawning a new server process
+#  > Spawning a new runner process (ID: 0)
+#  > Spawning a new runner process (ID: 1)
+#  > Spawning a new runner process (ID: 2)
+#  > Spawning a new runner process (ID: 3)
+```
+
+The next time you start the autograder it should start immediately. Now stop
+both the autograder and the postgres database:
+
+```sh
+sudo docker compose down postgres autograder
+```
+
+### Regular usage
+
+After having performed the one-time setup from the previous step, the
+autograder can easily be started with a single command:
+
+```sh
+sudo docker compose up -d postgres autograder
+```
+
+## Test Structure
+The structure of the tests cases are shown in `example/tests`. At the root of
+this directory sits the file `tests.toml` that specify overarching test
+configuration such as default values and grading tags.
+
+The configuration is specified in a hierarchical TOML structure. A test case is
+specified as a file ending with `.test.toml`. That file can specify every
+detail of the test case. Anything that is not specified is inherited by a
+`config.toml` file located in the same directory. This inheritence is repeated
+until the root of the test directory.
 
 A test is specified as follows:
 
@@ -44,17 +130,26 @@ stdout = ["Hello"]
 ## Runtime Structure
 The autograder is structured into 3 binaries: `entrypoint`, `runner`, and `server`.
 
- * The `entrypoint` binary starts up a process whole sole process is to perform simple tests and manage the runner and server processes. This should be the only process that is manually invoked from the command line.
- * The `runner` binary starts up a runner process that can run incoming jobs. Each runner process will only run a single job at a time.
- * The `server` binary starts up a web server that is responsible for serving web pages and accepting incoming REST API calls. These calls are used to trigger a job on the autograder.
+ * The `entrypoint` binary starts up a process whole sole process is to perform
+   simple tests and manage the runner and server processes. This should be the
+   only process that is manually invoked from the command line.
+ * The `runner` binary starts up a runner process that can run incoming jobs.
+   Each runner process will only run a single job at a time.
+ * The `server` binary starts up a web server that is responsible for serving
+   web pages and accepting incoming REST API calls. These calls are used to
+   trigger a job on the autograder.
 
-An incoming grading submission, after being validated, is inserted into a postgres database by the server process. The submission is then picked up by a runner process and graded. This setup is used to prevent silent errors, where the submitter is notified if the runner process crashed before it finished grading.
+An incoming grading submission, after being validated, is inserted into a
+postgres database by the server process. The submission is then picked up by a
+runner process and graded. This setup is used to prevent silent errors, where
+the submitter is notified if the runner process crashed before it finished
+grading.
 
 A diagram to illustrate the setup (entrypoint omitted):
 
 ```
    ┌──────────────────────────────────────────────────────────┐
-   │                          GitHub                          │
+   │                       GitHub/GitLab                      │
    └──────────────────────────────────────────────────────────┘
       │            Ʌ                                    Ʌ
 [1. Push Hook]     │                                    │
@@ -74,6 +169,51 @@ A diagram to illustrate the setup (entrypoint omitted):
                           [5. Fetch Job]   └─────────┘
                                                ...
 ```
+
+## REST API Documentation
+
+The autograder provides a REST API for external services to interact with it.
+
+### Authentication
+An authentication token is almost always necessary to access certain endpoints.
+The only REST API endpoints that do not require an authentication token are
+instead using a custom authentication scheme.
+
+On the autograder side, authentication tokens are configured in `settings.toml`
+under `server.secrets.api_auth_tokens`, or by setting the environment variable
+`AUTOGRADER_SERVER_API_AUTH_TOKENS` with semicolon separated tokens.
+
+The token must either be set using the `id2202_autograder_api_auth_key` cookie,
+or by the `Authorization: Bearer <token>` HTTP header. The provided token must
+match one of the configured tokens above. The REST API will not work if no
+authentication token has configured on the autograder.
+
+### API Endpoints
+
+The following endpoints below are available for general-purpose usage. Unless
+stated otherwise, each endpoint with respond with a JSON object containing at
+least the field `code`. If code is OK (200), then the structure of the response
+will follow the associated JSON schema.
+
+ * `GET /api/submission/{id}`: Retrieve information about submission with ID
+   `{id}`.
+   * Schema: `/api/schema/submission`
+ * `GET /api/tag`: List all available grading tags.
+   * Schema: `/api/schema/tag-list`
+ * `GET /api/tag/{tagname}`: List information about a single tag with name
+   `{tagname}`.
+   * Schema: `/api/schema/tag`
+ * `GET /api/tag/{tagname}/task`: If defined, retrieve the task description for
+    the tag with name `{tagname}`. On success (code 200), this will respond
+    directly with the file on the same format is it is defined in the test
+    configuration.
+
+The endpoints below are used for automated submissions from GitHub and GitLab.
+These follow their own authentication scheme using the webhook secrets from
+GitHub and GitLab, and does therefore not need to have the API auth token set.
+
+ * `POST /api/submit/github`: Submission endpoint for GitHub webhooks.
+ * `POST /api/submit/gitlab`: Submission endpoint for GitLab webhooks.
 
 ## Development Practice
 
@@ -157,7 +297,6 @@ on first startup:
     - Set secret token to `s3cr3t`.
     - Trigger on push events.
     - Disable SSL verification.
-
 
 When starting the autograder to test with a local GitLab instance, make sure to
 configure that the server listens on IP address `0.0.0.0` (otherwise

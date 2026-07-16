@@ -1,4 +1,4 @@
-use actix_web::{web, App, HttpRequest, HttpServer, Responder};
+use actix_web::{web, App, HttpServer};
 use id2202_autograder::{config::Settings, error::Error};
 
 use clap::Parser;
@@ -15,19 +15,6 @@ struct Args {
     settings: String,
 }
 
-async fn not_found(
-    data: web::Data<Settings>,
-    req: HttpRequest,
-) -> Result<impl Responder, actix_web::Error> {
-    let settings = data.get_ref();
-
-    if req.path().starts_with("/api") {
-        api::not_found(req)
-    } else {
-        route::not_found(settings)
-    }
-}
-
 #[actix_web::main]
 async fn main() -> Result<(), Error> {
     use actix_web::middleware::Logger;
@@ -41,10 +28,17 @@ async fn main() -> Result<(), Error> {
         App::new()
             .wrap(Logger::default())
             .wrap(actix_web::middleware::from_fn(auth::authenticate))
+            .wrap(actix_web::middleware::NormalizePath::trim())
             .app_data(web::Data::new(s.clone()))
             .configure(|cfg| route::config(cfg, &s))
-            .configure(|cfg| api::config(cfg, &s, "/api"))
-            .default_service(web::to(not_found))
+            .service(
+                web::scope("/api")
+                    .wrap(actix_web::middleware::from_fn(async |req, next| api::auth_hook("/api", req, next).await))
+                    .configure(|cfg| api::config(cfg, &s)),
+            )
+            .default_service(web::to(async |data: web::Data<Settings>| {
+                route::not_found(data.get_ref())
+            }))
     })
     .bind((s.server.address, s.server.port))?
     .run()

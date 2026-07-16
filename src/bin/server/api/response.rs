@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{collections::BTreeMap, time::SystemTime};
 
 use actix_web::{http::StatusCode, HttpRequest, HttpResponse};
 use schemars::JsonSchema;
@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use derive_more::derive::{Display, Error};
 use num_traits::FromPrimitive;
 
-use id2202_autograder::{db::models::SubmissionWithReport, reporting::Report};
+use id2202_autograder::{
+    config::{Tag, TagBuildConfig, Tests},
+    db::models::SubmissionWithReport,
+    reporting::Report,
+};
 
 macro_rules! schema_callback {
     ($struct_ident:path) => {
@@ -147,6 +151,108 @@ impl<'a> SubmissionResponse<'a> {
                 .as_ref()
                 .and_then(|v| Report::deserialize(v).ok()),
         }
+    }
+    pub fn to_http(&self) -> HttpResponse {
+        HttpResponse::Ok().json(self)
+    }
+}
+
+/// Information the grading tags
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TagListResponse {
+    code: u16,
+    path: String,
+    tags: BTreeMap<String, TagListDetails>,
+    tag_groups: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TagListDetails {
+    build: TagBuildConfig,
+    metadata: BTreeMap<String, serde_json::Value>,
+    has_task: bool,
+}
+
+impl TagListResponse {
+    pub fn new(req: &HttpRequest, tc: &Tests) -> TagListResponse {
+        let mut r = TagListResponse {
+            code: StatusCode::OK.as_u16(),
+            path: req.path().to_string(),
+            tags: BTreeMap::new(),
+            tag_groups: BTreeMap::new(),
+        };
+
+        for (group_name, tags) in &tc.tag_groups {
+            match tags.as_slice() {
+                [t] => {
+                    if group_name == &t.name {
+                        r.tags.insert(t.name.clone(), TagListDetails::from_tag(t));
+                    } else {
+                        r.tag_groups
+                            .insert(group_name.clone(), vec![t.name.clone()]);
+                    }
+                }
+                _ => {
+                    r.tag_groups.insert(
+                        group_name.clone(),
+                        tags.iter().map(|t| t.name.clone()).collect(),
+                    );
+                }
+            }
+        }
+
+        r
+    }
+    pub fn to_http(&self) -> HttpResponse {
+        HttpResponse::Ok().json(self)
+    }
+}
+
+impl TagListDetails {
+    /// Creates a details struct for the given tag.
+    fn from_tag(t: &Tag) -> TagListDetails {
+        TagListDetails {
+            build: t.build.clone(),
+            metadata: t
+                .metadata
+                .clone()
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.deserialize_into()
+                            .unwrap_or_else(|_| serde_json::Value::Null),
+                    )
+                })
+                .collect(),
+            has_task: t.task_file.is_some(),
+        }
+    }
+}
+
+/// Information the a single grading tag. If this is an alias, this will return
+/// all the tags that it will grade.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TagResponse {
+    code: u16,
+    path: String,
+    tags: BTreeMap<String, TagListDetails>,
+}
+
+impl TagResponse {
+    /// Attempts to construct a tag response, returning `None` if the tag_name
+    /// is not found.
+    pub fn new(req: &HttpRequest, tc: &Tests, tag_name: &str) -> Option<TagResponse> {
+        Some(TagResponse {
+            code: StatusCode::OK.as_u16(),
+            path: req.path().to_string(),
+            tags: tc
+                .tag_groups
+                .get(tag_name)?
+                .iter()
+                .map(|t| (t.name.to_string(), TagListDetails::from_tag(t)))
+                .collect(),
+        })
     }
     pub fn to_http(&self) -> HttpResponse {
         HttpResponse::Ok().json(self)

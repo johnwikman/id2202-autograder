@@ -103,6 +103,5 @@ pub async fn authenticate(
     }
 
     req.extensions_mut().insert(auth_info);
-    let res = next.call(req).await?;
-    Ok(res)
+    next.call(req).await
 }
