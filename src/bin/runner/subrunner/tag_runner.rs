@@ -5,7 +5,7 @@
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
 use id2202_autograder::{
-    config::{Tag, TagBuildConfig, Test, TestDefault, TestGroup, Testkind},
+    config::{Settings, Tag, TagBuildConfig, Test, TestDefault, TestGroup, Testkind},
     db::models::SubmissionStatusCode,
     error::{Error, ErrorKind, SyscommandError},
     podman,
@@ -21,23 +21,23 @@ use crate::subrunner::{
 
 #[derive(Debug, Clone)]
 pub enum BuildResult {
-    BuildOk,
-    BuildTimeout {
+    Ok,
+    Timeout {
         timeout: u32,
         captured_stdout: Option<String>,
         captured_stderr: Option<String>,
     },
-    BuildSourceNotFound {
+    SourceNotFound {
         expected_dir: String,
     },
-    BuildOutputLimitExceeded {
+    OutputLimitExceeded {
         limit: usize,
     },
-    BuildProhibitedFiles {
+    ProhibitedFiles {
         /// A list of found files in the build dir which are prohibited.
         found_files: Vec<MIMETypeInfo>,
     },
-    BuildFailed {
+    Failed {
         message: Option<String>,
         code: Option<i32>,
         captured_stdout: Option<String>,
@@ -49,7 +49,10 @@ pub enum BuildResult {
 /// project inside the container, and proceeds to run every test case defined
 /// for this tag.
 #[derive(Debug, Clone)]
-pub struct TagRunner {
+pub struct TagRunner<'a> {
+    /// Program settings, passed on to the test kinds that need them.
+    pub settings: &'a Settings,
+
     /// Information about the container that the tag runner will use to build
     /// the project and grade the tests container within this tag.
     pub container: ContainerInfo,
@@ -89,15 +92,17 @@ pub struct TagRunner {
     pub collected_reports: usize,
 }
 
-impl TagRunner {
+impl<'a> TagRunner<'a> {
     /// Creates a new tag runner from a tag specification.
     pub fn new(
+        settings: &'a Settings,
         tag: &Tag,
         container: &ContainerInfo,
         test_default: &TestDefault,
-        source_dir: &String,
+        source_dir: &str,
     ) -> Self {
         TagRunner {
+            settings,
             tag_name: tag.name.to_owned(),
             container: container.to_owned(),
             build_conf: tag.build.to_owned(),
@@ -106,14 +111,11 @@ impl TagRunner {
 
             toplevel_iterator: TestGroupIterator::from_groups(
                 format!("top-level for tag \"{}\"", tag.name),
-                tag.test_groups
-                    .iter()
-                    .map(|tg| TestGroupIterator::new(tg))
-                    .collect(),
+                tag.test_groups.iter().map(TestGroupIterator::new).collect(),
             ),
 
             build_result: None,
-            source_dir: source_dir.clone(),
+            source_dir: source_dir.to_owned(),
             testfail_count: 0,
             bad_test_behavior: None,
             collected_reports: 0,
@@ -132,12 +134,12 @@ impl TagRunner {
         // Note: using an exhaustive match here for the sake of correctness
         match &self.build_result {
             None => false,
-            Some(BuildResult::BuildSourceNotFound { .. }) => false,
-            Some(BuildResult::BuildProhibitedFiles { .. }) => false,
-            Some(BuildResult::BuildOk) => true,
-            Some(BuildResult::BuildFailed { .. }) => true,
-            Some(BuildResult::BuildTimeout { .. }) => true,
-            Some(BuildResult::BuildOutputLimitExceeded { .. }) => true,
+            Some(BuildResult::SourceNotFound { .. }) => false,
+            Some(BuildResult::ProhibitedFiles { .. }) => false,
+            Some(BuildResult::Ok) => true,
+            Some(BuildResult::Failed { .. }) => true,
+            Some(BuildResult::Timeout { .. }) => true,
+            Some(BuildResult::OutputLimitExceeded { .. }) => true,
         }
     }
 
@@ -147,13 +149,13 @@ impl TagRunner {
         use SubmissionStatusCode as SSC;
 
         match &self.build_result {
-            Some(BuildResult::BuildTimeout { .. }) => Some(SSC::BuildTimedOut),
-            Some(BuildResult::BuildOutputLimitExceeded { .. }) => Some(SSC::OutputLimitExceeded),
+            Some(BuildResult::Timeout { .. }) => Some(SSC::BuildTimedOut),
+            Some(BuildResult::OutputLimitExceeded { .. }) => Some(SSC::OutputLimitExceeded),
             None
-            | Some(BuildResult::BuildSourceNotFound { .. })
-            | Some(BuildResult::BuildProhibitedFiles { .. })
-            | Some(BuildResult::BuildOk) => None,
-            Some(BuildResult::BuildFailed { .. }) => match self.bad_test_behavior {
+            | Some(BuildResult::SourceNotFound { .. })
+            | Some(BuildResult::ProhibitedFiles { .. })
+            | Some(BuildResult::Ok) => None,
+            Some(BuildResult::Failed { .. }) => match self.bad_test_behavior {
                 Some(FailureCause::OutputMismatch) => Some(SSC::TestCasesFailed),
                 Some(FailureCause::Timeout(_)) => Some(SSC::TestCasesTimedOut),
                 Some(FailureCause::OutputLimitExceeded { .. }) => Some(SSC::OutputLimitExceeded),
@@ -166,8 +168,8 @@ impl TagRunner {
     pub fn results_report(&self) -> ReportTagGrading {
         let build_failure = match &self.build_result {
             None => Some(DetailsBuildFailure { msg: "Never attempted to build the project.".to_string(), ..DetailsBuildFailure::default() }),
-            Some(BuildResult::BuildOk) => None, // ok
-            Some(BuildResult::BuildSourceNotFound { expected_dir }) => {
+            Some(BuildResult::Ok) => None, // ok
+            Some(BuildResult::SourceNotFound { expected_dir }) => {
                 Some(DetailsBuildFailure {
                     msg: "Could not build the project.".to_string(),
                     srcdir: Some(expected_dir.clone()),
@@ -175,7 +177,7 @@ impl TagRunner {
                     ..DetailsBuildFailure::default()
                 })
             }
-            Some(BuildResult::BuildProhibitedFiles { found_files }) => {
+            Some(BuildResult::ProhibitedFiles { found_files }) => {
                 Some(DetailsBuildFailure {
                     msg: "Build failed due to unexpected non-text files in your solution."
                         .to_string(),
@@ -185,7 +187,7 @@ impl TagRunner {
                     ..DetailsBuildFailure::default()
                 })
             }
-            Some(BuildResult::BuildFailed {
+            Some(BuildResult::Failed {
                 message,
                 code,
                 captured_stdout,
@@ -199,13 +201,13 @@ impl TagRunner {
                     msg: desc,
                     cmd: Some(self.build_conf.cmd.join(" ")),
                     srcdir: Some(self.build_conf.srcdir.clone()),
-                    exit_code: code.clone(),
+                    exit_code: *code,
                     captured_stdout: captured_stdout.clone(),
                     captured_stderr: captured_stderr.clone(),
                     ..DetailsBuildFailure::default()
                 })
             }
-            Some(BuildResult::BuildTimeout {
+            Some(BuildResult::Timeout {
                 timeout,
                 captured_stdout,
                 captured_stderr,
@@ -217,7 +219,7 @@ impl TagRunner {
                 captured_stderr: captured_stderr.clone(),
                 ..DetailsBuildFailure::default()
             }),
-            Some(BuildResult::BuildOutputLimitExceeded { limit }) => {
+            Some(BuildResult::OutputLimitExceeded { limit }) => {
                 Some(DetailsBuildFailure {
                     msg: format!(
                         "Build failed due to exceeding the output limit of {} bytes on standard output or standard error.",
@@ -241,8 +243,8 @@ impl TagRunner {
         ReportTagGrading {
             tag_name: self.tag_name.clone(),
             derived_from: self.derived_from.iter().cloned().collect(),
-            build_failure: build_failure,
-            ok: ok,
+            build_failure,
+            ok,
             groups: group_results,
         }
     }
@@ -311,7 +313,7 @@ impl TagRunner {
         let solution_dir: String = path_absolute_join(&self.source_dir, &self.build_conf.srcdir)?;
 
         if !std::fs::exists(&solution_dir)? {
-            self.build_result.replace(BuildResult::BuildSourceNotFound {
+            self.build_result.replace(BuildResult::SourceNotFound {
                 expected_dir: self.build_conf.srcdir.to_owned(),
             });
             return Ok(false);
@@ -350,7 +352,7 @@ impl TagRunner {
                     )?;
                 } else {
                     // Check mime-type of this file
-                    let mimetype = utils::mimetype(&entry.path())?;
+                    let mimetype = utils::mimetype(entry.path())?;
                     if allowed_mimetypes
                         .iter()
                         .any(|prefix| mimetype.starts_with(prefix))
@@ -363,7 +365,7 @@ impl TagRunner {
                     if !mimetype.starts_with("text/") {
                         log::error!("Found forbidden file: {:?}", entry.path());
                         forbidden_files.push(MIMETypeInfo {
-                            path: path,
+                            path,
                             mime_identified: mimetype,
                             ..Default::default()
                         });
@@ -383,11 +385,10 @@ impl TagRunner {
             )
             .inspect_err(|e| log::error!("Error when scanning for prohibited files: {e}"))?;
         }
-        if forbidden_files.len() > 0 {
-            self.build_result
-                .replace(BuildResult::BuildProhibitedFiles {
-                    found_files: forbidden_files,
-                });
+        if !forbidden_files.is_empty() {
+            self.build_result.replace(BuildResult::ProhibitedFiles {
+                found_files: forbidden_files,
+            });
             return Ok(false);
         }
 
@@ -471,9 +472,9 @@ impl TagRunner {
         ) {
             Ok(output) => {
                 if output.code == 0 {
-                    self.build_result.replace(BuildResult::BuildOk);
+                    self.build_result.replace(BuildResult::Ok);
                 } else {
-                    self.build_result.replace(BuildResult::BuildFailed {
+                    self.build_result.replace(BuildResult::Failed {
                         message: None,
                         code: Some(output.code),
                         captured_stdout: Some(output.stdout),
@@ -482,45 +483,39 @@ impl TagRunner {
                     return Ok(false);
                 }
             }
-            Err(Error {
-                kind:
-                    ErrorKind::Syscommand(SyscommandError {
-                        timeout: Some(_),
-                        stdout,
-                        stderr,
-                        ..
-                    }),
-                ..
-            }) => {
-                self.build_result.replace(BuildResult::BuildTimeout {
-                    timeout: self.build_conf.timeout,
-                    captured_stdout: stdout,
-                    captured_stderr: stderr,
-                });
-                return Ok(false);
-            }
-            Err(Error {
-                kind:
-                    ErrorKind::Syscommand(SyscommandError {
-                        output_limit_exceeded: Some(limit),
-                        ..
-                    }),
-                ..
-            }) => {
-                self.build_result
-                    .replace(BuildResult::BuildOutputLimitExceeded { limit: limit });
-                return Ok(false);
-            }
-            Err(e) => {
-                log::error!("Error running build command: {e}");
-                return Err(e);
-            }
+            Err(mut boxed_e) => match boxed_e.kind.as_mut() {
+                ErrorKind::Syscommand(SyscommandError {
+                    timeout: Some(_),
+                    stdout,
+                    stderr,
+                    ..
+                }) => {
+                    self.build_result.replace(BuildResult::Timeout {
+                        timeout: self.build_conf.timeout,
+                        captured_stdout: stdout.take(),
+                        captured_stderr: stderr.take(),
+                    });
+                    return Ok(false);
+                }
+                ErrorKind::Syscommand(SyscommandError {
+                    output_limit_exceeded: Some(limit),
+                    ..
+                }) => {
+                    self.build_result
+                        .replace(BuildResult::OutputLimitExceeded { limit: *limit });
+                    return Ok(false);
+                }
+                _ => {
+                    log::error!("Error running build command: {boxed_e}");
+                    return Err(boxed_e);
+                }
+            },
         }
         log::info!("Build finished. Disconnecting network from container.");
 
         // Now disconnect the container from the network
         syscommand_timeout(
-            &[
+            [
                 "podman",
                 "network",
                 "disconnect",
@@ -549,7 +544,7 @@ impl TagRunner {
     pub fn run_test(&mut self, include_report: bool) -> Result<bool, Error> {
         // First validate the solution is built
         match &self.build_result {
-            Some(BuildResult::BuildOk) => {} // OK
+            Some(BuildResult::Ok) => {} // OK
             Some(_) => {
                 return Error::err_runtime(format!(
                     "Attempted to run a test case for tag \"{}\" following a failed build process",
@@ -582,6 +577,7 @@ impl TagRunner {
             Testkind::GenASMAndRun(conf) => {
                 use crate::subrunner::test_grader::GenASMAndRun;
                 GenASMAndRun::grade_from_testkind(
+                    self.settings,
                     conf,
                     &self.test_default,
                     &self.container,
@@ -603,7 +599,7 @@ impl TagRunner {
             GradingResult::Success { captured_stdout: _ } => {} // ok
             GradingResult::Failure { cause, report } => {
                 self.testfail_count += 1;
-                if let Some(_) = report {
+                if report.is_some() {
                     self.collected_reports += 1;
                 }
                 match cause {
@@ -655,7 +651,7 @@ impl TestGroupIterator {
     fn new(tg: &TestGroup) -> Self {
         TestGroupIterator {
             title: tg.title.to_owned(),
-            subgroup_iterators: tg.subgroups.iter().map(|sg| Self::new(sg)).collect(),
+            subgroup_iterators: tg.subgroups.iter().map(Self::new).collect(),
             next_subgroup: 0,
             next_test_idx: -1,
             tests: tg.tests.to_owned(),
@@ -665,7 +661,7 @@ impl TestGroupIterator {
 
     fn from_groups(title: String, groups: Vec<TestGroupIterator>) -> Self {
         TestGroupIterator {
-            title: title,
+            title,
             subgroup_iterators: groups,
             next_subgroup: 0,
             next_test_idx: -1,
@@ -715,7 +711,7 @@ impl TestGroupIterator {
             return self.next_test_idx < self.tests.len().to_isize().unwrap_or(isize::MAX);
         }
 
-        return false;
+        false
     }
 
     /// Adds the test result from a run
@@ -752,10 +748,7 @@ impl TestGroupIterator {
             tests_passed: self
                 .results
                 .iter()
-                .filter(|r| match r {
-                    GradingResult::Success { .. } => true,
-                    _ => false,
-                })
+                .filter(|r| matches!(r, GradingResult::Success { .. }))
                 .count(),
             test_details: self
                 .results

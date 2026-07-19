@@ -4,11 +4,11 @@ use std::{io::Read, io::Write, path::Path, time::Duration};
 use id2202_autograder::{
     config::{
         tests::{TestkindCheckFileExists, TestkindGenASMAndRun, TestkindRun},
-        TestDefault,
+        Settings, TestDefault,
     },
     error::{Error, ErrorKind, SyscommandError},
     reporting::{DetailsTestFailure, MIMETypeInfo, MismatchInfo, SourceFileInfo},
-    utils::{self, path_absolute_join, syscommand_timeout, SyscommandSettings},
+    utils::{self, path_absolute_join, syscommand_timeout, write_all_timeout, SyscommandSettings},
 };
 
 use crate::subrunner::container::ContainerInfo;
@@ -60,7 +60,7 @@ fn validate_alternatives(
     let mut found_match = false;
     for alt in alternatives {
         found_match |= treat_output(reference, trim, remove_whitespace)?
-            == treat_output(&alt, trim, remove_whitespace)?;
+            == treat_output(alt, trim, remove_whitespace)?;
         if found_match {
             break;
         }
@@ -75,7 +75,7 @@ fn validate_alternatives(
         Ok(Some(MismatchInfo {
             received: reference.to_string(),
             allowed_alternatives: alternatives.to_owned(),
-            msgs: msgs,
+            msgs,
         }))
     } else {
         Ok(None)
@@ -91,7 +91,7 @@ fn validate_alternatives_i32(reference: i32, alternatives: &[i32]) -> Option<Mis
         return None;
     };
 
-    if alternatives.iter().any(|c| reference == *c) {
+    if alternatives.contains(&reference) {
         None
     } else {
         Some(MismatchInfo {
@@ -178,7 +178,7 @@ impl<'a> Run<'a> {
         include_report: bool,
     ) -> Result<GradingResult, Error> {
         Run {
-            container: container,
+            container,
             bin: &kind.bin,
             cmdargs: &kind.args,
             infile_paths: &kind.input_files,
@@ -272,15 +272,13 @@ impl<'a> Run<'a> {
                 )?;
 
                 match (&code_mismatch, &stdout_mismatch, &stderr_mismatch) {
-                    (None, None, None) => {
-                        return Ok(GradingResult::Success {
-                            captured_stdout: if self.capture_stdout {
-                                output.stdout
-                            } else {
-                                "".to_string()
-                            },
-                        });
-                    }
+                    (None, None, None) => Ok(GradingResult::Success {
+                        captured_stdout: if self.capture_stdout {
+                            output.stdout
+                        } else {
+                            "".to_string()
+                        },
+                    }),
                     _ => {
                         let report = if include_report {
                             Some(Box::new(DetailsTestFailure {
@@ -289,85 +287,77 @@ impl<'a> Run<'a> {
                                 } else {
                                     None
                                 },
-                                code_mismatch: code_mismatch,
+                                code_mismatch,
                                 stdout_captured: if stdout_mismatch.is_none() {
                                     Some(output.stdout)
                                 } else {
                                     None
                                 },
-                                stdout_mismatch: stdout_mismatch,
+                                stdout_mismatch,
                                 stderr_captured: if stderr_mismatch.is_none() {
                                     Some(output.stderr)
                                 } else {
                                     None
                                 },
-                                stderr_mismatch: stderr_mismatch,
+                                stderr_mismatch,
                                 ..self.base_report()?
                             }))
                         } else {
                             None
                         };
 
-                        return Ok(GradingResult::Failure {
+                        Ok(GradingResult::Failure {
                             cause: FailureCause::OutputMismatch,
-                            report: report,
-                        });
+                            report,
+                        })
                     }
                 }
             }
-            Err(Error {
-                kind:
+            Err(mut boxed_e) => {
+                match boxed_e.kind.as_mut() {
                     ErrorKind::Syscommand(SyscommandError {
                         timeout: Some(duration),
                         stdout,
                         stderr,
                         ..
+                    }) => Ok(GradingResult::Failure {
+                        cause: FailureCause::Timeout(*duration),
+                        report: if include_report {
+                            Some(Box::new(DetailsTestFailure {
+                                additional_failure_causes: vec![format!(
+                                    "Timed out after {} seconds.",
+                                    duration.as_secs(),
+                                )],
+                                stdout_captured: stdout.take(),
+                                stderr_captured: stderr.take(),
+                                ..self.base_report()?
+                            }))
+                        } else {
+                            None
+                        },
                     }),
-                ..
-            }) => {
-                return Ok(GradingResult::Failure {
-                    cause: FailureCause::Timeout(duration),
-                    report: if include_report {
-                        Some(Box::new(DetailsTestFailure {
-                            additional_failure_causes: vec![format!(
-                                "Timed out after {} seconds.",
-                                duration.as_secs(),
-                            )],
-                            stdout_captured: stdout,
-                            stderr_captured: stderr,
-                            ..self.base_report()?
-                        }))
-                    } else {
-                        None
-                    },
-                });
-            }
-            Err(Error {
-                kind:
                     ErrorKind::Syscommand(SyscommandError {
                         output_limit_exceeded: Some(limit),
                         ..
+                    }) => Ok(GradingResult::Failure {
+                        cause: FailureCause::OutputLimitExceeded { limit: *limit },
+                        report: if include_report {
+                            Some(Box::new(DetailsTestFailure {
+                                additional_failure_causes: vec![format!(
+                                    "Output stream exceeded {} bytes.",
+                                    limit
+                                )],
+                                ..self.base_report()?
+                            }))
+                        } else {
+                            None
+                        },
                     }),
-                ..
-            }) => {
-                return Ok(GradingResult::Failure {
-                    cause: FailureCause::OutputLimitExceeded { limit: limit },
-                    report: if include_report {
-                        Some(Box::new(DetailsTestFailure {
-                            additional_failure_causes: vec![format!(
-                                "Output stream exceeded {} bytes.",
-                                limit
-                            )],
-                            ..self.base_report()?
-                        }))
-                    } else {
-                        None
-                    },
-                });
-            }
-            Err(e) => {
-                log::error!("Unknown error happened when running test case in a container: {e}");
-                return Err(e);
+                    _ => {
+                        log::error!("Unknown error happened when running test case in a container: {boxed_e}");
+                        Err(boxed_e)
+                    }
+                }
             }
         }
     }
@@ -399,7 +389,7 @@ impl<'a> Run<'a> {
                 cmdvec.push("INPUT_FILE".to_string());
             }
             infile_contents.push(SourceFileInfo {
-                content: content,
+                content,
                 extension: path
                     .extension()
                     .and_then(|ex| ex.to_str())
@@ -436,6 +426,8 @@ impl<'a> Run<'a> {
 /// graded.
 #[derive(Debug, Clone)]
 pub struct GenASMAndRun<'a> {
+    /// Program settings, used for writing the generated assembly to disk.
+    pub settings: &'a Settings,
     /// Information about the container to run inside
     pub container: &'a ContainerInfo,
     /// Name of the binary to run
@@ -513,13 +505,15 @@ impl<'a> GenASMAndRun<'a> {
 
     /// Instantiate this test case from a testkind and then grade it.
     pub fn grade_from_testkind(
+        settings: &Settings,
         kind: &TestkindGenASMAndRun,
         test_default: &TestDefault,
         container: &ContainerInfo,
         include_report: bool,
     ) -> Result<GradingResult, Error> {
         GenASMAndRun {
-            container: container,
+            settings,
+            container,
             bin: &kind.bin,
             cmdargs: &kind.args,
             infile_paths: &kind.input_files,
@@ -575,12 +569,16 @@ impl<'a> GenASMAndRun<'a> {
         {
             let mut asm_f = std::fs::File::create(&hostpath_asm)
                 .inspect_err(|e| log::error!("Cannot create ASM file {hostpath_asm}: {e}"))?;
-            asm_f.write(generated_assembly.as_bytes())?;
+            write_all_timeout(
+                &mut asm_f,
+                generated_assembly.as_bytes(),
+                Duration::from_secs(self.settings.fs_write_timeout_seconds.into()),
+            )?;
             asm_f.flush()?;
         }
 
         syscommand_timeout(
-            &[
+            [
                 "podman",
                 "exec",
                 &self.container.podman_container_name,
@@ -686,11 +684,9 @@ impl<'a> GenASMAndRun<'a> {
                 )?;
 
                 match (&code_mismatch, &stdout_mismatch, &stderr_mismatch) {
-                    (None, None, None) => {
-                        return Ok(GradingResult::Success {
-                            captured_stdout: "".to_string(),
-                        });
-                    }
+                    (None, None, None) => Ok(GradingResult::Success {
+                        captured_stdout: "".to_string(),
+                    }),
                     _ => {
                         let report = if include_report {
                             Some(Box::new(DetailsTestFailure {
@@ -699,85 +695,77 @@ impl<'a> GenASMAndRun<'a> {
                                 } else {
                                     None
                                 },
-                                code_mismatch: code_mismatch,
+                                code_mismatch,
                                 stdout_captured: if stdout_mismatch.is_none() {
                                     Some(output.stdout)
                                 } else {
                                     None
                                 },
-                                stdout_mismatch: stdout_mismatch,
+                                stdout_mismatch,
                                 stderr_captured: if stderr_mismatch.is_none() {
                                     Some(output.stderr)
                                 } else {
                                     None
                                 },
-                                stderr_mismatch: stderr_mismatch,
+                                stderr_mismatch,
                                 ..self.base_report(&generated_assembly)?
                             }))
                         } else {
                             None
                         };
 
-                        return Ok(GradingResult::Failure {
+                        Ok(GradingResult::Failure {
                             cause: FailureCause::OutputMismatch,
-                            report: report,
-                        });
+                            report,
+                        })
                     }
                 }
             }
-            Err(Error {
-                kind:
+            Err(mut boxed_e) => {
+                match boxed_e.kind.as_mut() {
                     ErrorKind::Syscommand(SyscommandError {
                         timeout: Some(duration),
                         stdout,
                         stderr,
                         ..
+                    }) => Ok(GradingResult::Failure {
+                        cause: FailureCause::Timeout(*duration),
+                        report: if include_report {
+                            Some(Box::new(DetailsTestFailure {
+                                    additional_failure_causes: vec![format!(
+                                        "Timed out after {} seconds when running the compiled assembly.",
+                                        duration.as_secs(),
+                                    )],
+                                    stdout_captured: stdout.take(),
+                                    stderr_captured: stderr.take(),
+                                    ..self.base_report(&generated_assembly)?
+                                }))
+                        } else {
+                            None
+                        },
                     }),
-                ..
-            }) => {
-                return Ok(GradingResult::Failure {
-                    cause: FailureCause::Timeout(duration),
-                    report: if include_report {
-                        Some(Box::new(DetailsTestFailure {
-                            additional_failure_causes: vec![format!(
-                                "Timed out after {} seconds when running the compiled assembly.",
-                                duration.as_secs(),
-                            )],
-                            stdout_captured: stdout,
-                            stderr_captured: stderr,
-                            ..self.base_report(&generated_assembly)?
-                        }))
-                    } else {
-                        None
-                    },
-                });
-            }
-            Err(Error {
-                kind:
                     ErrorKind::Syscommand(SyscommandError {
                         output_limit_exceeded: Some(limit),
                         ..
+                    }) => Ok(GradingResult::Failure {
+                        cause: FailureCause::OutputLimitExceeded { limit: *limit },
+                        report: if include_report {
+                            Some(Box::new(DetailsTestFailure {
+                                    additional_failure_causes: vec![format!(
+                                        "Output stream exceeded {} bytes when running the compiled assembly.",
+                                        limit
+                                    )],
+                                    ..self.base_report(&generated_assembly)?
+                                }))
+                        } else {
+                            None
+                        },
                     }),
-                ..
-            }) => {
-                return Ok(GradingResult::Failure {
-                    cause: FailureCause::OutputLimitExceeded { limit: limit },
-                    report: if include_report {
-                        Some(Box::new(DetailsTestFailure {
-                            additional_failure_causes: vec![format!(
-                                "Output stream exceeded {} bytes when running the compiled assembly.",
-                                limit
-                            )],
-                            ..self.base_report(&generated_assembly)?
-                        }))
-                    } else {
-                        None
-                    },
-                });
-            }
-            Err(e) => {
-                log::error!("Unknown error happened when running test case in a container: {e}");
-                return Err(e);
+                    _ => {
+                        log::error!("Unknown error happened when running test case in a container: {boxed_e}");
+                        Err(boxed_e)
+                    }
+                }
             }
         }
     }
@@ -816,7 +804,7 @@ impl<'a> GenASMAndRun<'a> {
                                 )],
                                 stdout_captured: Some(output.stdout),
                                 stderr_captured: Some(output.stderr),
-                                ..self.base_report(&generated_assembly)?
+                                ..self.base_report(generated_assembly)?
                             }))
                         } else {
                             None
@@ -828,57 +816,53 @@ impl<'a> GenASMAndRun<'a> {
                     })
                 }
             }
-            Err(Error {
-                kind:
-                    ErrorKind::Syscommand(SyscommandError {
-                        timeout: Some(duration),
-                        stdout,
-                        stderr,
-                        ..
-                    }),
-                ..
-            }) => Ok(GradingResult::Failure {
-                cause: FailureCause::Timeout(duration),
-                report: if include_report {
-                    Some(Box::new(DetailsTestFailure {
-                        additional_failure_causes: vec![format!(
-                            "Timed out after {} seconds when {}.",
-                            duration.as_secs(),
-                            stage_description,
-                        )],
-                        stdout_captured: stdout,
-                        stderr_captured: stderr,
-                        ..self.base_report(&generated_assembly)?
-                    }))
-                } else {
-                    None
-                },
-            }),
-            Err(Error {
-                kind:
-                    ErrorKind::Syscommand(SyscommandError {
-                        output_limit_exceeded: Some(limit),
-                        ..
-                    }),
-                ..
-            }) => Ok(GradingResult::Failure {
-                cause: FailureCause::OutputLimitExceeded { limit: limit },
-                report: if include_report {
-                    Some(Box::new(DetailsTestFailure {
-                        additional_failure_causes: vec![format!(
-                            "Output stream exceeded {} bytes when {}.",
-                            limit, stage_description,
-                        )],
-                        ..self.base_report(&generated_assembly)?
-                    }))
-                } else {
-                    None
-                },
-            }),
-            Err(e) => {
-                log::error!("Unknown error happened when running test case in a container: {e}");
-                Err(e)
-            }
+            Err(mut boxed_e) => match boxed_e.kind.as_mut() {
+                ErrorKind::Syscommand(SyscommandError {
+                    timeout: Some(duration),
+                    stdout,
+                    stderr,
+                    ..
+                }) => Ok(GradingResult::Failure {
+                    cause: FailureCause::Timeout(*duration),
+                    report: if include_report {
+                        Some(Box::new(DetailsTestFailure {
+                            additional_failure_causes: vec![format!(
+                                "Timed out after {} seconds when {}.",
+                                duration.as_secs(),
+                                stage_description,
+                            )],
+                            stdout_captured: stdout.take(),
+                            stderr_captured: stderr.take(),
+                            ..self.base_report(generated_assembly)?
+                        }))
+                    } else {
+                        None
+                    },
+                }),
+                ErrorKind::Syscommand(SyscommandError {
+                    output_limit_exceeded: Some(limit),
+                    ..
+                }) => Ok(GradingResult::Failure {
+                    cause: FailureCause::OutputLimitExceeded { limit: *limit },
+                    report: if include_report {
+                        Some(Box::new(DetailsTestFailure {
+                            additional_failure_causes: vec![format!(
+                                "Output stream exceeded {} bytes when {}.",
+                                limit, stage_description,
+                            )],
+                            ..self.base_report(generated_assembly)?
+                        }))
+                    } else {
+                        None
+                    },
+                }),
+                _ => {
+                    log::error!(
+                        "Unknown error happened when running test case in a container: {boxed_e}"
+                    );
+                    Err(boxed_e)
+                }
+            },
         }
     }
 
@@ -932,7 +916,7 @@ impl<'a> CheckFileExists<'a> {
         include_report: bool,
     ) -> Result<GradingResult, Error> {
         CheckFileExists {
-            container: container,
+            container,
             path: &kind.path,
             mimetype_prefix: if kind.mimetype_prefix_ignore {
                 None
@@ -945,7 +929,7 @@ impl<'a> CheckFileExists<'a> {
 
     /// Grades this test case.
     pub fn grade(&self, include_report: bool) -> Result<GradingResult, Error> {
-        let check_path = path_absolute_join(&self.container.external_solution, &self.path)?;
+        let check_path = path_absolute_join(&self.container.external_solution, self.path)?;
 
         if !std::fs::exists(&check_path)? {
             return Ok(GradingResult::Failure {
@@ -964,7 +948,7 @@ impl<'a> CheckFileExists<'a> {
         if let Some(check_prefix) = self.mimetype_prefix {
             let ident_mimetype = utils::mimetype(&check_path)
                 .inspect_err(|e| log::error!("Could not check file {check_path}: {e}"))?;
-            if !ident_mimetype.starts_with(&check_prefix) {
+            if !ident_mimetype.starts_with(check_prefix) {
                 return Ok(GradingResult::Failure {
                     cause: FailureCause::OutputMismatch,
                     report: if include_report {

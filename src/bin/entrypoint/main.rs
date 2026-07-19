@@ -5,6 +5,7 @@ use signal_hook::{
 };
 use std::ffi::OsString;
 use std::sync::mpsc;
+use std::time::Duration;
 use subprocess::{Exec, Job};
 
 use id2202_autograder::{
@@ -69,6 +70,15 @@ enum Commands {
         #[arg(long = "lines")]
         std_lines: Option<usize>,
     },
+    VerifySshHosts {
+        /// Exit code that `ssh -T` returns on a successful GitHub connection
+        #[arg(long, default_value_t = 1)]
+        github_exit_code: i32,
+
+        /// Exit code that `ssh -T` returns on a successful GitLab connection
+        #[arg(long, default_value_t = 0)]
+        gitlab_exit_code: i32,
+    },
 }
 
 fn main() -> Result<(), Error> {
@@ -94,6 +104,10 @@ fn main() -> Result<(), Error> {
             example_stdin,
             std_lines,
         } => test_syscommand(s, example_stdin, std_lines),
+        Commands::VerifySshHosts {
+            github_exit_code,
+            gitlab_exit_code,
+        } => verify_ssh_hosts(s, github_exit_code, gitlab_exit_code),
     }
 }
 
@@ -135,19 +149,18 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     }
 
     let init_time = std::time::Instant::now();
-    let interval = std::time::Duration::from_secs(s.monitor.poll_interval_seconds.into());
-    let mut next_offset = std::time::Duration::ZERO;
+    let interval = Duration::from_secs(s.monitor.poll_interval_seconds.into());
+    let mut next_offset = Duration::ZERO;
 
     // Functionality for interrupting on received signals
-    let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
+    let mut signals = Signals::new([SIGINT, SIGTERM])?;
     let (sigc_send, sigc_recv) = std::sync::mpsc::channel();
     let sigc_handle = std::thread::spawn(move || {
-        for sig in signals.forever() {
+        if let Some(sig) = signals.forever().next() {
             log::info!("Received signal {sig}");
             sigc_send
                 .send("recvsig")
                 .unwrap_or_else(|e| log::error!("Could not send notification message: {e}"));
-            break;
         }
     });
 
@@ -171,9 +184,10 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
         if proc_handle_server.is_none() {
             log::info!("Spawning a new server process");
             match Exec::cmd(server_bin.as_os_str())
-                .args(&[
+                .args([
                     &OsString::from("--settings"),
                     &OsString::from(&args.settings),
+                    &OsString::from("serve"),
                 ])
                 .start()
             {
@@ -269,7 +283,7 @@ fn validate_settings(
         fn recursively_print(tg: &TestGroup, indent: usize) {
             println!(
                 "{} - {}",
-                std::iter::repeat(" ").take(indent).collect::<String>(),
+                std::iter::repeat_n(" ", indent).collect::<String>(),
                 &tg.title
             );
             for sg in tg.subgroups.iter() {
@@ -427,5 +441,86 @@ fn test_syscommand(
         }
     }
 
+    Ok(())
+}
+
+/// Connects to every configured submission source over SSH, using the same
+/// keys and known hosts file that the runner fetches with. An unknown host key
+/// is presented by SSH itself, which records it once it has been accepted.
+fn verify_ssh_hosts(
+    s: Settings,
+    github_exit_code: i32,
+    gitlab_exit_code: i32,
+) -> Result<(), Error> {
+    use id2202_autograder::utils::{
+        create_dir_if_not_exists, path_absolute_parent, syscommand_timeout, SyscommandSettings,
+    };
+    use std::collections::BTreeSet;
+
+    // SSH creates the known hosts file, but not the directory holding it.
+    create_dir_if_not_exists(path_absolute_parent(&s.runner.ssh_known_hosts)?)?;
+
+    let targets: BTreeSet<(&str, u16, i32)> = s
+        .submission
+        .github
+        .known_instances
+        .iter()
+        .map(|gh| (gh.domain.as_str(), gh.ssh_port, github_exit_code))
+        .chain(
+            s.submission
+                .gitlab
+                .known_instances
+                .iter()
+                .map(|gl| (gl.domain.as_str(), gl.ssh_port, gitlab_exit_code)),
+        )
+        .map(|(domain, port, code)| match domain.rsplit_once(':') {
+            // The domain carries the port of the web interface when it is not
+            // served on the default one, which is not the port SSH is on.
+            Some((host, p)) if p.parse::<u16>().is_ok() => (host, port, code),
+            _ => (domain, port, code),
+        })
+        .collect();
+
+    let mut failures = 0;
+    for (host, port, expected_code) in targets {
+        let mut cmd: Vec<String> = vec![
+            "ssh".to_string(),
+            "-T".to_string(),
+            "-p".to_string(),
+            port.to_string(),
+            "-o".to_string(),
+            format!("UserKnownHostsFile={}", s.runner.ssh_known_hosts),
+        ];
+        if !s.runner.ssh_keys.is_empty() {
+            cmd.extend(["-o".to_string(), "IdentitiesOnly=yes".to_string()]);
+            for key in &s.runner.ssh_keys {
+                cmd.extend(["-i".to_string(), key.to_owned()]);
+            }
+        }
+        cmd.push(format!("git@{host}"));
+
+        println!("Connecting to {host} on port {port}");
+        let output = syscommand_timeout(
+            &cmd,
+            SyscommandSettings {
+                // The connection is interactive when the host key is unknown.
+                timeout: Duration::from_secs(300),
+                ..Default::default()
+            },
+        )?;
+        if output.code == expected_code {
+            println!("{host}:{port}: ok");
+        } else {
+            println!(
+                "{host}:{port}: failed, exited with {} rather than {expected_code}",
+                output.code
+            );
+            failures += 1;
+        }
+    }
+
+    if failures > 0 {
+        return Err(Error::runtime("could not connect to every configured host"));
+    }
     Ok(())
 }

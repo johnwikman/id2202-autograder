@@ -12,7 +12,7 @@ use serde::Deserialize;
 use id2202_autograder::config::Settings;
 
 // Names of recognized cookies
-static COOKIE_NAME_API_AUTH_KEY: &str = "id2202_autograder_api_auth_key";
+pub static COOKIE_NAME_API_AUTH_KEY: &str = "id2202_autograder_api_auth_key";
 
 /// Struct with information about authorization for a request
 #[derive(Clone)]
@@ -55,9 +55,8 @@ pub async fn authenticate(
     struct AuthQuery {
         auth_key: String,
     }
-    match actix_web::web::Query::<AuthQuery>::from_query(req.query_string()) {
-        Ok(q) => auth_info.auth_key = Some(q.auth_key.to_owned()),
-        Err(_) => {}
+    if let Ok(q) = actix_web::web::Query::<AuthQuery>::from_query(req.query_string()) {
+        auth_info.auth_key = Some(q.auth_key.to_owned());
     }
 
     // First check if this is provided as a header
@@ -66,39 +65,32 @@ pub async fn authenticate(
         .get("Authorization")
         .and_then(|hv| hv.to_str().ok())
     {
-        match auth_header.split_whitespace().collect_vec().as_slice() {
-            &[method, key] => {
-                if method.eq_ignore_ascii_case("bearer") {
-                    if settings
-                        .server
-                        .secrets
-                        .api_auth_tokens
-                        .iter()
-                        .any(|s| s == key)
-                    {
-                        auth_info.api_auth_ok = true;
-                    }
-                }
-            }
-            _ => {}
-        };
-    }
-
-    // If not provided as a header, check if it is provided as a cookie
-    if !auth_info.api_auth_ok {
-        match req.cookie(COOKIE_NAME_API_AUTH_KEY) {
-            Some(cookie) => {
-                if settings
+        if let &[method, key] = auth_header.split_whitespace().collect_vec().as_slice() {
+            if method.eq_ignore_ascii_case("bearer")
+                && settings
                     .server
                     .secrets
                     .api_auth_tokens
                     .iter()
-                    .any(|s| s == cookie.value())
-                {
-                    auth_info.api_auth_ok = true;
-                }
+                    .any(|s| s == key)
+            {
+                auth_info.api_auth_ok = true;
             }
-            None => {}
+        }
+    }
+
+    // If not provided as a header, check if it is provided as a cookie
+    if !auth_info.api_auth_ok {
+        if let Some(cookie) = req.cookie(COOKIE_NAME_API_AUTH_KEY) {
+            if settings
+                .server
+                .secrets
+                .api_auth_tokens
+                .iter()
+                .any(|s| s == cookie.value())
+            {
+                auth_info.api_auth_ok = true;
+            }
         }
     }
 

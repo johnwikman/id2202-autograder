@@ -3,6 +3,20 @@ name = "id2202_autograder"
 version = "2.0.0-dev3"
 edition = "2021"
 
+[features]
+# Enables the `docgen` binary and its (heavy) syntax-highlighting dependencies.
+# Off by default so the shipped binaries never compile or link them; build the
+# documentation generator with `cargo build --features docs --bin docgen`.
+docs = ["dep:syntect", "dep:two-face"]
+
+# The documentation generator. Only built when the `docs` feature is enabled, so
+# it (and syntect/two-face) stay out of the shipped `entrypoint`/`server`/`runner`
+# binaries. See `just gen-docs`.
+[[bin]]
+name = "docgen"
+path = "src/bin/docgen/main.rs"
+required-features = ["docs"]
+
 [dependencies]
 actix-web = "4.14.0"
 actix-web-static-files = { version = "4.1.1", features = ["static-files-03"] }
@@ -34,6 +48,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde-value = "0.7.0"
 sha2 = "0.11.0"
+shlex = "2.0.1"
 signal-hook = "0.4.4"
 smart-default = "0.7.1"
 static-files = "0.3.1"
@@ -43,6 +58,25 @@ tokio = "1.52.3"
 toml = { version = "1.1.2", features = ["parse", "serde"] }
 url = "2.5.8"
 v_htmlescape = "0.17"
+documented = "0.10.0"
+utoipa = { version = "5.5.0", features = ["actix_extras"] }
+
+# Optional: only compiled when the `docs` feature is enabled.
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "html", "dump-load", "default-themes", "regex-fancy"], optional = true }
+two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"], optional = true }
 
 [build-dependencies]
 static-files = "0.3.1"
+# For the CDN cache (see web/cdncache/ and build.rs): deserialize the bill of
+# materials, download missing/stale assets, verify their sha384, and label them
+# with a MIME type. `static-files` already depends on mime_guess, but does not
+# re-export it, so it is declared here to be usable from build.rs.
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"
+sha2 = "0.11.0"
+base64 = "0.22.1"
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls"] }
+mime_guess = "2.0"
+
+[lints.clippy]
+doc_overindented_list_items = "allow"

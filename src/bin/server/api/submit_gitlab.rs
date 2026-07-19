@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use actix_web::{
+    post,
     web::{self, Buf},
     HttpRequest, Responder,
 };
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use id2202_autograder::{
     config::{settings::GitLabServerSettings, Settings},
-    db::conn::DatabaseConnection,
+    db::{conn::DatabaseConnection, models::NewSubmissionSourceGitLab},
     gitlab,
 };
 
@@ -98,6 +99,22 @@ impl<'a> CommitMessageInfo<'a> {
 /// Submission from GitLab. From a webhook
 ///
 /// This is just used for testing for now.
+#[utoipa::path(
+    tag = "Submissions",
+    params(
+        ("X-Gitlab-Event" = String, Header, description = "Event type, e.g. `Push Hook`"),
+        ("X-Gitlab-Token" = String, Header, description = "GitLab webhook authentication token"),
+        ("X-Gitlab-Webhook-UUID" = String, Header, description = "Unique identifier of the webhook delivery."),
+    ),
+    security(("gitlab_webhook" = [])),
+    responses(
+        (status = 200, description = "Webhook was accepted, but no submission was registered.", body = SubmitResponse),
+        (status = 201, description = "Submission created and registered in the database.", body = SubmitResponse),
+        (status = 400, description = "Malformed webhook payload.", body = ErrorResponse),
+        (status = 401, description = "Invalid webhook token.", body = ErrorResponse),
+    ),
+)]
+#[post("/submit/gitlab")]
 pub async fn gitlab_submit_webhook(
     data: web::Data<Settings>,
     req: HttpRequest,
@@ -227,9 +244,9 @@ pub async fn gitlab_submit_webhook(
     };
 
     let commitinfo = CommitMessageInfo {
-        settings: &settings,
-        instance: &instance_settings,
-        namespace: namespace,
+        settings,
+        instance: instance_settings,
+        namespace,
         sub: &sub,
     };
 
@@ -250,7 +267,7 @@ pub async fn gitlab_submit_webhook(
         return Ok(SubmitResponse::without_id(&req, "not a repository to be graded").to_http());
     }
 
-    let grading_tags: Vec<&str> = match extract_grading_tags(&settings, &commit_to_grade.message) {
+    let grading_tags: Vec<&str> = match extract_grading_tags(settings, &commit_to_grade.message) {
         Ok(tags) => tags,
         Err(rep) => {
             commitinfo
@@ -275,7 +292,7 @@ pub async fn gitlab_submit_webhook(
     }
 
     // Connect to database and insert the submission request
-    let mut dbconn = DatabaseConnection::connect(&settings).map_err(|err| {
+    let mut dbconn = DatabaseConnection::connect(settings).map_err(|err| {
         log::error!("Could not connect to database: {err}");
         ErrorResponse::internal_server_error(&req)
     })?;
@@ -283,11 +300,13 @@ pub async fn gitlab_submit_webhook(
     let submission_id = dbconn
         .register_gitlab_submission(
             &grading_tags,
-            &domain,
+            &NewSubmissionSourceGitLab {
+                domain: domain.clone(),
+                namespace: namespace.to_string(),
+                repo: sub.project.name.clone(),
+                ssh_url: sub.project.ssh_url.clone(),
+            },
             &sub.user_username,
-            &namespace,
-            &sub.project.name,
-            &sub.project.ssh_url,
             &sub.after,
         )
         .map_err(|e| {

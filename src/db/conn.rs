@@ -12,9 +12,9 @@ use std::time::SystemTime;
 use crate::{
     config::Settings,
     db::models::{
-        NewSubmission, Submission, SubmissionInfo, SubmissionInfoGitHub, SubmissionInfoGitLab,
-        SubmissionSource, SubmissionSourceGitHub, SubmissionSourceGitLab, SubmissionSourceKind,
-        SubmissionStatusCode,
+        NewSubmission, NewSubmissionSourceGitHub, NewSubmissionSourceGitLab, Submission,
+        SubmissionInfo, SubmissionInfoGitHub, SubmissionInfoGitLab, SubmissionSource,
+        SubmissionSourceGitHub, SubmissionSourceGitLab, SubmissionSourceKind, SubmissionStatusCode,
     },
     error::Error,
     github, gitlab,
@@ -40,7 +40,7 @@ impl DatabaseConnection {
         })?;
 
         log::debug!("Connection established.");
-        Ok(DatabaseConnection { conn: conn })
+        Ok(DatabaseConnection { conn })
     }
 
     /// Notifies all listeners on the channel `ch`. This does not include any
@@ -57,7 +57,7 @@ impl DatabaseConnection {
             return Error::err_format("notify channel", ch.as_ref());
         }
 
-        diesel::sql_query(&format!("NOTIFY {};", ch.as_ref()))
+        diesel::sql_query(format!("NOTIFY {};", ch.as_ref()))
             .execute(&mut self.conn)
             .map_err(|e| {
                 Error::auto_msg(format!("could not notify channel \"{}\"", ch.as_ref()), e)
@@ -73,12 +73,9 @@ impl DatabaseConnection {
     /// time.
     pub fn register_github_submission(
         &mut self,
-        grading_tags: &Vec<&str>,
-        domain: &str,
+        grading_tags: &[&str],
+        source: &NewSubmissionSourceGitHub,
         user: &str,
-        org: &str,
-        repo: &str,
-        ssh_url: &str,
         commit: &str,
     ) -> Result<i64, Error> {
         use crate::db::{
@@ -101,21 +98,14 @@ impl DatabaseConnection {
         // a server perspective, but it is an annoying edge case.
         let (src, gh_src) = self.conn.transaction(|conn| {
             use crate::db::{
-                models::{
-                    NewSubmissionSource, NewSubmissionSourceGitHub,
-                },
+                models::NewSubmissionSource,
                 schema::{
                     submission_source_github::{self, columns as ghsrc_col},
                     submission_sources::{self, columns as src_col},
                 },
             };
             let ghsrc_insert_check = diesel::insert_into(submission_source_github::table)
-                .values(NewSubmissionSourceGitHub {
-                    domain: domain.to_string(),
-                    org: org.to_string(),
-                    repo: repo.to_string(),
-                    ssh_url: ssh_url.to_string(),
-                })
+                .values(source)
                 .on_conflict_do_nothing()
                 .returning(SubmissionSourceGitHub::as_returning())
                 .get_result(conn)
@@ -148,10 +138,10 @@ impl DatabaseConnection {
             } else {
                 let gh_src = submission_source_github::table
                     .select(SubmissionSourceGitHub::as_select())
-                    .filter(ghsrc_col::domain.eq(domain))
-                    .filter(ghsrc_col::org.eq(org))
-                    .filter(ghsrc_col::repo.eq(repo))
-                    .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitHub source in the database with {} {} {}: {}", domain, org, repo, e)})?;
+                    .filter(ghsrc_col::domain.eq(&source.domain))
+                    .filter(ghsrc_col::org.eq(&source.org))
+                    .filter(ghsrc_col::repo.eq(&source.repo))
+                    .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitHub source in the database with {} {} {}: {}", source.domain, source.org, source.repo, e)})?;
 
                 let src = submission_sources::table
                     .select(SubmissionSource::as_select())
@@ -206,12 +196,9 @@ impl DatabaseConnection {
     /// See `register_github_submission` for more details.
     pub fn register_gitlab_submission(
         &mut self,
-        grading_tags: &Vec<&str>,
-        domain: &str,
+        grading_tags: &[&str],
+        source: &NewSubmissionSourceGitLab,
         user: &str,
-        namespace: &str,
-        repo: &str,
-        ssh_url: &str,
         commit: &str,
     ) -> Result<i64, Error> {
         use crate::db::{
@@ -221,21 +208,14 @@ impl DatabaseConnection {
 
         let (src, gh_src) = self.conn.transaction(|conn| {
                 use crate::db::{
-                    models::{
-                        NewSubmissionSource, NewSubmissionSourceGitLab,
-                    },
+                    models::NewSubmissionSource,
                     schema::{
                         submission_source_gitlab::{self, columns as glsrc_col},
                         submission_sources::{self, columns as src_col},
                     },
                 };
                 let glsrc_insert_check = diesel::insert_into(submission_source_gitlab::table)
-                    .values(NewSubmissionSourceGitLab {
-                        domain: domain.to_string(),
-                        namespace: namespace.to_string(),
-                        repo: repo.to_string(),
-                        ssh_url: ssh_url.to_string(),
-                    })
+                    .values(source)
                     .on_conflict_do_nothing()
                     .returning(SubmissionSourceGitLab::as_returning())
                     .get_result(conn)
@@ -268,10 +248,10 @@ impl DatabaseConnection {
                 } else {
                     let gl_src = submission_source_gitlab::table
                         .select(SubmissionSourceGitLab::as_select())
-                        .filter(glsrc_col::domain.eq(domain))
-                        .filter(glsrc_col::namespace.eq(namespace))
-                        .filter(glsrc_col::repo.eq(repo))
-                        .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitLab source in the database with {} {} {}: {}", domain, namespace, repo, e)})?;
+                        .filter(glsrc_col::domain.eq(&source.domain))
+                        .filter(glsrc_col::namespace.eq(&source.namespace))
+                        .filter(glsrc_col::repo.eq(&source.repo))
+                        .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitLab source in the database with {} {} {}: {}", source.domain, source.namespace, source.repo, e)})?;
 
                     let src = submission_sources::table
                         .select(SubmissionSource::as_select())
@@ -362,10 +342,10 @@ impl DatabaseConnection {
                     .first(&mut self.conn)?;
 
                 Ok(SubmissionInfo::GitHub {
-                    sub: sub,
-                    src: src,
-                    gh_src: gh_src,
-                    gh_info: gh_info,
+                    sub,
+                    src,
+                    gh_src,
+                    gh_info,
                 })
             }
             Some(SubmissionSourceKind::GitLab) => {
@@ -381,10 +361,10 @@ impl DatabaseConnection {
                     .first(&mut self.conn)?;
 
                 Ok(SubmissionInfo::GitLab {
-                    sub: sub,
-                    src: src,
-                    gl_src: gl_src,
-                    gl_info: gl_info,
+                    sub,
+                    src,
+                    gl_src,
+                    gl_info,
                 })
             }
             None => Error::err_runtime(format!(
@@ -414,7 +394,7 @@ impl DatabaseConnection {
             })?;
 
         match swr.exec_report {
-            Some(v) => Report::deserialize(v).map(|r| Some(r)).map_err(|e| {
+            Some(v) => Report::deserialize(v).map(Some).map_err(|e| {
                 Error::auto_msg(
                     format!("Could not deserialize report for submission {sub_id}"),
                     e,
@@ -498,7 +478,7 @@ impl DatabaseConnection {
         })?;
 
         // This should always return some by this stage...
-        Ok(assigned_subs.get(0).map(|s| s.to_owned()))
+        Ok(assigned_subs.first().map(|s| s.to_owned()))
     }
 
     /// Returns the submissions that are currently being handled by the runner

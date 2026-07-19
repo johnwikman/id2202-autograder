@@ -1,4 +1,4 @@
-/// Modules related to configuration of the autograder.
+//! Modules related to configuration of the autograder.
 pub mod settings;
 pub mod tests;
 

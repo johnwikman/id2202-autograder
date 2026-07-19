@@ -80,7 +80,7 @@ pub fn markdown_write_preformatted_with_truncation(
 ///
 /// See https://www.markdownlang.com/basic/escaping.html
 pub fn markdown_write_escaped(dst: &mut impl Write, s: &str) -> Result<(), Error> {
-    const ESC_CHARS: &'static str = "\\`*_{}[]()#+-.!";
+    const ESC_CHARS: &str = "\\`*_{}[]()#+-.!";
     for ch in s.chars() {
         if ESC_CHARS.contains(ch) {
             dst.write_char('\\')?;
@@ -166,7 +166,7 @@ impl Report {
     ) -> MarkdownFormatterReport<'a> {
         MarkdownFormatterReport {
             report: self,
-            settings: settings,
+            settings,
         }
     }
 
@@ -279,7 +279,7 @@ impl ReportInvalidTag {
     ) -> Result<(), Error> {
         write!(dst, "Unknown tag:`{}`", self.tag_name)?;
 
-        if self.known_grading_tags.len() > 0 {
+        if !self.known_grading_tags.is_empty() {
             dst.write_str("\n\n### Known grading tags\n\n")?;
             for (i, t) in self.known_grading_tags.iter().enumerate() {
                 if i > 0 {
@@ -289,7 +289,7 @@ impl ReportInvalidTag {
             }
         }
 
-        if self.known_tag_groups.len() > 0 {
+        if !self.known_tag_groups.is_empty() {
             dst.write_str("\n\n### Known tag groups\n\n")?;
             dst.write_str("| Group Name | Contained Grading Tags |\n")?;
             dst.write_str("| ---------- | ---------------------- |\n")?;
@@ -324,7 +324,7 @@ impl ReportInvalidTag {
             html_formatter_str(&self.tag_name, escape)
         )?;
 
-        if self.known_grading_tags.len() > 0 {
+        if !self.known_grading_tags.is_empty() {
             write!(dst, "<h{header_level}>Known Grading Tags</h{header_level}>")?;
             write!(dst, "<ul>")?;
             for t in &self.known_grading_tags {
@@ -337,7 +337,7 @@ impl ReportInvalidTag {
             write!(dst, "</ul>")?;
         }
 
-        if self.known_tag_groups.len() > 0 {
+        if !self.known_tag_groups.is_empty() {
             write!(dst, "<h{header_level}>Known Tag Groups</h{header_level}>")?;
             write!(dst, "<table class=\"table table-striped table-hover\">")?;
             write!(dst, "<thead><tr>")?;
@@ -479,8 +479,8 @@ impl ReportSubmission {
 
         for (i, detail) in details.iter().enumerate() {
             dst.write_str("\n\n")?;
-            write!(dst, "<details id=\"detail-summary-{}\">\n", i + 1)?;
-            write!(dst, "<summary>Detail {}</summary>\n\n", i + 1)?;
+            writeln!(dst, "<details id=\"detail-summary-{}\">", i + 1)?;
+            writeln!(dst, "<summary>Detail {}</summary>\n", i + 1)?;
             detail.render_markdown(settings, dst)?;
             dst.write_str("\n\n</details>")?;
         }
@@ -594,8 +594,8 @@ impl ReportTagGrading {
 
         for (i, detail) in details.iter().enumerate() {
             dst.write_str("\n\n")?;
-            write!(dst, "<details id=\"detail-summary-{}\">\n", i + 1)?;
-            write!(dst, "<summary>Detail {}</summary>\n\n", i + 1)?;
+            writeln!(dst, "<details id=\"detail-summary-{}\">", i + 1)?;
+            writeln!(dst, "<summary>Detail {}</summary>\n", i + 1)?;
             detail.render_markdown(settings, dst)?;
             dst.write_str("\n\n</details>")?;
         }
@@ -626,7 +626,7 @@ impl ReportTagGrading {
             .filter(|d| **d != self.tag_name)
             .map(String::to_owned)
             .collect();
-        if derivs.len() > 0 {
+        if !derivs.is_empty() {
             write!(
                 dst,
                 "\n\n_(Derived from {})_",
@@ -672,7 +672,7 @@ impl ReportTagGrading {
         escape: bool,
         header_level: usize,
     ) -> Result<(), Error> {
-        if self.derived_from.len() > 0 {
+        if !self.derived_from.is_empty() {
             dst.write_str("<p><em>(Derived from ")?;
             for (i, t) in self.derived_from.iter().enumerate() {
                 if i > 0 {
@@ -694,7 +694,7 @@ impl ReportTagGrading {
         let mut details: Vec<DetailsTestFailure> = vec![];
         let accordion_prefix = format!("detailsAccordion_{}", self.tag_name);
 
-        if self.groups.len() > 0 {
+        if !self.groups.is_empty() {
             dst.write_str("<ul class=\"list-unstyled ms-0\">")?;
             for g in &self.groups {
                 dst.write_str("<li>")?;
@@ -711,7 +711,7 @@ impl ReportTagGrading {
             dst.write_str("</ul>")?;
         }
 
-        if details.len() > 0 {
+        if !details.is_empty() {
             dst.write_str("<div class=\"accordion\">")?;
             for (i, detail) in details.iter().enumerate() {
                 let detail_id = i + 1;
@@ -793,8 +793,8 @@ impl DetailsTagGradingGroup {
             tests_run: self.tests_run,
             tests_passed: self.tests_passed,
             test_details: &self.test_details,
-            all_run: all_run,
-            all_ok: all_ok,
+            all_run,
+            all_ok,
         }
     }
 }
@@ -847,7 +847,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
                 )?;
             }
         }
-        if self.test_details.len() > 0 {
+        if !self.test_details.is_empty() {
             write!(dst, "\n{:>indent$}   [", "",)?;
             for (i, d) in self.test_details.iter().enumerate() {
                 details.push(d.clone());
@@ -887,7 +887,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
         if indent_level == 0 {
             dst.write_str("<strong>")?;
         }
-        html_write_str(dst, &self.group_title, escape)?;
+        html_write_str(dst, self.group_title, escape)?;
         if indent_level == 0 {
             dst.write_str("</strong>")?;
         }
@@ -913,7 +913,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
             dst.write_str("</button>")?;
         }
 
-        if self.subgroups.len() > 0 {
+        if !self.subgroups.is_empty() {
             dst.write_str("<ul class=\"list-unstyled ms-4\">")?;
             for g in &self.subgroups {
                 dst.write_str("<li>")?;
@@ -980,7 +980,7 @@ impl DetailsBuildFailure {
         if self.missing_source_directory {
             dst.write_str("\n\n**The expected source directory is missing in your submission.**")?;
         }
-        if self.prohibited_mimetype_files.len() > 0 {
+        if !self.prohibited_mimetype_files.is_empty() {
             dst.write_str("\n\n**Prohibited files in your solution:**\n")?;
             for mimeinfo in &self.prohibited_mimetype_files {
                 dst.write_str("\n * ")?;
@@ -1050,7 +1050,7 @@ impl DetailsBuildFailure {
             )?;
         }
 
-        if self.prohibited_mimetype_files.len() > 0 {
+        if !self.prohibited_mimetype_files.is_empty() {
             dst.write_str("<p><strong>Prohibited files in your solution:</strong></p>")?;
             dst.write_str("<ul>")?;
             for mimeinfo in &self.prohibited_mimetype_files {
@@ -1164,7 +1164,7 @@ impl DetailsTestFailure {
         }
 
         let fail_causes = self.summarize_fail_causes();
-        if fail_causes.len() > 0 {
+        if !fail_causes.is_empty() {
             component_spacing(dst, &mut spacing_state)?;
             dst.write_str("**Test failed for the following reasons:**\n")?;
             for s in &fail_causes {
@@ -1177,7 +1177,7 @@ impl DetailsTestFailure {
             markdown_write_escaped(dst, desc)?;
         }
 
-        if self.checked_files.len() > 0 {
+        if !self.checked_files.is_empty() {
             component_spacing(dst, &mut spacing_state)?;
             dst.write_str("**The following files were checked for in solution:**\n")?;
             for check_file in &self.checked_files {
@@ -1185,7 +1185,7 @@ impl DetailsTestFailure {
             }
         }
 
-        if self.mimetype_mismatch_files.len() > 0 {
+        if !self.mimetype_mismatch_files.is_empty() {
             component_spacing(dst, &mut spacing_state)?;
             dst.write_str("**MIME-type mismatches in your solution:**\n")?;
             for mimeinfo in &self.mimetype_mismatch_files {
@@ -1272,7 +1272,7 @@ impl DetailsTestFailure {
         header_level: usize,
     ) -> Result<(), Error> {
         let fail_causes = self.summarize_fail_causes();
-        if fail_causes.len() > 0 {
+        if !fail_causes.is_empty() {
             dst.write_str("<p><strong>Test failed for the following reasons:</strong></p>")?;
             dst.write_str("<ul>")?;
             for cause in &fail_causes {
@@ -1289,7 +1289,7 @@ impl DetailsTestFailure {
             dst.write_str("</p>")?;
         }
 
-        if self.checked_files.len() > 0 {
+        if !self.checked_files.is_empty() {
             dst.write_str(
                 "<p><strong>The following files were checked for in solution:</strong></p>",
             )?;
@@ -1302,7 +1302,7 @@ impl DetailsTestFailure {
             dst.write_str("</ul>")?;
         }
 
-        if self.mimetype_mismatch_files.len() > 0 {
+        if !self.mimetype_mismatch_files.is_empty() {
             dst.write_str("<p><strong>MIME-type mismatches in your solution:</strong></p>")?;
             dst.write_str("<ul>")?;
             for mimeinfo in &self.mimetype_mismatch_files {
@@ -1455,12 +1455,12 @@ impl MismatchInfo<String> {
             Some(settings.markdown.truncate_len),
         )?;
 
-        if self.allowed_alternatives.len() == 1 {
+        if let &[alt] = &self.allowed_alternatives.as_slice() {
             write!(dst, "\n\n**Expected {}**:\n\n", output_name)?;
 
             markdown_write_preformatted_with_truncation(
                 dst,
-                &self.allowed_alternatives.get(0).unwrap(),
+                alt,
                 Some(settings.markdown.truncate_len),
             )?;
         } else {
@@ -1594,7 +1594,7 @@ impl SourceFileInfo {
     ) -> Result<(), Error> {
         dst.write_str("```")?;
         if let Some(ex) = &self.extension {
-            dst.write_str(&ex)?;
+            dst.write_str(ex)?;
         }
         dst.write_str("\n")?;
         dst.write_str(&self.content)?;

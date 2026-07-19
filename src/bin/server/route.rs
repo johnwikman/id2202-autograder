@@ -18,6 +18,12 @@ mod static_route_generator {
     include!(concat!(env!("OUT_DIR"), "/generated_web_static.rs"));
 }
 
+// Locally cached third-party web assets, embedded at build time. See
+// `web/cdncache/` and `build.rs`.
+mod cdn_cache {
+    include!(concat!(env!("OUT_DIR"), "/generated_cdn_cache.rs"));
+}
+
 pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     cfg.route("/", web::get().to(|data| index::get_index("/", data)));
 
@@ -38,6 +44,9 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     // Setup static routes
     let generated = static_route_generator::generate();
     cfg.service(ResourceFiles::new("/static", generated));
+
+    // Locally cached CDN assets (Bootstrap), served in place of a public CDN.
+    cfg.service(ResourceFiles::new("/cdncache", cdn_cache::resources()));
 
     // Favicon should point to a static resource
     cfg.service(web::redirect("/favicon.ico", "/static/image/favicon.ico"));

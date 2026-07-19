@@ -13,18 +13,15 @@ use itertools::Itertools;
 pub fn extract_grading_tags<'a>(
     settings: &Settings,
     from: &'a str,
-) -> Result<Vec<&'a str>, Report> {
+) -> Result<Vec<&'a str>, Box<Report>> {
     // Check for grading tags. First adding them to BTreeSet to remove any
     // duplicates unique, then converting the set back to a vector.
     let mut grading_tag_set: BTreeSet<&str> = BTreeSet::new();
     let mut s: &'a str = from;
-    while s.len() > 0 {
+    while !s.is_empty() {
         // We split at i + 1 because we are interested in the string that
         // follows the tag symbol.
-        if let Some((_, s_after)) = s
-            .find(|c: char| c == '#' || c == '%')
-            .and_then(|i| s.split_at_checked(i + 1))
-        {
+        if let Some((_, s_after)) = s.find(['#', '%']).and_then(|i| s.split_at_checked(i + 1)) {
             let (s_tag, s_rest) = tag_match(s_after);
             grading_tag_set.insert(s_tag);
             s = s_rest;
@@ -45,7 +42,7 @@ pub fn extract_grading_tags<'a>(
         .unwrap_or(0usize);
 
     if tag_length >= settings.submission.max_tag_length {
-        Err(Report::Wrapper(ReportWrapper {
+        Err(Box::new(Report::Wrapper(ReportWrapper {
             title: Some("Submission Error".to_string()),
             reports: vec![
                 Report::Message(ReportMessage { msg: format!(
@@ -54,7 +51,7 @@ pub fn extract_grading_tags<'a>(
                     settings.submission.max_tag_length,
                 )})
             ]
-        }))
+        })))
     } else {
         Ok(grading_tags)
     }
@@ -103,13 +100,11 @@ pub fn validate_repo_prefix_suffix<'a>(
     prohibited_repo_prefixes: &'a [String],
     prohibited_repo_suffixes: &'a [String],
 ) -> Result<(), RejectionReason<'a>> {
-    if allowed_groups.len() > 0 {
-        if !allowed_groups.iter().any(|org| org == group) {
-            return Err(RejectionReason::InvalidGroup { group: group });
-        }
+    if !allowed_groups.is_empty() && !allowed_groups.iter().any(|org| org == group) {
+        return Err(RejectionReason::InvalidGroup { group });
     }
 
-    if allowed_repo_prefixes.len() > 0 {
+    if !allowed_repo_prefixes.is_empty() {
         let allowed_prefix = allowed_repo_prefixes
             .iter()
             .any(|pfx| repository.starts_with(pfx));
@@ -117,7 +112,7 @@ pub fn validate_repo_prefix_suffix<'a>(
             return Err(RejectionReason::InvalidRepoPrefix { repo: repository });
         }
     }
-    if allowed_repo_suffixes.len() > 0 {
+    if !allowed_repo_suffixes.is_empty() {
         let allowed_suffix = allowed_repo_suffixes
             .iter()
             .any(|sfx| repository.ends_with(sfx));
@@ -138,7 +133,7 @@ pub fn validate_repo_prefix_suffix<'a>(
 
     if let Some(prohibited_suffix) = prohibited_repo_suffixes
         .iter()
-        .find(|pfx| repository.starts_with(pfx.as_str()))
+        .find(|pfx| repository.ends_with(pfx.as_str()))
     {
         return Err(RejectionReason::ProhibitedRepoSuffix {
             repo: repository,

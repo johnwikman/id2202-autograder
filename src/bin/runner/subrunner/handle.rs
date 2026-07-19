@@ -17,7 +17,7 @@ use crate::subrunner::{container::ContainerInfo, tag_runner::TagRunner};
 static ERRMSG_INTERNAL_ERROR: &str = "Internal error when starting job. Contact course staff.";
 
 #[derive(Debug, Clone)]
-pub struct SubmissionRunnerHandle {
+pub struct SubmissionRunnerHandle<'a> {
     /// The directory in which this runner will place artifacts. E.g. cloned
     /// git repositories here, input files for test cases, etc. This directory
     /// should be removed by calling the `cleanup` function.
@@ -38,7 +38,7 @@ pub struct SubmissionRunnerHandle {
 
     /// Test configuration and iterators over tags and their test groups. Using
     /// this for storing test information and progress together.
-    tag_runners: Vec<TagRunner>,
+    tag_runners: Vec<TagRunner<'a>>,
 
     /// Number collected test details
     tests_collected_details: usize,
@@ -61,12 +61,16 @@ pub struct SubmissionRunnerHandle {
     status_code: SubmissionStatusCode,
 }
 
-impl SubmissionRunnerHandle {
+impl<'a> SubmissionRunnerHandle<'a> {
     /// Creates a new handle, or returns an error message to be shown to the
     /// user. Internal error messages should be presented as log messages only,
     /// using map_err or inspect_err.
+    #[expect(
+        clippy::result_large_err,
+        reason = "only called once per new submission, Report size is fine"
+    )]
     pub fn new(
-        settings: &Settings,
+        settings: &'a Settings,
         subinfo: &SubmissionInfo,
         runner_id: i32,
     ) -> Result<Self, Report> {
@@ -160,8 +164,13 @@ impl SubmissionRunnerHandle {
                                 runner.derived_from.insert(t.to_owned());
                             }
                             None => {
-                                let mut runner =
-                                    TagRunner::new(tag, &container, &tests.default, &source_dir);
+                                let mut runner = TagRunner::new(
+                                    settings,
+                                    tag,
+                                    &container,
+                                    &tests.default,
+                                    &source_dir,
+                                );
                                 runner.derived_from.insert(t.to_owned());
                                 tag_runners.insert(tag.name.clone(), runner);
                             }
@@ -174,7 +183,7 @@ impl SubmissionRunnerHandle {
                     let mut direct_tags: Vec<String> = vec![];
                     let mut tag_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
                     for (k, tags) in tests.tag_groups.iter() {
-                        if tags.len() == 1 && tags.get(0).map_or(false, |tag| tag.name == *k) {
+                        if tags.len() == 1 && tags.first().is_some_and(|tag| tag.name == *k) {
                             direct_tags.push(k.to_owned());
                         } else {
                             tag_groups.insert(
@@ -203,26 +212,44 @@ impl SubmissionRunnerHandle {
             expected_code: Some(0),
             ..Default::default()
         };
+        let quote = |p: &str| {
+            shlex::try_quote(p).map(String::from).map_err(|e| {
+                log::error!("Could not quote {p} for the SSH command: {e}");
+                internal_error_report()
+            })
+        };
+        let mut ssh_cmd = format!(
+            "core.sshCommand=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={}",
+            quote(&settings.runner.ssh_known_hosts)?,
+        );
+        if !settings.runner.ssh_keys.is_empty() {
+            ssh_cmd.push_str(" -o IdentitiesOnly=yes");
+            for key in &settings.runner.ssh_keys {
+                ssh_cmd.push_str(&format!(" -i {}", quote(key)?));
+            }
+        }
         std::fs::create_dir_all(&source_dir)
             .map_err(Error::from)
             .and_then(|_| {
                 syscommand_timeout(
-                    &["git", "-C", &source_dir, "init"],
+                    ["git", "-C", &source_dir, "init"],
                     gitcmd_settings.to_owned(),
                 )
             })
             .and_then(|_| {
                 syscommand_timeout(
-                    &["git", "-C", &source_dir, "remote", "add", "origin", ssh_url],
+                    ["git", "-C", &source_dir, "remote", "add", "origin", ssh_url],
                     gitcmd_settings.to_owned(),
                 )
             })
             .and_then(|_| {
                 syscommand_timeout(
-                    &[
+                    [
                         "git",
                         "-C",
                         &source_dir,
+                        "-c",
+                        &ssh_cmd,
                         "fetch",
                         "--depth",
                         "1",
@@ -234,7 +261,7 @@ impl SubmissionRunnerHandle {
             })
             .and_then(|_| {
                 syscommand_timeout(
-                    &["git", "-C", &source_dir, "checkout", "FETCH_HEAD"],
+                    ["git", "-C", &source_dir, "checkout", "FETCH_HEAD"],
                     gitcmd_settings.to_owned(),
                 )
             })
@@ -256,12 +283,12 @@ impl SubmissionRunnerHandle {
         Ok(SubmissionRunnerHandle {
             workspace: workspace_dir,
             submission_id: sub.id,
-            source_dir: source_dir,
+            source_dir,
             next_tag_index: 0,
             tag_runners: tag_runners.into_values().collect(),
             tests_collected_details: 0,
             tests_max_details: tests.default.shown_failures,
-            deadline_time: deadline_time,
+            deadline_time,
             cleaned_up: false,
             status_code: SubmissionStatusCode::Running,
         })
@@ -289,7 +316,7 @@ impl SubmissionRunnerHandle {
 
     /// Returns a slice over the tag runners contained within this handle.
     /// Useful for read-only access to the data contained within.
-    pub fn get_tag_runners(&self) -> &[TagRunner] {
+    pub fn get_tag_runners(&self) -> &[TagRunner<'a>] {
         &self.tag_runners
     }
 
@@ -396,7 +423,7 @@ impl SubmissionRunnerHandle {
                 _ => None,
             },
             max_shown_details: Some(self.tests_max_details),
-            tag_reports: tag_reports,
+            tag_reports,
         })
     }
 
@@ -423,7 +450,7 @@ impl SubmissionRunnerHandle {
     }
 }
 
-impl Drop for SubmissionRunnerHandle {
+impl Drop for SubmissionRunnerHandle<'_> {
     fn drop(&mut self) {
         self.cleanup();
     }

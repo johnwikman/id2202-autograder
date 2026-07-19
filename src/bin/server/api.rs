@@ -10,11 +10,11 @@ use crate::auth::AuthorizationInfo;
 use id2202_autograder::config::Settings;
 
 mod common;
-mod response;
-mod submission;
-mod submit_github;
-mod submit_gitlab;
-mod tag;
+pub mod response;
+pub mod submission;
+pub mod submit_github;
+pub mod submit_gitlab;
+pub mod tag;
 
 /// Configuration for the API services.
 ///
@@ -23,24 +23,16 @@ mod tag;
 pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     cfg.default_service(web::to(not_found));
 
-    cfg.route(
-        "/submit/github",
-        web::post().to(submit_github::github_submission),
-    );
-
-    cfg.route(
-        "/submit/gitlab",
-        web::post().to(submit_gitlab::gitlab_submit_webhook),
-    );
-
-    cfg.route(
-        "/submission/{id}",
-        web::get().to(submission::get_submission),
-    );
-
-    cfg.route("/tag", web::get().to(tag::get_taglist));
-    cfg.route("/tag/{tagname}", web::get().to(tag::get_tag));
-    cfg.route("/tag/{tagname}/task", web::get().to(tag::get_tag_task));
+    // Route paths for these handlers are defined on the handlers themselves via
+    // actix route macros (`#[get(...)]` / `#[post(...)]`), which is also where
+    // utoipa reads them for the generated OpenAPI documentation.
+    cfg.service(submit_github::github_submission);
+    cfg.service(submit_gitlab::gitlab_submit_webhook);
+    cfg.service(submission::get_submission);
+    cfg.service(submission::get_submission_search);
+    cfg.service(tag::get_taglist);
+    cfg.service(tag::get_tag);
+    cfg.service(tag::get_tag_task);
 
     // JSON schemas for responses
     cfg.route(
@@ -82,13 +74,15 @@ pub async fn auth_hook(
     req: ServiceRequest,
     next: Next<impl MessageBody>,
 ) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
-    // TODO: Want the have the "/api" bit to come from the actix scope.
     static BYPASS_PREFIXES: [&str; 1] = ["/submit"];
 
-    if !BYPASS_PREFIXES
-        .iter()
-        .any(|pfx| req.path().split_at_checked(scope_prefix.len()).map_or(false, |(_, p)| p.starts_with(pfx)))
-    {
+    if !BYPASS_PREFIXES.iter().any(|pfx| {
+        // We check the part that comes after the scope prefix, assuming that
+        // the path starts with that.
+        req.path()
+            .split_at_checked(scope_prefix.len())
+            .is_some_and(|(_, p)| p.starts_with(pfx))
+    }) {
         let auth_info = req
             .extensions()
             .get::<AuthorizationInfo>()

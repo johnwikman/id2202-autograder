@@ -1,3 +1,4 @@
+use documented::{Documented, DocumentedFields};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_value::Value as SerdeValue;
@@ -9,22 +10,141 @@ use crate::{
     utils::{path_absolute_join, path_absolute_parent, path_join, single_linefeed_to_space},
 };
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// The test system operates in two phases: **build** and **test**. First, the
+/// submitted code is compiled inside a container using a configured build
+/// command. Then, individual test cases are executed against the resulting
+/// binary and their outputs are verified.
+///
+/// A **tag** is the unit of grading. It defines what to build (source directory,
+/// build command) and which test cases to run. Multiple tags can be grouped
+/// under a **tag group** so they can be invoked together:
+///
+/// ```toml
+/// [tag_groups]
+/// all = ["task1", "task2", "task3"]
+/// ```
+///
+/// A **test case** is a single verification step. Each test case has a **kind**
+/// that determines what it does — for example, running a binary and checking its
+/// output, running a multi-stage assembly pipeline, or verifying that a file
+/// exists with a particular type. The available kinds are documented below.
+///
+/// ## Configuration files and inheritance
+///
+/// Test configuration lives in a directory tree rooted at a TOML file whose path
+/// is given by `runner.test_config` in the settings. Three file types are used:
+///
+/// - **Root test configuration** — the top-level TOML file (any name). Defines
+///   global defaults (including per-test-kind defaults), tags, and tag groups.
+/// - **`config.toml`** — placed in a test directory. Sets shared configuration
+///   for all test cases in that directory and its subdirectories.
+/// - **`*.test.toml`** — defines a single test case. The filename (minus the
+///   `.test.toml` suffix) becomes the test name.
+///
+/// Configuration is inherited hierarchically. A `.test.toml` file inherits from
+/// the `config.toml` in the same directory, which inherits from the
+/// `config.toml` in its parent directory, and so on up to the global defaults in
+/// the root test configuration. Only explicitly set values override inherited
+/// ones. Each directory containing a `config.toml` forms a **test group**, and a
+/// directory nested under it forms a sub-group.
+///
+/// ```text
+/// tests/
+///   tests.toml          # [default.kind.run] sets bin = "mybin", stdout_trim = true
+///   hello/
+///     config.toml       # title = "Hello", [test] sets kind = "run"
+///     basic.test.toml   # [test.options] sets stdout = ["Hello"]
+///     advanced/
+///       config.toml     # title = "Advanced", [test.options] sets args = ["--verbose"]
+///       full.test.toml  # [test.options] sets stdout = ["Hello, World!"]
+/// ```
+///
+/// Here `basic.test.toml` inherits `kind = "run"` from `hello/config.toml` and
+/// `bin = "mybin"` from the global defaults, so it only needs to specify
+/// `stdout`. `full.test.toml` additionally picks up `args = ["--verbose"]` from
+/// `advanced/config.toml`.
+// `trim = false` preserves the indentation inside the fenced directory-tree
+// block above (documented trims each line by default, which would flatten it).
+#[derive(Debug, Clone, Documented)]
+#[documented(trim = false)]
+pub struct Tests {
+    pub default: TestDefault,
+    pub tag_groups: BTreeMap<String, Vec<Tag>>,
+}
+
+/// Global defaults inherited by all tags and test cases unless overridden.
+#[derive(Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
+pub struct TestDefault {
+    /// Default build timeout in seconds.
+    pub timeout_build: u32,
+
+    /// Default per-test-case timeout in seconds.
+    pub timeout_test: u32,
+
+    /// Total timeout for an entire tag, in seconds.
+    pub timeout_total: u32,
+
+    /// Maximum captured output on stdout and stderr for a test case,
+    /// in bytes.
+    pub max_output: usize,
+
+    /// Truncate displayed output beyond this many characters.
+    pub truncate_len: usize,
+
+    /// Number of failed tests revealed to the student.
+    pub shown_failures: usize,
+
+    /// Default build command.
+    pub build_cmd: Vec<String>,
+
+    /// If `true`, the solution directory may not contain any binary
+    /// files; every file has to be text.
+    pub build_prohibit_binary_files: bool,
+
+    /// Binary filenames exempt from the prohibition, e.g. a
+    /// PDF or `.docx` that is a required part of the submission.
+    pub build_allowed_binary_files: Vec<String>,
+
+    /// Additional MIME types not beginning with `text/` that
+    /// are allowed regardless.
+    pub build_allowed_binary_mimetypes: Vec<String>,
+
+    /// Per-test-kind default option values, documented separately per kind, so
+    /// they are kept out of this schema (and so out of the table below).
+    #[schemars(skip)]
+    pub kind: TestkindDefault,
+}
+
+/// Execute a binary and check its output.
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
 pub struct TestkindRun {
+    /// Binary to execute.
     pub bin: String,
+    /// Command-line arguments.
     pub args: Vec<String>,
+    /// Data piped to stdin.
     pub stdin: String,
+    /// If true, stdin is not provided.
     pub stdin_ignore: bool,
+    /// Acceptable exit codes.
     pub code: Vec<i32>,
+    /// Expected stdout lines.
     pub stdout: Vec<String>,
+    /// Trim whitespace from each line before comparing.
     pub stdout_trim: bool,
+    /// Strip all whitespace before comparing.
     pub stdout_strip_whitespace: bool,
+    /// Expected stderr lines.
     pub stderr: Vec<String>,
+    /// Trim whitespace from each stderr line.
     pub stderr_trim: bool,
+    /// Strip all whitespace from stderr.
     pub stderr_strip_whitespace: bool,
+    /// Files to copy into the container.
     pub input_files: Vec<String>,
 
-    /// Suffixes for automatically discovering input files, e.g. ["*.cpp"]
+    /// Suffixes for automatically discovering input files,
+    /// e.g. `[".cpp"]`.
     pub auto_input_files: Vec<String>,
 }
 
@@ -32,42 +152,64 @@ impl TestkindRun {
     const IDENT: &'static str = "run";
 }
 
-/// Configuration for running a built binary to generate an assembly file,
-/// assembing the generated file, compile it, and run the compiled binary. The
-/// output from each stage is checked along the way, only proceeding to the next
-/// stage if the previous one was successful.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Multi-stage pipeline: run the student binary to generate an assembly file,
+/// assemble it, compile it, then run the compiled binary. The output from each
+/// stage is checked along the way, only proceeding to the next stage if the
+/// previous one was successful.
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
 pub struct TestkindGenASMAndRun {
+    /// Binary to execute to produce the assembly.
     pub bin: String,
+    /// Arguments.
     pub args: Vec<String>,
+    /// Data piped to stdin.
     pub stdin: String,
+    /// If true, stdin is not provided.
     pub stdin_ignore: bool,
+    /// Acceptable exit codes.
     pub code: Vec<i32>,
+    /// Expected stderr lines.
     pub stderr: Vec<String>,
+    /// Trim stderr lines.
     pub stderr_trim: bool,
+    /// Strip all whitespace from stderr.
     pub stderr_strip_whitespace: bool,
+    /// Files to copy into the container.
     pub input_files: Vec<String>,
-    /// Suffixes for automatically discovering input files, e.g. ["*.cpp"]
+    /// Suffixes for automatically discovering input files,
+    /// e.g. `[".cpp"]`.
     pub auto_input_files: Vec<String>,
 
-    /// Command for assembing an output file
+    /// Assembler command. `<ASM_FILE>` is replaced with the
+    /// path of the generated assembly file.
     pub assemble_cmd: Vec<String>,
+    /// Acceptable assembler exit codes.
     pub assemble_code: Vec<i32>,
 
-    /// Command for compiling the assembled file
+    /// Compiler/linker command.
     pub compile_cmd: Vec<String>,
+    /// Acceptable compiler exit codes.
     pub compile_code: Vec<i32>,
 
-    /// Options for when running the generated binary
+    /// Command to run the compiled binary.
     pub run_cmd: Vec<String>,
+    /// Data piped to stdin of the compiled binary.
     pub run_stdin: String,
+    /// If true, stdin is not provided.
     pub run_stdin_ignore: bool,
+    /// Acceptable exit codes.
     pub run_code: Vec<i32>,
+    /// Expected stdout lines.
     pub run_stdout: Vec<String>,
+    /// Trim stdout lines.
     pub run_stdout_trim: bool,
+    /// Strip all whitespace from stdout.
     pub run_stdout_strip_whitespace: bool,
+    /// Expected stderr lines.
     pub run_stderr: Vec<String>,
+    /// Trim stderr lines.
     pub run_stderr_trim: bool,
+    /// Strip all whitespace from stderr.
     pub run_stderr_strip_whitespace: bool,
 }
 
@@ -75,12 +217,14 @@ impl TestkindGenASMAndRun {
     const IDENT: &'static str = "gen_asm_and_run";
 }
 
-/// Configuration for checking if a specific file exists, and that it is of the
-/// correct MIME type.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Verify that a file exists, optionally checking its MIME type.
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
 pub struct TestkindCheckFileExists {
+    /// Path to the file (relative to the repository root).
     pub path: String,
+    /// Required MIME type prefix, e.g. `application/pdf`.
     pub mimetype_prefix: String,
+    /// If true, the MIME type is not checked.
     pub mimetype_prefix_ignore: bool,
 }
 
@@ -171,47 +315,8 @@ impl Testkind {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct TestDefault {
-    /// Default timeout for building the project.
-    pub timeout_build: u32,
-
-    /// Default timeout for a single test case.
-    pub timeout_test: u32,
-
-    /// Maximum total timeout for a grading session.
-    pub timeout_total: u32,
-
-    /// Maximum output characters on stdout and stderr for a test case.
-    pub max_output: usize,
-
-    /// Truncate output that exceeds this length.
-    pub truncate_len: usize,
-
-    /// Number of failed tests to show to the student.
-    pub shown_failures: usize,
-
-    /// Default command when building projects
-    pub build_cmd: Vec<String>,
-
-    /// If this is set to `true`, then the solution directory is not allowed to
-    /// contain any binary files. More specifically, all files have to be text.
-    pub build_prohibit_binary_files: bool,
-
-    /// A list of binary files that we are going allow regardless. This could
-    /// be a PDF file or .docx which should be part of this submission, but
-    /// otherwise forbidden.
-    pub build_allowed_binary_files: Vec<String>,
-
-    /// Additional MIME types that do not begin with `"text/"` that shall be
-    /// allowed regardless.
-    pub build_allowed_binary_mimetypes: Vec<String>,
-
-    pub kind: TestkindDefault,
-}
-
 /// Configuration related to building the project for a test tag.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema, utoipa::ToSchema)]
 pub struct TagBuildConfig {
     /// The source directory that contains the files to build
     pub srcdir: String,
@@ -280,12 +385,6 @@ pub struct Tag {
 
     pub test_groups: Vec<TestGroup>,
     pub build: TagBuildConfig,
-}
-
-#[derive(Debug, Clone)]
-pub struct Tests {
-    pub default: TestDefault,
-    pub tag_groups: BTreeMap<String, Vec<Tag>>,
 }
 
 /// Options to set when loading tests.
@@ -407,7 +506,7 @@ impl Tests {
                                             ut.default.build_allowed_binary_mimetypes.clone(),
                                         ),
                                 },
-                                metadata: utg.metadata.unwrap_or_else(|| BTreeMap::new()),
+                                metadata: utg.metadata.unwrap_or_default(),
                                 task_file: utg.task_file,
                             };
                             log::debug!("Found tag {t:?}");
@@ -480,7 +579,7 @@ impl Tests {
 
         Ok(Tests {
             default: ut.default,
-            tag_groups: tag_groups,
+            tag_groups,
         })
     }
 }
@@ -496,7 +595,7 @@ struct _UntreatedTest {
 impl _UntreatedTest {
     /// Merges two untreated test configs, with config specified in `other`
     /// overriding the config specified in `self`.
-    fn merge(self: &Self, other: &Option<Self>) -> Self {
+    fn merge(&self, other: &Option<Self>) -> Self {
         if let Some(ut) = other {
             let mut new_ut = self.clone();
             new_ut.kind = ut.kind.clone().or_else(|| self.kind.clone());
@@ -535,7 +634,7 @@ impl TagConfig {
     /// each test kind and build variables that may be absent.
     /// The `root_dir` is the directory from which every path is relative to.
     fn to_tag(
-        self: &Self,
+        &self,
         defaults: &TestDefault,
         root_dir: &str,
         options: &TestsLoadingOptions,
@@ -564,7 +663,7 @@ impl TagConfig {
         let mut t = Tag {
             name: self.name.to_owned(),
             metadata: self.metadata.to_owned(),
-            task_file: task_file,
+            task_file,
             test_groups: vec![],
             build: self.build.to_owned(),
         };
@@ -573,7 +672,7 @@ impl TagConfig {
             log::debug!("Converting each directory to a test group");
             for dir in self.dirs.iter() {
                 log::debug!("Scanning directory {dir}");
-                let absdir = path_absolute_join(root_dir, &dir)?;
+                let absdir = path_absolute_join(root_dir, dir)?;
                 t.test_groups.push(TestGroup::new(
                     &absdir,
                     defaults,
@@ -746,7 +845,7 @@ impl TestGroup {
 
                 tc_err.kind = Some(kind_ident.to_owned());
 
-                let opts = testkind_opts.options.unwrap_or_else(toml::Table::new);
+                let opts = testkind_opts.options.unwrap_or_default();
 
                 // Override options in existing defaults
                 let mut run_opts = defaults.kind.toml_from_ident(&kind_ident).map_err(|e| {
@@ -792,18 +891,11 @@ impl TestGroup {
 /// Matches the string `s` if it contains any leading tag. Returns a tuple with
 /// the matched tag and the remaining text after the tag.
 pub fn tag_match(s: &str) -> (&str, &str) {
-    for (i, c) in s.chars().enumerate() {
+    for (i, c) in s.char_indices() {
         // Could technically use a regex here instead, but could not find a
         // lightweight and well-documented regex library that allows for
         // compile-time evaluation.
-        if ('0' <= c && c <= '9')
-            || ('A' <= c && c <= 'Z')
-            || ('a' <= c && c <= 'z')
-            || c == '-'
-            || c == '_'
-        {
-            () // OK
-        } else {
+        if !matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '-' | '_') {
             // Invalid character, here the tag ends.
             return s.split_at(i);
         }

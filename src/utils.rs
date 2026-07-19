@@ -21,7 +21,7 @@ pub fn single_linefeed_to_space<S: AsRef<str>>(s: S) -> String {
         s.chars().last(),
     ) {
         let mut ret = String::new();
-        ret.extend(offset_1.0.chars());
+        ret.push_str(offset_1.0);
         ret.extend(
             s.chars()
                 .zip(offset_1.1.chars())
@@ -76,6 +76,33 @@ pub fn path_absolute_parent<P: AsRef<Path>>(path: P) -> Result<String, Error> {
 pub fn create_dir_if_not_exists<P: AsRef<Path>>(path: P) -> Result<(), Error> {
     if !std::fs::exists(path.as_ref())? {
         std::fs::create_dir_all(path.as_ref())?;
+    }
+    Ok(())
+}
+
+/// Writes the entire buffer, giving up if `timeout` elapses first. This bounds
+/// a file system that stops making progress; a single write that hangs inside
+/// the kernel cannot be interrupted.
+pub fn write_all_timeout(
+    f: &mut impl Write,
+    mut data: &[u8],
+    timeout: Duration,
+) -> std::io::Result<()> {
+    use std::io::ErrorKind as IoKind;
+
+    let deadline = SystemTime::now()
+        .checked_add(timeout)
+        .unwrap_or_else(SystemTime::now);
+    while !data.is_empty() {
+        if SystemTime::now() >= deadline {
+            return Err(IoKind::TimedOut.into());
+        }
+        match f.write(data) {
+            Ok(0) => return Err(IoKind::WriteZero.into()),
+            Ok(n) => data = &data[n..],
+            Err(e) if e.kind() == IoKind::Interrupted => (),
+            Err(e) => return Err(e),
+        }
     }
     Ok(())
 }
@@ -146,6 +173,9 @@ pub struct SyscommandSettings {
     pub stdin: Option<String>,
     pub max_stdout_length: Option<usize>,
     pub max_stderr_length: Option<usize>,
+    /// Timeout for writing `stdin` to the temporary file that the command
+    /// reads it from.
+    pub fs_write_timeout: Duration,
 }
 
 impl Default for SyscommandSettings {
@@ -156,6 +186,7 @@ impl Default for SyscommandSettings {
             stdin: None,
             max_stdout_length: None,
             max_stderr_length: None,
+            fs_write_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -205,13 +236,13 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
         Some(s) => {
             let mut f = tempfile::NamedTempFile::new()?;
             let fname = f.path().to_str().map(String::from);
-            f.write(s.as_bytes())?;
             Some(
-                f.keep()
+                write_all_timeout(&mut f, s.as_bytes(), cmd_settings.fs_write_timeout)
+                    .and_then(|()| f.keep().map_err(std::io::Error::from))
                     .map_err(|e| {
                         Error::fs(
-                            "calling .keep() on temp stdin file in syscommand_timeout",
-                            fname.unwrap_or_else(|| "unknown filename".to_string()),
+                            "preparing temp stdin file in syscommand_timeout",
+                            fname.as_deref().unwrap_or("unknown filename"),
                         )
                         .with_cause(Box::new(e))
                     })?
@@ -247,7 +278,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
             Redirection::None
         })
         .start()
-        .map_err(|e| (&syscmd_err).clone().as_error().with_cause(Box::new(e)))?;
+        .map_err(|e| syscmd_err.clone().as_error().with_cause(Box::new(e)))?;
 
     let mut buf_stdout: Vec<u8> = vec![];
     let mut buf_stderr: Vec<u8> = vec![];
@@ -305,7 +336,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
             let l = f.read(&mut read_buf)?;
             output_buf.extend_from_slice(read_buf.split_at(l).0);
             if output_buf.len() > maxlen {
-                return Err(syscmd_err.clone().limit_exceeded(maxlen).as_error());
+                Err(syscmd_err.clone().limit_exceeded(maxlen).as_error())
             } else {
                 Ok(l)
             }
@@ -372,9 +403,9 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
                     }
                 }
                 Ok(SyscommandOutput {
-                    code: code,
-                    stdout: stdout,
-                    stderr: stderr,
+                    code,
+                    stdout,
+                    stderr,
                 })
             } else if let Some(sig) = stat.signal() {
                 Err(syscmd_err
@@ -426,12 +457,13 @@ mod tests {
     fn test_mimetype() {
         {
             let mut f = tempfile::NamedTempFile::new().unwrap();
-            f.write("{\"foo\": 1, \"bar\": true}".as_bytes()).unwrap();
+            f.write_all("{\"foo\": 1, \"bar\": true}".as_bytes())
+                .unwrap();
             assert_that!(mimetype(f.path()).unwrap()).contains("json");
         }
         {
             let mut f = tempfile::NamedTempFile::new().unwrap();
-            f.write("foo bar\nI am a regular text file...".as_bytes())
+            f.write_all("foo bar\nI am a regular text file...".as_bytes())
                 .unwrap();
             assert_that!(mimetype(f.path()).unwrap()).starts_with("text");
         }
@@ -501,11 +533,13 @@ mod tests {
             },
         );
         assert_that!(&ret).is_err();
-        assert_that!(&ret).err().satisfies(|e| match e.kind {
-            ErrorKind::Syscommand(SyscommandError {
-                timeout: Some(_), ..
-            }) => true,
-            _ => false,
-        });
+        assert_that!(&ret)
+            .err()
+            .satisfies(|e| match e.kind.as_ref() {
+                ErrorKind::Syscommand(SyscommandError {
+                    timeout: Some(_), ..
+                }) => true,
+                _ => false,
+            });
     }
 }

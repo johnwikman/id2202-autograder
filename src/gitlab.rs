@@ -91,7 +91,7 @@ pub enum CommitState {
     Skipped,
 }
 impl CommitState {
-    fn to_str(&self) -> &str {
+    fn to_str(self) -> &'static str {
         match self {
             CommitState::Pending => "pending",
             CommitState::Running => "running",

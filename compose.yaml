@@ -40,6 +40,8 @@ services:
           selinux: z
     environment:
       AUTOGRADER_LOG_DIR: "/tmp/id2202/log"
+      AUTOGRADER_RUNNER_SSH_KEYS: "/root/.ssh/id_ed25519"
+      AUTOGRADER_RUNNER_SSH_KNOWN_HOSTS: "/root/.ssh/known_hosts"
       AUTOGRADER_RUNNER_WORKSPACE_DIR: "/tmp/id2202/workspace"
       #AUTOGRADER_SUBMISSION_GITHUB_WEBHOOK_SECRET: "5up3rS3cr3t"
       AUTOGRADER_GITHUB_AUTH_TOKENS: "${AUTOGRADER_GITHUB_AUTH_TOKENS}"

@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use actix_web::{
+    post,
     web::{self, Buf},
     HttpRequest, Responder,
 };
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use id2202_autograder::{
     config::{settings::GitHubServerSettings, Settings},
-    db::conn::DatabaseConnection,
+    db::{conn::DatabaseConnection, models::NewSubmissionSourceGitHub},
     github,
 };
 
@@ -110,11 +111,22 @@ impl<'a> CommitMessageInfo<'a> {
 /// Submission from GitHub. Received a webhook
 ///
 /// See documentation over at docs.github.com/enterprise-server@3.16/webhooks/
-///
-/// We expect the following for headers:
-///   X-Github-Hook-ID:    <id>
-///   X-Github-Event:      push | ping
-///   X-Hub-Signature-256: sha265=<lower case hex>
+#[utoipa::path(
+    tag = "Submissions",
+    params(
+        ("X-Github-Event" = String, Header, description = "Event type: `push` or `ping`"),
+        ("X-Github-Hook-ID" = String, Header, description = "Unique identifier of the webhook"),
+        ("X-Hub-Signature-256" = String, Header, description = "Hashed authentication of the webhook, on the format `sha256=<lower case hex>`."),
+    ),
+    security(("github_webhook" = [])),
+    responses(
+        (status = 200, description = "Webhook was accepted, but no submission was registered.", body = SubmitResponse),
+        (status = 201, description = "Submission created and registered in the database.", body = SubmitResponse),
+        (status = 400, description = "Malformed webhook payload.", body = ErrorResponse),
+        (status = 401, description = "Invalid webhook signature.", body = ErrorResponse),
+    ),
+)]
+#[post("/submit/github")]
 pub async fn github_submission(
     data: web::Data<Settings>,
     req: HttpRequest,
@@ -233,8 +245,8 @@ pub async fn github_submission(
         })?;
 
     let commitinfo = CommitMessageInfo {
-        settings: &settings,
-        instance: &instance_settings,
+        settings,
+        instance: instance_settings,
         sub: &sub,
     };
 
@@ -256,7 +268,7 @@ pub async fn github_submission(
     }
 
     let grading_tags: Vec<&str> =
-        match extract_grading_tags(&settings, sub.head_commit.message.as_ref()) {
+        match extract_grading_tags(settings, sub.head_commit.message.as_ref()) {
             Ok(tags) => tags,
             Err(rep) => {
                 commitinfo
@@ -281,7 +293,7 @@ pub async fn github_submission(
     }
 
     // Connect to database and insert the submission request
-    let mut dbconn = DatabaseConnection::connect(&settings).map_err(|err| {
+    let mut dbconn = DatabaseConnection::connect(settings).map_err(|err| {
         log::error!("Could not connect to database: {err}");
         ErrorResponse::internal_server_error(&req)
     })?;
@@ -289,11 +301,13 @@ pub async fn github_submission(
     let submission_id = dbconn
         .register_github_submission(
             &grading_tags,
-            &domain,
+            &NewSubmissionSourceGitHub {
+                domain: domain.clone(),
+                org: sub.repository.organization.clone(),
+                repo: sub.repository.name.clone(),
+                ssh_url: sub.repository.ssh_url.clone(),
+            },
             &sub.pusher.name,
-            &sub.repository.organization,
-            &sub.repository.name,
-            &sub.repository.ssh_url,
             &sub.head_commit.id,
         )
         .map_err(|e| {

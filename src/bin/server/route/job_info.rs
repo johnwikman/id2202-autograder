@@ -41,7 +41,7 @@ pub async fn get_job_info(
 
     let settings = data.get_ref();
 
-    let mut conn = match DatabaseConnection::connect(&settings) {
+    let mut conn = match DatabaseConnection::connect(settings) {
         Ok(conn) => conn,
         Err(e) => {
             log::error!("Could not open database connection: {e}");

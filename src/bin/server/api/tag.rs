@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use actix_web::{
+    get,
     web::{self},
     HttpRequest, HttpResponse, Responder,
 };
@@ -10,9 +11,15 @@ use id2202_autograder::config::{Settings, Tests, TestsLoadingOptions};
 use crate::api::response::{ErrorResponse, TagListResponse, TagResponse};
 
 /// Fetches a list of all grading tags and some of their metadata.
-///
-/// Required headers:
-///  - Authorization
+#[utoipa::path(
+    tag = "Tags",
+    security(("api_token" = [])),
+    responses(
+        (status = 200, description = "Returned an object specifying all available grading tags and tag groups.", body = TagListResponse),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse),
+    ),
+)]
+#[get("/tag")]
 pub async fn get_taglist(
     data: web::Data<Settings>,
     req: HttpRequest,
@@ -21,10 +28,7 @@ pub async fn get_taglist(
 
     let tc = Tests::load(
         &settings.runner.test_config,
-        TestsLoadingOptions {
-            taginfo_only: true,
-            ..Default::default()
-        },
+        TestsLoadingOptions { taginfo_only: true },
     )
     .map_err(|e| {
         log::error!("Could not load test configuration: {e}");
@@ -35,9 +39,16 @@ pub async fn get_taglist(
 }
 
 /// Fetches a single grading tags (or an alias of many) and some of its metadata.
-///
-/// Required headers:
-///  - Authorization
+#[utoipa::path(
+    tag = "Tags",
+    params(("tagname" = String, Path, description = "Tag name, or a tag-group alias")),
+    security(("api_token" = [])),
+    responses(
+        (status = 200, description = "Details for the tag, or every tag in the group (if the tag was an alias for many tags).", body = TagResponse),
+        (status = 404, description = "No such tag or tag group.", body = ErrorResponse),
+    ),
+)]
+#[get("/tag/{tagname}")]
 pub async fn get_tag(
     data: web::Data<Settings>,
     req: HttpRequest,
@@ -48,10 +59,7 @@ pub async fn get_tag(
 
     let tc = Tests::load(
         &settings.runner.test_config,
-        TestsLoadingOptions {
-            taginfo_only: true,
-            ..Default::default()
-        },
+        TestsLoadingOptions { taginfo_only: true },
     )
     .map_err(|e| {
         log::error!("Could not load test configuration: {e}");
@@ -66,9 +74,17 @@ pub async fn get_tag(
 /// Fetch the description/task for a specific grading tag. Unlike the other API
 /// calls, this does not return a JSON response on success. Instead, this will
 /// return data of an unknown format.
-///
-/// Required headers:
-///  - Authorization
+#[utoipa::path(
+    tag = "Tags",
+    params(("tagname" = String, Path, description = "Tag name")),
+    security(("api_token" = [])),
+    responses(
+        (status = 200, description = "The task description file returned in an opaque format (`application/octet-stream`).", content_type = "application/octet-stream"),
+        (status = 400, description = "Name refers to a multi-tag group.", body = ErrorResponse),
+        (status = 404, description = "Tag does not exist or has no task file.", body = ErrorResponse),
+    ),
+)]
+#[get("/tag/{tagname}/task")]
 pub async fn get_tag_task(
     data: web::Data<Settings>,
     req: HttpRequest,
@@ -83,10 +99,7 @@ pub async fn get_tag_task(
 
     let tc = Tests::load(
         &settings.runner.test_config,
-        TestsLoadingOptions {
-            taginfo_only: true,
-            ..Default::default()
-        },
+        TestsLoadingOptions { taginfo_only: true },
     )
     .map_err(|e| {
         log::error!("Could not load test configuration: {e}");

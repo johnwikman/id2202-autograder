@@ -72,7 +72,7 @@ impl<'a> UnauthorizedMessageTemplate<'a> {
     ) -> Result<HttpResponse, actix_web::Error> {
         UnauthorizedMessageTemplate {
             common: CommonInformation::from_title(settings, "401: Unauthorized"),
-            reason: reason,
+            reason,
         }
         .render_errmsg_template(HttpResponse::Unauthorized())
     }

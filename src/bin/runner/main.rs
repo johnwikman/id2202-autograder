@@ -4,10 +4,7 @@ use signal_hook::{
     iterator::Signals,
 };
 use std::sync::mpsc;
-use std::{
-    io::Write,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use id2202_autograder::{
     config::Settings,
@@ -20,7 +17,7 @@ use id2202_autograder::{
     reporting::{Report, ReportMessage, ReportWrapper},
     utils::{
         create_dir_if_not_exists, path_absolute_join, path_absolute_parent, syscommand_timeout,
-        systemtime_to_fsfriendly_utc_string, SyscommandSettings,
+        systemtime_to_fsfriendly_utc_string, write_all_timeout, SyscommandSettings,
     },
 };
 
@@ -41,8 +38,8 @@ struct Args {
     runner_id: i32,
 }
 
-const MSG_NOTIFY: &'static str = "notify";
-const MSG_SIGNAL: &'static str = "signal";
+const MSG_NOTIFY: &str = "notify";
+const MSG_SIGNAL: &str = "signal";
 
 fn main() -> Result<(), Error> {
     let args: Args = Args::parse();
@@ -121,15 +118,14 @@ fn main() -> Result<(), Error> {
     let (msg_send, msg_recv) = std::sync::mpsc::channel();
 
     // Functionality for interrupting on received signals
-    let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
+    let mut signals = Signals::new([SIGINT, SIGTERM])?;
     let sigc_send = msg_send.clone();
     let sigc_handle = std::thread::spawn(move || {
-        for sig in signals.forever() {
+        if let Some(sig) = signals.forever().next() {
             log::info!("Received signal {sig}");
             sigc_send
                 .send(MSG_SIGNAL)
                 .unwrap_or_else(|e| log::error!("Could not send notification message: {e}"));
-            break;
         }
     });
 
@@ -217,7 +213,7 @@ fn main() -> Result<(), Error> {
                     &subinfo,
                     &run_handle.workspace,
                     &run_handle.source_dir,
-                    &run_handle.get_tag_runners(),
+                    run_handle.get_tag_runners(),
                 ) {
                     Ok(()) => (run_handle.compile_report(), run_handle.get_status_code()),
                     Err(e) => {
@@ -294,16 +290,15 @@ fn main() -> Result<(), Error> {
 
             let mut conn = DatabaseConnection::connect(&settings)?;
 
-            match conn.try_assign_submission(args.runner_id)? {
-                Some(sub) => {
-                    log::info!("Assigned submission: {:#?}", sub);
+            if let Some(sub) = conn.try_assign_submission(args.runner_id)? {
+                log::info!("Assigned submission: {:#?}", sub);
 
-                    let subinfo = conn.get_submission_info(sub.id)?;
+                let subinfo = conn.get_submission_info(sub.id)?;
 
-                    match SubmissionRunnerHandle::new(&settings, &subinfo, args.runner_id) {
-                        Ok(handle) => {
-                            active_sub = Some(handle);
-                            conn.report_and_status(
+                match SubmissionRunnerHandle::new(&settings, &subinfo, args.runner_id) {
+                    Ok(handle) => {
+                        active_sub = Some(handle);
+                        conn.report_and_status(
                                     &settings,
                                     &subinfo,
                                     &Report::Message(ReportMessage { msg: format!("{} {}",
@@ -316,35 +311,32 @@ fn main() -> Result<(), Error> {
                                 .unwrap_or_else(|e| {
                                     log::warn!("Could not set commit message and/or status: {e}")
                                 });
-                            conn.set_exec_date_started(sub.id).unwrap_or_else(|e| {
-                                log::warn!("Could not set start date for job {}: {}", sub.id, e)
-                            });
-                            // Do not wait for a timeout, just proceed
-                            // to run the test cases.
-                            next_offset = init_time.elapsed();
-                        }
-                        Err(report) => {
-                            conn.report_and_status(
-                                &settings,
-                                &subinfo,
-                                &Report::Wrapper(ReportWrapper {
-                                    title: Some("Your submission could not be graded.".to_string()),
-                                    reports: vec![report],
-                                }),
-                                SubmissionStatusCode::SubmissionError,
-                                true,
-                            )
-                            .unwrap_or_else(|e| {
-                                log::warn!("Could not set commit message and/or status: {e}")
-                            });
+                        conn.set_exec_date_started(sub.id).unwrap_or_else(|e| {
+                            log::warn!("Could not set start date for job {}: {}", sub.id, e)
+                        });
+                        // Do not wait for a timeout, just proceed
+                        // to run the test cases.
+                        next_offset = init_time.elapsed();
+                    }
+                    Err(report) => {
+                        conn.report_and_status(
+                            &settings,
+                            &subinfo,
+                            &Report::Wrapper(ReportWrapper {
+                                title: Some("Your submission could not be graded.".to_string()),
+                                reports: vec![report],
+                            }),
+                            SubmissionStatusCode::SubmissionError,
+                            true,
+                        )
+                        .unwrap_or_else(|e| {
+                            log::warn!("Could not set commit message and/or status: {e}")
+                        });
 
-                            conn.set_exec_date_finished(sub.id)
-                                .unwrap_or_else(|e| log::warn!("Could not set exec finished: {e}"));
-                        }
+                        conn.set_exec_date_finished(sub.id)
+                            .unwrap_or_else(|e| log::warn!("Could not set exec finished: {e}"));
                     }
                 }
-                // No new job
-                None => {}
             }
 
             let sleep_time = next_offset
@@ -459,7 +451,7 @@ fn record_to_shadow(
 
     log::debug!("Cloning shadow directory {shadow_repo} to {shadow_dir}");
     syscommand_timeout(
-        &["git", "clone", "--local", &shadow_repo, &shadow_dir],
+        ["git", "clone", "--local", &shadow_repo, &shadow_dir],
         SyscommandSettings {
             expected_code: Some(0),
             ..Default::default()
@@ -468,7 +460,7 @@ fn record_to_shadow(
     .inspect_err(|e| log::error!("Could not clone shadow repo {shadow_repo}: {e}"))?;
 
     syscommand_timeout(
-        &[
+        [
             "git",
             "-C",
             &shadow_dir,
@@ -485,7 +477,7 @@ fn record_to_shadow(
     .inspect_err(|e| log::error!("Could not set git config for shadow repo: {e}"))?;
 
     syscommand_timeout(
-        &[
+        [
             "git",
             "-C",
             &shadow_dir,
@@ -510,14 +502,18 @@ fn record_to_shadow(
         let report = tr.results_report();
         let content_path = path_absolute_join(&date_dir, format!("{}.results.json", &tr.tag_name))?;
         let mut f = std::fs::File::create(content_path)?;
-        f.write(report.to_json()?.as_bytes())?;
+        write_all_timeout(
+            &mut f,
+            report.to_json()?.as_bytes(),
+            Duration::from_secs(settings.fs_write_timeout_seconds.into()),
+        )?;
 
         // Create the snapshot for this solution only if it attempted to
         // actually build the project. If this is not the case, then there is
         // something wrong with the tag source directory and these files may
         // contain bad files that should not be stored.
         if tr.attempted_build() {
-            let graded_src_dir = path_absolute_join(&source_dir, &tr.build_conf.srcdir)?;
+            let graded_src_dir = path_absolute_join(source_dir, &tr.build_conf.srcdir)?;
             let target_src_dir = path_absolute_join(&snapshot_dir, &tr.build_conf.srcdir)?;
             let target_src_parent = path_absolute_parent(&target_src_dir)?;
 
@@ -549,7 +545,7 @@ fn record_to_shadow(
 
     let commit_msg = format!("Results for submission {}", subinfo.get_submission().id);
     syscommand_timeout(
-        &[
+        [
             "git",
             "-C",
             &shadow_dir,
@@ -566,7 +562,7 @@ fn record_to_shadow(
     .inspect_err(|e| log::error!("Could not commit files to shadow repo {shadow_repo}: {e}"))?;
 
     syscommand_timeout(
-        &["git", "-C", &shadow_dir, "push"],
+        ["git", "-C", &shadow_dir, "push"],
         SyscommandSettings {
             expected_code: Some(0),
             ..Default::default()

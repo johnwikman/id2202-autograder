@@ -1,5 +1,5 @@
-// Various GitHub related utilities
-// https://docs.rs/reqwest/latest/reqwest/
+//! Various GitHub related utilities
+//! https://docs.rs/reqwest/latest/reqwest/
 
 use crate::{
     config::{settings::GitHubServerSettings, Settings},
@@ -217,7 +217,7 @@ pub async fn create_repo(
         .headers(common_headers(settings, instance)?)
         .json(&GhCreateRepo {
             name: repo_name.to_owned(),
-            private: private,
+            private,
         })
         .send()
         .await

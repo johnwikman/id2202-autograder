@@ -1,0 +1,155 @@
+/* Below `lg` the sidebar is an offcanvas drawer, positioned by Bootstrap (which
+   already lays it out as a flex column); from `lg` up it is a column of its own,
+   sticking to the viewport. Either way it is a flex column that scrolls by
+   itself: the theme picker is pushed to its bottom with `mt-auto`, and a nav
+   list taller than the viewport has to be scrollable for the picker to stay
+   reachable. (Bootstrap would scroll an `.offcanvas-body`; there is no separate
+   body here, the drawer is the nav.) */
+.doc-sidebar { overflow-y: auto; }
+@media (min-width: 992px) {
+  .doc-sidebar { display: flex; flex-direction: column; width: 16rem; min-width: 16rem; position: sticky; top: 0; height: 100vh; }
+}
+.doc-main { min-width: 0; }
+
+/* Inline code in running text is set as a chip, so a passing mention reads as a
+   mention; the names this site documents — setting names, table fields,
+   headings — keep the bare accent colour and stay the loudest monospace on the
+   page. */
+.doc-main :is(p, li, .setting-doc) code { padding: .1em .35em; font-size: .8125em; border-radius: .25rem; background-color: var(--bs-tertiary-bg); }
+/* Past `xl` the container stops growing; keep it against the sidebar instead of
+   letting Bootstrap centre it in the space that is left. */
+.doc-main > .container-xl { margin-left: 0; margin-right: auto; }
+summary { cursor: pointer; }
+
+/* Theme picker, pinned to the bottom of the sidebar. The icons are the inline
+   SVG symbols from `html.rs`, sized like the web UI sizes them. */
+.doc-theme .btn { text-decoration: none; }
+/* The menu is placed by CSS rather than Popper (`data-bs-display="static"`),
+   so it is centred on the toggle here rather than left-aligned with it. */
+.doc-theme .dropdown-menu { left: 50%; transform: translateX(-50%); }
+.bi { width: 1em; height: 1em; fill: currentcolor; }
+/* An icon sitting in a line of text rather than in a flex row of its own. */
+.badge .bi { vertical-align: -.125em; }
+
+/* Headings: more space above than below, so a heading groups with what follows
+   it, and a heading directly under its parent stays with it. The REST API
+   endpoints are `h2`s too, but they are accordion headers stacked into a card
+   and space themselves. */
+h2:not(.accordion-header) { margin-top: 2.5rem; }
+h3 { margin-top: 2rem; }
+h4 { margin-top: 1.75rem; }
+:is(h1, h2, h3) + :is(h3, h4) { margin-top: .75rem; }
+
+/* A heading that is nothing but the name of a thing — a TOML table, a test kind
+   — which docgen marks with `doc-name`. Bootstrap renders `code` at .875em,
+   which leaves such a heading smaller than the heading it is, and lowercase
+   names with underscores are easy to scroll past, so the name is set at full
+   size and an accent rail marks the heading. A heading that only mentions a
+   name in passing keeps the ordinary inline treatment. */
+:is(h2, h3, h4, h5) > code.doc-name { font-size: 1em; font-weight: 600; color: var(--bs-body-color); }
+:is(h2, h3, h4, h5):has(> code.doc-name) { border-left: .25rem solid var(--bs-primary); padding-left: .6rem; }
+
+/* Link to a section, revealed in the margin when the heading is hovered. */
+:is(h2, h3, h4, h5) { position: relative; }
+.doc-anchor { position: absolute; right: 100%; padding-right: .3rem; font-weight: 400; text-decoration: none; color: var(--bs-secondary-color); opacity: 0; }
+:is(h2, h3, h4, h5):hover .doc-anchor, .doc-anchor:focus { opacity: 1; }
+
+/* A documented setting, set as a block rather than a table row: name and
+   environment variable on the first line, type and description on the second.
+   The names are long enough that in a table they force it wider than the page. */
+.setting-list { border-top: var(--bs-border-width) solid var(--bs-border-color); margin-bottom: 1rem; }
+.setting { padding: .45rem 0; border-bottom: var(--bs-border-width) solid var(--bs-border-color); }
+.setting code { overflow-wrap: anywhere; }
+.setting-name { font-weight: 600; }
+.setting-env, .setting-env code { font-size: .8125rem; color: var(--bs-secondary-color); }
+.setting-doc { margin-top: .15rem; }
+.setting-doc .badge { margin-right: .4rem; }
+
+/* The type badge, coloured per kind so the types can be scanned down the page,
+   and carried by the field tables too. `ty-other` is the fallback for an object,
+   or for a value the schema gives no type to. Each kind uses Bootstrap's three
+   subtle tints rather than an outline in the emphasis colour, which at this size
+   read as blocks of colour and drowned out the accent the names carry. The tints
+   are set as variables so an array can pick up the ones for what it holds. */
+.setting-type { font-family: var(--bs-font-monospace); font-weight: 400; border: var(--bs-border-width) solid;
+                background-color: var(--ty-bg); color: var(--ty-fg); border-color: var(--ty-border); }
+.ty-string { --ty-bg: var(--bs-primary-bg-subtle); --ty-fg: var(--bs-primary-text-emphasis); --ty-border: var(--bs-primary-border-subtle); }
+.ty-integer { --ty-bg: var(--bs-success-bg-subtle); --ty-fg: var(--bs-success-text-emphasis); --ty-border: var(--bs-success-border-subtle); }
+.ty-boolean { --ty-bg: var(--bs-warning-bg-subtle); --ty-fg: var(--bs-warning-text-emphasis); --ty-border: var(--bs-warning-border-subtle); }
+.ty-other { --ty-bg: var(--bs-secondary-bg-subtle); --ty-fg: var(--bs-secondary-text-emphasis); --ty-border: var(--bs-secondary-border-subtle); }
+
+/* An array carries the colour of the type it holds, so `array of strings` scans
+   with the string settings rather than off on a colour of its own. Thickened
+   side rails, like the walls of a container, are what set the two apart. */
+.setting-type.is-array { border-left-width: 3px; border-right-width: 3px; }
+
+/* Field tables, skinned like the setting list so the two read as one kind of
+   entry: no fill or vertical rules, a quiet header, the name in the accent
+   colour and the type as the same badge a setting carries. Every column but the
+   description holds a short label, so none of them wrap. */
+.table { --bs-table-bg: transparent; }
+.table > :not(caption) > * > * { padding: .45rem .75rem; }
+.table > :not(:first-child) { border-top: 0; }
+.table > thead { --bs-table-bg: var(--bs-tertiary-bg); }
+.table > thead th { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--bs-secondary-color); }
+.table :is(th, td):not(:last-child) { width: 1%; white-space: nowrap; }
+.table td:first-child code { font-weight: 600; }
+
+/* A `details` block framed as a card: the summary is a header bar with a caret
+   that turns when it opens, and the content sits flush inside the frame. The
+   `!important`s undo Bootstrap's border utilities, which carry their own. */
+.doc-details { border: var(--bs-border-width) solid var(--bs-border-color); border-radius: var(--bs-border-radius); overflow: hidden; }
+.doc-details > summary { display: flex; align-items: center; gap: .6rem; padding: .6rem .9rem; font-weight: 600; background-color: var(--bs-tertiary-bg); list-style: none; }
+.doc-details > summary::-webkit-details-marker { display: none; }
+.doc-details > summary::before { content: ""; display: inline-block; border: .35em solid transparent; border-left-color: currentColor; transition: transform .15s ease; }
+.doc-details > summary:hover { background-color: var(--bs-secondary-bg); }
+.doc-details[open] > summary { border-bottom: var(--bs-border-width) solid var(--bs-border-color); }
+.doc-details[open] > summary::before { transform: rotate(90deg); }
+.doc-details > :not(summary) { border: 0 !important; border-radius: 0 !important; margin-bottom: 0; }
+
+/* Sidebar submenu listing the current page's headings. Code-styled headings
+   take the link colour so they read as part of the entry. A rail down the left
+   carries the nesting, which the entries mark by their indent (`lvl-*`, one
+   class per heading level). */
+.doc-toc { font-size: .875rem; border-left: 2px solid var(--bs-border-color); }
+.doc-toc code { color: inherit; }
+.doc-toc .nav-link { padding-left: .5rem; }
+.doc-toc .nav-link.lvl-3 { padding-left: 1.5rem; }
+.doc-toc .nav-link.lvl-4 { padding-left: 2.5rem; }
+.doc-toc .nav-link.lvl-5 { padding-left: 3.5rem; }
+/* A REST API endpoint in the submenu: the method badge keeps a slot of its own
+   so the paths line up, and a path too long for the sidebar wraps at one of the
+   `wbr`s the page puts after each `/`. */
+.doc-toc .api-toc { display: flex; align-items: baseline; gap: .4rem; }
+.doc-toc .api-toc .badge { flex-shrink: 0; width: 2.75rem; padding: .2em 0; font-size: .625rem; }
+.doc-toc .api-toc code { font-size: .8125rem; }
+
+/* API endpoint accordion header: method badge sits in a fixed left slot (so all
+   paths align on their leading "/"), and the auth badge is pushed fully right.
+   Wrapping only comes into play on a narrow screen, where the auth badge drops
+   to a line of its own instead of pushing the header wider than the page. */
+.accordion-button { position: relative; flex-wrap: wrap; row-gap: .25rem; }
+.accordion-button .api-method { position: absolute; left: 1.25rem; top: 50%; transform: translateY(-50%); }
+.accordion-button .api-path { margin-left: 4.5rem; margin-right: auto; min-width: 0; overflow-wrap: anywhere; }
+.accordion-button::after { margin-left: .75rem; }
+
+/* Response status tabs. `.st-*` carries one status colour and is put on both a
+   tab and its pane: --st fills the selected tab and outlines the box, --st-on
+   and --st-text are the labels readable on each, --st-rgb tints the unselected
+   tabs (10%, 18% on hover). The strip draws no line of its own — the pane draws
+   the whole box, and the selected tab overlaps its top edge (Bootstrap already
+   gives every tab a -1px bottom margin) so the two merge. */
+.st-success { --st: var(--bs-success); --st-rgb: var(--bs-success-rgb); --st-text: var(--bs-success-text-emphasis); --st-on: #fff; }
+.st-info { --st: var(--bs-info); --st-rgb: var(--bs-info-rgb); --st-text: var(--bs-info-text-emphasis); --st-on: #000; }
+.st-warning { --st: var(--bs-warning); --st-rgb: var(--bs-warning-rgb); --st-text: var(--bs-warning-text-emphasis); --st-on: #000; }
+.st-danger { --st: var(--bs-danger); --st-rgb: var(--bs-danger-rgb); --st-text: var(--bs-danger-text-emphasis); --st-on: #fff; }
+.st-secondary { --st: var(--bs-secondary); --st-rgb: var(--bs-secondary-rgb); --st-text: var(--bs-secondary-text-emphasis); --st-on: #fff; }
+.ct-nav { --bs-nav-tabs-border-color: transparent; }
+.nav-tabs .ct { color: var(--st-text); background-color: rgba(var(--st-rgb), .10); --bs-nav-tabs-link-hover-border-color: transparent; }
+.nav-tabs .ct:not(.active):hover { background-color: rgba(var(--st-rgb), .18); }
+.ct.active { position: relative; z-index: 1; --bs-nav-tabs-link-active-color: var(--st-on); --bs-nav-tabs-link-active-bg: var(--st); --bs-nav-tabs-link-active-border-color: var(--st); }
+.ct-pane { border: var(--bs-border-width) solid var(--st); }
+.ct-pane > :last-child { margin-bottom: 0; }
+
+/* The status badge leading a pane's description, filled like the selected tab. */
+.ct-badge { background-color: var(--st); color: var(--st-on); }

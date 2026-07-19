@@ -42,7 +42,7 @@ struct PodmanImageOutput {
 /// This has been tested using Podman 5.6.1
 pub fn images() -> Result<Vec<String>, Error> {
     let output = syscommand_timeout(
-        &["podman", "images", "--format", "json"],
+        ["podman", "images", "--format", "json"],
         SyscommandSettings {
             expected_code: Some(0),
             max_stdout_length: Some(128 * 1024),
@@ -61,7 +61,7 @@ pub fn images() -> Result<Vec<String>, Error> {
         }
     }
 
-    Ok(Vec::from_iter(imgs.into_iter()))
+    Ok(Vec::from_iter(imgs))
 }
 
 /// A selection of JSON output fields when listing the networks
@@ -80,7 +80,7 @@ struct PodmanNetworkOutput {
 /// Returns a list of podman networks on the system.
 pub fn networks() -> Result<Vec<String>, Error> {
     let output = syscommand_timeout(
-        &["podman", "network", "list", "--format", "json"],
+        ["podman", "network", "list", "--format", "json"],
         SyscommandSettings {
             expected_code: Some(0),
             max_stdout_length: Some(128 * 1024),
@@ -94,7 +94,7 @@ pub fn networks() -> Result<Vec<String>, Error> {
 
     let nets: BTreeSet<String> = BTreeSet::from_iter(netlist.into_iter().map(|pno| pno.name));
 
-    Ok(Vec::from_iter(nets.into_iter()))
+    Ok(Vec::from_iter(nets))
 }
 
 /// A selection of JSON output fields when listing the containers
@@ -122,7 +122,7 @@ pub struct PodmanPSOutput {
 /// Returns a list of names of the running podman containers on the system.
 pub fn ps_names() -> Result<Vec<String>, Error> {
     let output = syscommand_timeout(
-        &["podman", "ps", "-a", "--format", "json"],
+        ["podman", "ps", "-a", "--format", "json"],
         SyscommandSettings {
             expected_code: Some(0),
             max_stdout_length: Some(128 * 1024),
@@ -137,13 +137,13 @@ pub fn ps_names() -> Result<Vec<String>, Error> {
     let names: BTreeSet<String> =
         BTreeSet::from_iter(pslist.into_iter().flat_map(|ppso| ppso.names.into_iter()));
 
-    Ok(Vec::from_iter(names.into_iter()))
+    Ok(Vec::from_iter(names))
 }
 
 /// Returns a list of podman networks on the system.
 pub fn ps() -> Result<Vec<PodmanPSOutput>, Error> {
     let output = syscommand_timeout(
-        &["podman", "ps", "-a", "--format", "json"],
+        ["podman", "ps", "-a", "--format", "json"],
         SyscommandSettings {
             expected_code: Some(0),
             max_stdout_length: Some(128 * 1024),
@@ -162,7 +162,7 @@ pub fn ps() -> Result<Vec<PodmanPSOutput>, Error> {
 /// sufficient for even the larger images.
 pub fn pull(tag: &str) -> Result<(), Error> {
     let _output = syscommand_timeout(
-        &["podman", "pull", tag],
+        ["podman", "pull", tag],
         SyscommandSettings {
             expected_code: Some(0),
             timeout: Duration::from_secs(1200),
@@ -176,7 +176,7 @@ pub fn pull(tag: &str) -> Result<(), Error> {
 /// Create a network
 pub fn create_network(network_name: &str) -> Result<(), Error> {
     let _output = syscommand_timeout(
-        &["podman", "network", "create", "--disable-dns", network_name],
+        ["podman", "network", "create", "--disable-dns", network_name],
         SyscommandSettings {
             expected_code: Some(0),
             max_stderr_length: Some(128 * 1024),
@@ -256,7 +256,7 @@ pub fn exec(container_name: &str, exec_cmd: &[&str]) -> Result<(), Error> {
 /// Force removal of a container
 pub fn force_rm(container_name: &str) -> Result<(), Error> {
     let _output = syscommand_timeout(
-        &["podman", "rm", "-f", "-t", "0", container_name],
+        ["podman", "rm", "-f", "-t", "0", container_name],
         SyscommandSettings {
             expected_code: Some(0),
             max_stderr_length: Some(128 * 1024),

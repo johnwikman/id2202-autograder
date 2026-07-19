@@ -1,5 +1,6 @@
 name = "ID2202 Autograder"
 version = "3"
+fs_write_timeout_seconds = 10 # before giving up on a file system write
 
 # All paths are relative to this file, not where the binary is being run from.
 
@@ -29,6 +30,7 @@ webhook_secret = "s3cr3t"
 # Known GitHub servers that we can accept requests from
 [[submission.github.known_instances]]
 domain = "gits-15.sys.kth.se"
+ssh_port = 22
 auth_token = "ChangeMe"
 allowed_orgs = ["ID2202-jwikman-test"]
 allowed_repo_prefixes = ["id2202-"]
@@ -43,6 +45,7 @@ webhook_secret = "s3cr3t"
 # Known GitLab instances that we can accept requests from
 [[submission.gitlab.known_instances]]
 domain = "localhost:8929"
+ssh_port = 2424
 auth_token = "ChangeMe"
 allowed_namespaces = ["id2202-test", "id2202-2025-testing", "autograder-testing"]
 allowed_repo_prefixes = ["id2202-"]
@@ -83,6 +86,9 @@ mount_tests = "/id2202/tests"
 workspace_dir = "./data/workspace" # storage for data currently being worked on
 shadow_dir = "./data/shadow"       # storage for submitted solutions
 test_config = "./tests/tests.toml" # configuration for test cases
+
+ssh_keys = []                              # empty means the default SSH configuration
+ssh_known_hosts = "./data/ssh/known_hosts" # host keys of the submission sources
 
 # Settings for markdown output during reporting.
 [reporting.markdown]

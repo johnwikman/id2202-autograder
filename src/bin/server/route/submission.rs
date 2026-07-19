@@ -76,7 +76,7 @@ fn fetch_submission_and_report(
         }
     };
 
-    let mut conn = match DatabaseConnection::connect(&settings) {
+    let mut conn = match DatabaseConnection::connect(settings) {
         Ok(conn) => conn,
         Err(e) => {
             log::error!("Could not open database connection: {e}");
@@ -159,7 +159,7 @@ pub async fn get_submission(
         statlist_general.items.push(SubmissionStatusListItem {
             li_class: li_class.into(),
             label: "Status",
-            value: format!("{} {}", ssc.to_string(), rhs_symbol),
+            value: format!("{ssc} {rhs_symbol}"),
             ..Default::default()
         });
     }
@@ -297,10 +297,10 @@ pub async fn get_submission(
     let mut tpl = SubmissionTemplate {
         common: CommonInformation::from_title(settings, &format!("Submission {}", sub.id)),
         submission_id: sub.id,
-        status_lists: status_lists,
+        status_lists,
         report: RenderReport {
             v: opt_report,
-            settings: settings,
+            settings,
         },
     };
     tpl.common.include_syntax_highlighting = false;

@@ -2,7 +2,7 @@ use paste::paste;
 
 #[derive(Debug)]
 pub struct Error {
-    pub kind: ErrorKind,
+    pub kind: Box<ErrorKind>,
     pub cause: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
@@ -39,7 +39,7 @@ pub struct SyscommandError {
 impl SyscommandError {
     pub fn new(cmd: Vec<String>) -> Self {
         Self {
-            cmd: cmd,
+            cmd,
             msg: None,
             timeout: None,
             code_mismatch: None,
@@ -94,6 +94,12 @@ pub struct TestConfigError {
     pub key: Option<String>,
     pub kind: Option<String>,
     pub tag: Option<String>,
+}
+
+impl Default for TestConfigError {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestConfigError {
@@ -168,19 +174,19 @@ macro_rules! define_error_kinds {
                 $(
                     pub fn [<$kind:snake>]($($field: impl Into<$ty>),*) -> Self {
                         Self {
-                            kind: ErrorKind::$kind { $($field: $field.into()),* },
+                            kind: Box::new(ErrorKind::$kind { $($field: $field.into()),* }),
                             cause: None,
                         }
                     }
                     pub fn [<err_ $kind:snake>]<T>($($field: impl Into<$ty>),*) -> Result<T, Self> {
                         Err(Self {
-                            kind: ErrorKind::$kind { $($field: $field.into()),* },
+                            kind: Box::new(ErrorKind::$kind { $($field: $field.into()),* }),
                             cause: None,
                         })
                     }
                     pub fn [<errcause_ $kind:snake>]<T>($($field: impl Into<$ty>),*, cause: Box<dyn std::error::Error + Send + Sync>) -> Result<T, Self> {
                         Err(Self {
-                            kind: ErrorKind::$kind { $($field: $field.into()),* },
+                            kind: Box::new(ErrorKind::$kind { $($field: $field.into()),* }),
                             cause: Some(cause),
                         })
                     }
@@ -218,23 +224,7 @@ impl Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if f.alternate() {
-            write!(f, "{}", self)?;
-            let mut source = std::error::Error::source(self);
-
-            let mut i = 0;
-            while let Some(cause) = source {
-                // Avoid recursing too deep
-                i += 1;
-                if i > 10 {
-                    break;
-                }
-                write!(f, "\nCaused by: {cause}")?;
-                source = cause.source();
-            }
-            return Ok(());
-        }
-        match &self.kind {
+        match self.kind.as_ref() {
             ErrorKind::LoadConfig { file } => {
                 write!(f, "error loading config from file {}", file)
             }
@@ -316,7 +306,23 @@ impl std::fmt::Display for Error {
                 }
                 Ok(())
             }
+        }?;
+
+        if f.alternate() {
+            let mut source = std::error::Error::source(self);
+
+            let mut i = 0;
+            while let Some(cause) = source {
+                // Avoid recursing too deep
+                i += 1;
+                if i > 10 {
+                    break;
+                }
+                write!(f, "\nCaused by: {cause}")?;
+                source = cause.source();
+            }
         }
+        Ok(())
     }
 }
 
@@ -349,9 +355,8 @@ impl Error {
     /// message `msg`.
     pub fn auto_msg(msg: impl Into<String>, e: impl Into<Error>) -> Self {
         let mut err: Error = e.into();
-        match err.kind {
-            ErrorKind::Auto { .. } => err.kind = ErrorKind::Auto { msg: msg.into() },
-            _ => {}
+        if let ErrorKind::Auto { .. } = err.kind.as_ref() {
+            err.kind = Box::new(ErrorKind::Auto { msg: msg.into() })
         }
         err
     }
@@ -360,7 +365,7 @@ impl Error {
 impl From<TestConfigError> for Error {
     fn from(e: TestConfigError) -> Self {
         Error {
-            kind: ErrorKind::TestConfig(e),
+            kind: Box::new(ErrorKind::TestConfig(e)),
             cause: None,
         }
     }
@@ -369,7 +374,7 @@ impl From<TestConfigError> for Error {
 impl From<SyscommandError> for Error {
     fn from(e: SyscommandError) -> Self {
         Error {
-            kind: ErrorKind::Syscommand(e),
+            kind: Box::new(ErrorKind::Syscommand(e)),
             cause: None,
         }
     }
