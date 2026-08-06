@@ -1,6 +1,6 @@
 .PHONY: all clean
 all:
-	ocamlbuild helloextra.native
+	ocamlbuild -package unix helloextra.native
 	mv helloextra.native hello-extra
 
 clean:

@@ -284,6 +284,11 @@ impl Testkind {
             dir: &str,
             prefix: &str,
         ) -> Result<(), Error> {
+            // First ensure that any files specified are preserved, and
+            // converted to absolute paths relative to this dir.
+            for f in input_files.iter_mut() {
+                *f = path_join(dir, &f)?;
+            }
             let contents = std::fs::read_dir(dir).map_err(|e| {
                 Error::fs("listing files for auto discovery", dir).with_cause(Box::new(e))
             })?;

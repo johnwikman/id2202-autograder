@@ -5,7 +5,6 @@ Checks that stdin is printed as stdout.
 # Note: `stdin_ignore` should automatically be set to false since we specify
 # the `stdin` key here.
 [test.options]
-args = ["--stdin-to-stdout"]
 stdin = "Hello, World??"
 stdout = ["Hello, World??"]
 stderr = [""]

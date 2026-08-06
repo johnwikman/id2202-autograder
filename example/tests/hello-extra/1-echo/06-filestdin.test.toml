@@ -1,0 +1,10 @@
+description = """
+Checks that both stdin and a file is properly read and printed to stdout
+without any space between them.
+"""
+
+[test.options]
+stdin = "asdf"
+stdout = ["asdf1234"]
+stderr = [""]
+input_files = ["05-file.txt"]

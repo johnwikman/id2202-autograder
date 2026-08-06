@@ -1,7 +1,7 @@
 description = """
-Checks that code 0 is returned when no arguments are provided.
+Checks that code 0 is returned.
 """
 
 [test.options]
-args = []
+args = ["code", "0"]
 code = [0]

@@ -1,8 +1,0 @@
-description = """
-Checks that hello world is printed to stdout, but nothing else is printed.
-"""
-
-[test.options]
-args = ["--stdout"]
-stdout = ["Hello, World!"]
-stderr = [""]

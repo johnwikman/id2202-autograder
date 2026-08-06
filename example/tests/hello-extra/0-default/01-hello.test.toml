@@ -1,0 +1,4 @@
+[test.options]
+code = [0]
+stderr = [""]
+stdout = ["Hello, World!"]

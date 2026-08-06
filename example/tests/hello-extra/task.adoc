@@ -1,0 +1,128 @@
+Hello (Extra)
+-------------
+
+In this task, you shall implement a hello world program with some more
+interesting features. It shall be able to echo input into output, perform
+basic calculations, and set return codes. It shall of course also be able to
+write "Hello, World!".
+
+All code necessary to compile and run your solution shall be placed under the
+directory `solutions/hello-extra` in your source code repository. This
+directory must contain a `Makefile` that builds your solution as an executable
+`hello-extra`:
+
+[source,bash]
+----
+> cd solutions/hello-extra
+> make
+> ./hello-extra
+Hello, World!
+----
+
+When called with just `./hello-extra`, it shall act as a hello world program
+that prints "Hello, World!" to standard output and exits with return code 0. It
+shall also have support for the following subcommands
+
+ * `echo`
+ * `calc`
+ * `code`
+
+==== `./hello-extra echo`
+
+The subcommand `echo` shall print whatever is provided as input. By default, it
+shall print to standard output. But it shall also support the flag `--stderr`
+that makes it print to standard error instead.
+
+Input can be provided on the standard input stream or as a file. If a file is
+provided, its contents should be read assuming a UTF-8 encoding and then be
+printed. If both standard input and a file is provided, standard input should
+be printed first followed by the file contents. You should print the input
+exactly as you received it, and not include any additional newlines.
+
+If the file does not exist or does not follow a UTF-8 encoding, the exit code
+should be 1. Otherwise this subcommand shall exit with code 0.
+
+Standard output and standard error is ignored in a test case if the expected
+exit code is 1.
+
+Examples:
+
+[source,bash]
+----
+# No input, therefore no output.
+> ./hello-extra echo
+----
+
+[source,bash]
+----
+> echo -e "foo\nbar\nbabar" | ./hello-extra echo
+foo
+bar
+babar
+----
+
+[source,bash]
+----
+> echo "1234" > myfile.txt
+> ./hello-extra echo myfile.txt
+1234
+> echo -n "zero" | ./hello-extra echo myfile.txt
+zero1234
+----
+
+[source,bash]
+----
+# foo should be printed to stderr only
+> echo -e "foo" | ./hello-extra echo --stderr > /dev/null
+foo
+----
+
+==== `./hello-extra calc`
+
+`calc` should accept three additional arguments, an operator and two numbers.
+It may accept the operator `add`, `sub`, and `mul`, which performs addition,
+subtraction, and multiplication respectively.
+
+The subcommand shall exit with code 1 on invalid operator or invalid numbers.
+Otherwise it shall exit with code 0.
+
+Standard output and standard error is ignored in a test case if the expected
+exit code is 1.
+
+Example usage:
+
+[source,bash]
+----
+> ./hello-extra calc add 5 3
+8
+> ./hello-extra calc sub 5 3
+2
+> ./hello-extra calc mul 5 3
+15
+> ./hello-extra calc mul 5 -7
+-35
+> ./hello-extra calc sub 5 -7
+12
+----
+
+==== `./hello-extra code`
+
+`code` should accept one additional argument, interpret that as an integer, and
+exit with that integer as its return code. If the argument cannot be parsed as
+an integer, it shall exit with code 1.
+
+Standard output and standard error is ignored.
+
+Example usage:
+
+[source,bash]
+----
+> ./hello-extra code 0; echo "$?"
+0
+> ./hello-extra code 15; echo "$?"
+15
+> ./hello-extra code 1; echo "$?"
+1
+> ./hello-extra code foo; echo "$?"
+1
+----

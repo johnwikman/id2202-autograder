@@ -499,7 +499,7 @@ impl ReportSubmission {
         if let Some(reason) = &self.premature_exit_reason {
             dst.write_str("<p><em>")?;
             html_write_str(dst, reason, escape)?;
-            dst.write_str("<em></p>")?;
+            dst.write_str("</em></p>")?;
         }
 
         dst.write_str("<div class=\"text-center\">")?;

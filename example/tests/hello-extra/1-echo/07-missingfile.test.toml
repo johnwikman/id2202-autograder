@@ -1,0 +1,8 @@
+description = """
+Checks error handling when a file is missing.
+"""
+
+[test.options]
+args = ["echo", "foo.txt"]
+code = [1]
+stdin = "1234"

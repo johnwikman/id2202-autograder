@@ -1,0 +1,7 @@
+description = """
+Checks that a file is properly read and printed to stdout.
+"""
+
+[test.options]
+code = [1]
+auto_input_files = [".txt"]

@@ -2,5 +2,7 @@ title = "Hello (Extra tests)"
 description = "An additional suite of \"Hello, World!\" tests"
 
 # Generic configuration for all tests under this directory
+[test]
+kind = "run"
 [test.options]
 bin = "hello-extra"

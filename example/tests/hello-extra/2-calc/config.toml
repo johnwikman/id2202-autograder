@@ -1,0 +1,5 @@
+title = "Calc"
+description = "Checks the calc functionality of the hello-extra program."
+
+[test.options]
+code = [0]

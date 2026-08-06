@@ -1,9 +1,2 @@
-title = "Code Only"
-description = "Only checks code output"
-
-# Same stdin used for all tests
-[test]
-kind = "run"
-
-[test.options]
-stdin_ignore = true
+title = "Code"
+description = "Checks the return code functionality of hello-extra."

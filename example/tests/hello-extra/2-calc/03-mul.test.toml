@@ -1,0 +1,6 @@
+description = "Simple multiplication"
+
+[test.options]
+args = ["calc", "mul", "5", "3"]
+code = [0]
+stdout = ["15"]

@@ -1,0 +1,9 @@
+description = """
+Checks that stdin is printed to stderr when the --stderr flag is provided.
+"""
+
+[test.options]
+args = ["echo", "--stderr"]
+stdin = "Hello!! World??"
+stdout = [""]
+stderr = ["Hello!! World??"]

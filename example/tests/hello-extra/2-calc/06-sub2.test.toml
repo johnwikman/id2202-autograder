@@ -1,0 +1,6 @@
+description = "Subtraction with negative numbers"
+
+[test.options]
+args = ["calc", "sub", "5", "-7"]
+code = [0]
+stdout = ["12"]

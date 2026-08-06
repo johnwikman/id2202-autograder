@@ -1,6 +1,6 @@
 [package]
 name = "id2202_autograder"
-version = "2.0.0-dev3"
+version = "2.0.0-dev4"
 edition = "2021"
 
 [features]

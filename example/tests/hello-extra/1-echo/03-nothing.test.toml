@@ -1,0 +1,9 @@
+description = """
+Checks that nothing gets printed when nothing is provided on stdin, and no file
+is provided.
+"""
+
+[test.options]
+args = ["echo"]
+stdout = [""]
+stderr = [""]

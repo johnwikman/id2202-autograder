@@ -1,0 +1,8 @@
+description = """
+Checks that whitespaces are preserved when printed to stdout.
+"""
+
+[test.options]
+stdin = "foo\nbar bar\tbar\nbabar"
+stdout = ["foo\nbar bar\tbar\nbabar"]
+stderr = [""]

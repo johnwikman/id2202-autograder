@@ -1,0 +1,5 @@
+title = "Echo"
+description = "Prints based on provided content on stdin and as a file."
+
+[test.options]
+args = ["echo"]
