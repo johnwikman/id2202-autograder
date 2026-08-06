@@ -50,6 +50,7 @@ let mode_calc () =
       | "add" -> lhs + rhs
       | "sub" -> lhs - rhs
       | "mul" -> lhs * rhs
+      | "div" -> (try lhs / rhs with Division_by_zero -> print_exit 1 "div by zero")
       | _ -> print_exit 1 "invalid calc operator"
     in
     print_endline (string_of_int res)

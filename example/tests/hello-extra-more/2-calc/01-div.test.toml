@@ -1,0 +1,5 @@
+description = "Simple division"
+
+[test.options]
+args = ["calc", "div", "10", "2"]
+stdout = ["5"]

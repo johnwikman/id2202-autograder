@@ -1,0 +1,26 @@
+Hello (Extra) - Extended with more tests
+----------------------------------------
+
+This extends the `hello-extra` tag with more functionality.
+
+Now the `./hello-extra calc` mode must also support the `div` operator. It
+should follow the same principle as the previous operators, but it must also
+catch division by 0 errors and exit with return code 1 then.
+
+Example:
+
+[source,bash]
+----
+> ./hello-extra calc div 10 2
+5
+> ./hello-extra calc div 17 4
+4
+> ./hello-extra calc div -17 4
+-4
+> ./hello-extra calc div 17 -4
+4
+# stderr/stdout is ignored here
+> ./hello-extra calc div 1 0
+> echo $?
+1
+----

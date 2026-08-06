@@ -2,5 +2,4 @@ description = "Simple addition"
 
 [test.options]
 args = ["calc", "add", "5", "3"]
-code = [0]
 stdout = ["8"]

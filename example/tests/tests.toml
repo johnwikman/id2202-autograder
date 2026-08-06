@@ -87,10 +87,18 @@ metadata.version = 1
 
 [tags.hello-extra]
 dirs = ["hello-extra"]
+task_file = "hello-extra/task.adoc"
 build.srcdir = "solutions/hello-extra"
 build.cmd = ["make"]
 metadata.version = 2
 metadata.date = "2026-01-30"
+
+[tags.hello-extra-more]
+extends = "hello-extra"
+dirs = ["hello-extra-more"]
+task_file = "hello-extra-more/task.adoc"
+metadata.version = 1
+metadata.date = "2026-07-30"
 
 [tags.hello-asm]
 dirs = ["hello-asm"]
@@ -105,5 +113,6 @@ build.srcdir = "solutions/hello-file"
 build.cmd = ["make"]
 
 # "Alias" tags which can be used to run invoke multiple tags
+# (Intentionally excluded `hello-extra-more` here.)
 [tag_groups]
 hello-all = ["hello", "hello-extra", "hello-asm", "hello-file"]

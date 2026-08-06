@@ -1,0 +1,8 @@
+title = "Hello (Even more extra tests)"
+description = "Even more hello-extra tests"
+
+# Generic configuration for all tests under this directory
+[test]
+kind = "run"
+[test.options]
+bin = "hello-extra"

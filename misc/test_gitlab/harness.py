@@ -138,17 +138,42 @@ class Config:
         )
 
 
+    def request(self, target, path, method="GET", body=None, token=None):
+        """Returns (status, parsed). `target` is "gitlab" or "autograder"."""
+        if target == "gitlab":
+            url = f"{self.gitlab_api}{path}"
+            headers = {"PRIVATE-TOKEN": token or self.gitlab_token}
+        else:
+            url = f"{self.autograder_api}{path}"
+            headers = {"Authorization": f"Bearer {token or self.api_token}"}
+        return http(method, url, headers=headers, body=body)
+
     def gitlab(self, method, path, body=None, token=None):
         """A GitLab API call that is expected to work."""
-        status, parsed = http(
-            method,
-            f"{self.gitlab_api}{path}",
-            headers={"PRIVATE-TOKEN": token or self.gitlab_token},
-            body=body,
-        )
+        status, parsed = self.request("gitlab", path, method, body, token)
         if not 200 <= status < 300:
             raise SystemExit(f"GitLab {method} {path}: {status} {parsed}")
         return parsed
+
+    def api(self, path):
+        """An authenticated call to the autograder's own API."""
+        status, parsed = self.request("autograder", path)
+        assert status == 200, f"GET {path}: {status} {parsed}"
+        return parsed
+
+    def request_until(self, target, path, *, until, method="GET", body=None,
+                      token=None, timeout=60, interval=0.5):
+        """A call that is expected to work once `until(status, parsed)` holds."""
+        deadline = time.monotonic() + timeout
+        status, parsed = None, None
+        while time.monotonic() < deadline:
+            status, parsed = self.request(target, path, method, body, token)
+            if until(status, parsed):
+                if not 200 <= status < 300:
+                    raise SystemExit(f"{target} {method} {path}: {status} {parsed}")
+                return parsed
+            time.sleep(interval)
+        raise SystemExit(f"{target} {method} {path} still {status} after {timeout}s: {parsed}")
 
 
 class Context:
@@ -157,6 +182,8 @@ class Context:
         to repeat. The only thing it will not do for you is generate the SSH key."""
         self.cfg = cfg
         self.gitlab = cfg.gitlab # for convenience
+        self.api = cfg.api
+        self.request_until = cfg.request_until
         self.projects = []
         # Last submission this scenario produced, so a failure can show its report.
         self.submission_id = None
@@ -247,16 +274,6 @@ class Context:
         self.group_id = group["id"]
         self.pusher_id = user["id"]
 
-    def api(self, path):
-        """An authenticated call to the autograder's own API."""
-        status, parsed = http(
-            "GET",
-            f"{self.cfg.autograder_api}{path}",
-            headers={"Authorization": f"Bearer {self.cfg.api_token}"},
-        )
-        assert status == 200, f"GET {path}: {status} {parsed}"
-        return parsed
-
     def create_project(self, slug):
         """An empty project in the configured namespace, with a push webhook
         pointing at the autograder.."""
@@ -282,17 +299,19 @@ class Context:
         # Seeded by the autograder, so that `main` exists before the pusher gets
         # near it. Done as the autograder rather than as admin to prove it holds
         # the access it needs on a real project.
-        self.gitlab(
-            "POST",
+        self.request_until(
+            "gitlab",
             f"/projects/{project['id']}/repository/commits",
-            {
+            method="POST",
+            token=self.cfg.autograder_token,
+            body={
                 "branch": "main",
                 "commit_message": "Initial commit",
                 "actions": [
                     {"action": "create", "file_path": "README.md", "content": f"{name}\n"}
                 ],
             },
-            token=self.cfg.autograder_token,
+            until=lambda status, _: status != 404,
         )
 
         # A student can push to its own repository and nothing else, so the pusher
@@ -345,36 +364,39 @@ class Context:
     def wait_for_submission(self, sha, timeout=120):
         """The submission the autograder registered for this commit, which is
         the direct evidence that the webhook arrived."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            found = self.api(f"/submission?source_kind=gitlab&commit_hash={sha}")["items"]
-            if found:
-                self.submission_id = found[0]["submission_id"]
-                print(f"    submission {self.submission_id}")
-                return self.submission_id
-            time.sleep(3)
-        raise AssertionError(
-            f"no submission was registered for {sha[:12]} within {timeout}s: the "
-            "webhook never arrived"
-        )
+        found = self.request_until(
+            "autograder",
+            f"/submission?source_kind=gitlab&commit_hash={sha}",
+            until=lambda status, data: status == 200 and data["items"],
+            timeout=timeout,
+            interval=3,
+        )["items"]
+        self.submission_id = found[0]["submission_id"]
+        print(f"    submission {self.submission_id}")
+        return self.submission_id
 
     def wait_for_status(self, project, sha, timeout=600):
         """Blocks until GitLab carries a terminal commit status, which only
         happens once the autograder has reported back."""
-        deadline = time.monotonic() + timeout
         last = None
-        while time.monotonic() < deadline:
-            statuses = self.gitlab(
-                "GET", f"/projects/{project['id']}/repository/commits/{sha}/statuses"
-            )
-            status = max(statuses, key=lambda s: s["id"]) if statuses else None
-            if status and status["status"] != last:
-                last = status["status"]
-                print(f"    status: {last}")
-            if last in TERMINAL_STATUSES:
-                return last
-            time.sleep(5)
-        raise AssertionError(f"commit {sha[:12]} stuck at {last or 'no status'} after {timeout}s")
+
+        def until(_status, data):
+            nonlocal last
+            if data:
+                status = max(data, key=lambda s: s["id"])["status"]
+                if status != last:
+                    last = status
+                    print(f"    status: {last}")
+            return last in TERMINAL_STATUSES
+
+        self.request_until(
+            "gitlab",
+            f"/projects/{project['id']}/repository/commits/{sha}/statuses",
+            until=until,
+            timeout=timeout,
+            interval=5,
+        )
+        return last
 
     def files_from(self, source, prefix):
         """A directory tree, relative to the repository root, as `push` wants

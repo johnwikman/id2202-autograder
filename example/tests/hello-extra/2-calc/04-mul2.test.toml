@@ -2,5 +2,4 @@ description = "Multiplication with larger numbers"
 
 [test.options]
 args = ["calc", "mul", "5", "7"]
-code = [0]
 stdout = ["35"]
