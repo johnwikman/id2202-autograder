@@ -50,13 +50,12 @@ def main():
     args = parser.parse_args()
 
     cfg = harness.Config.load(args.settings)
-    harness.ensure_setup(cfg)
+    ctx = harness.Context(cfg)
 
     failures = []
     for name in args.scenario or names:
         module = names[name]
         print(f"{name}: {module.__doc__.strip()}", flush=True)
-        ctx = harness.Context(cfg)
         started = time.monotonic()
         error = None
         try:

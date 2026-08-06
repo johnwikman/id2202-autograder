@@ -37,17 +37,14 @@ Now we can run the autograder using the provided reference `compose.yaml`.
 
 ### First time usage
 
-Create the necessary directories that will be mounted in the docker containers:
-
 ```sh
-mkdir -p data/containers data/log data/postgres data/ssh
-```
+# Create the necessary directories that will be mounted in the docker
+# containers:
+just setup-dirs
 
-Create the SSH keys that will be used to authenticate against the
-GitLab/GitHub instance (the autograder is configured to look for a file with
-the name `id_ed25519` in `compose.yaml`):
-
-```sh
+# Create the SSH keys that will be used to authenticate against the
+# GitLab/GitHub instance (the autograder is configured to look for a file with
+# the name `id_ed25519` in `compose.yaml`):
 ssh-keygen -t ed25519 -f data/ssh/id_ed25519 -N "" -C "id2202-autograder"
 sudo chown root:root data/ssh/id_ed25519*
 
@@ -55,24 +52,17 @@ sudo chown root:root data/ssh/id_ed25519*
 # (requires that the remote hosts are accessible)
 sudo docker compose run --rm --no-deps autograder \
     /autograder/target/release/entrypoint --settings /mnt/example/settings.toml verify-ssh-hosts
-```
 
-Start the postgres database and initialize the schema:
-
-```sh
 # Start the postgres instance
 sudo docker compose up -d postgres
 
-# Run the diesel migration which will initialize the tables
-# (Replace "ChangeMe" in DATABASE_URL when changing the postgres password in compose.yaml)
+# Run the diesel migration which will initialize the tables (Replace "ChangeMe"
+# in `DATABASE_URL` when changing the postgres password in `compose.yaml`)
 sudo docker compose run --rm \
     -e "DATABASE_URL=postgres://autograder:ChangeMe@postgres/autograder" \
     autograder diesel migration run
-```
 
-Start the autograder:
-
-```sh
+# Start the autograder
 sudo docker compose up -d autograder
 
 # It will take some time (~10 minutes) for the autograder to start since it
@@ -181,10 +171,12 @@ cargo build
 cargo install diesel_cli --no-default-features --features "postgres"
 ```
 
-### Dev Workflow
+### Development and Testing Workflow
 
 Development is best done by running the rust code on the host environment. The
-following steps will set up the development environment:
+steps below will set up the development environment. Furthermore, here we also
+assume access to the `dotenv` utility, as well as a more recent version of
+`basenc` that has support for `--base58`.
 
 ```sh
 # Setup docker compose directories
@@ -195,12 +187,17 @@ just setup-dirs
 # For safety's sake, the auth tokens are placed here as well to avoid it
 # being committed to the repository by mistake. Replace <github_token> by your
 # personal access token for the GitHub instance you are testing on. The same
-# goes for the GitLab tokens.
-cat <<EOF > .env
-DATABASE_URL=postgres://autograder:ChangeMe@localhost/autograder
-AUTOGRADER_GITHUB_AUTH_TOKENS=<domain>=<github_token>
-AUTOGRADER_GITLAB_AUTH_TOKENS=<domain>=<gitlab_token>
-EOF
+# goes for the GitLab tokens when deploying to production.
+touch .env
+dotenv set DATABASE_URL "postgres://autograder:ChangeMe@localhost/autograder"
+dotenv set AUTOGRADER_GITHUB_AUTH_TOKENS "<domain>=<github_token>"
+
+# Also, if using the GitLab test framework, it's necessary to add the following
+# variables to the .env file (randomly generated tokens and passwords)
+dotenv set GITLAB_ROOT_TOKEN "glpat-$(head -c 16 /dev/random | basenc --base58)"
+dotenv set GITLAB_AUTOGRADER_TOKEN "glpat-$(head -c 16 /dev/random | basenc --base58)"
+dotenv set GITLAB_AUTOGRADER_PASSWORD "glpat-$(head -c 8 /dev/random | basenc --base58)"
+dotenv set AUTOGRADER_GITLAB_AUTH_TOKENS "localhost:8929=$(dotenv get GITLAB_AUTOGRADER_TOKEN)"
 
 # Start the database
 sudo docker compose up -d --remove-orphans postgres
@@ -217,15 +214,14 @@ populated:
 ./target/debug/entrypoint -s example/settings.toml verify-ssh-hosts
 ```
 
-To start a local instance of the autograder:
+To start a local instance of the autograder (unreachable from external hosts):
 
 ```sh
-# Ensures that the GitHub token is available to the autograder
+# Ensures that the GitHub/GitLab tokens is available to the autograder
 export $(cat .env)
-
-# Start the autograder
 ./target/debug/entrypoint -s example/settings.toml start
 ```
+
 
 ### Notes on Setting Up The GitLab Instance
 

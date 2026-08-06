@@ -31,28 +31,62 @@ test-basic:
 # Run the GitLab test suite against an already running stack. Optionally takes
 # the names of the scenarios to run. See misc/test_gitlab/__main__.py.
 test-gitlab *SCENARIOS:
-    python3 -m misc.test_gitlab {{SCENARIOS}}
+    dotenv run python3 -m misc.test_gitlab {{SCENARIOS}}
 
-# Sync GitLab's access tokens with the values in .env, so that they survive a
-# recreation of the GitLab instance. The test suite needs admin_mode to create
-# its own user; the autograder deliberately gets a plain non-admin token.
-setup-gitlab-tokens:
+# Sets up the GitLab instance with an autograder user, together with API tokens
+# for the autograder user and the root user. The following environment
+# variables should be set inside the .env file:
+#  - `GITLAB_ROOT_TOKEN`: API token for the root user
+#  - `GITLAB_AUTOGRADER_TOKEN`: API token for autograder user
+#  - `GITLAB_AUTOGRADER_PASSWORD`: password for autograder user
+setup-gitlab:
     #!/usr/bin/env bash
     set -euo pipefail
-    source .env
+    export $(cat .env)
     sudo docker compose exec -T \
       -e ROOT_TOKEN="${GITLAB_ROOT_TOKEN}" \
       -e AUTOGRADER_TOKEN="${GITLAB_AUTOGRADER_TOKEN}" \
+      -e AUTOGRADER_PASSWORD="${GITLAB_AUTOGRADER_PASSWORD}" \
       gitlab gitlab-rails runner '
-        def sync(username, scopes, value)
-          u = User.find_by_username(username) or abort("no such GitLab user: #{username}")
-          u.personal_access_tokens.where(name: "id2202").delete_all
-          t = u.personal_access_tokens.create!(scopes: scopes, name: "id2202",
-                                               expires_at: 300.days.from_now)
-          t.set_token(value)
-          t.save!
-          puts "#{username}: ok"
+        TOKEN_NAME = "id2202"
+        VALIDITY = 300.days
+
+        def set_password(u, password)
+          u.password = password
+          u.password_confirmation = password
+          u.password_automatically_set = false
+          u.password_expires_at = nil
+          u.save!
         end
-        sync("root", ["api", "admin_mode"], ENV["ROOT_TOKEN"])
-        sync("autograder", ["api"], ENV["AUTOGRADER_TOKEN"])
+
+        def sync_token(u, scopes, value)
+          existing = PersonalAccessToken.find_by_token(value)
+          if existing && existing.user_id == u.id
+            existing.update!(name: TOKEN_NAME, scopes: scopes, revoked: false,
+                             expires_at: VALIDITY.from_now)
+            puts "#{u.username}: token extended to #{existing.expires_at}"
+          else
+            u.personal_access_tokens.where(name: TOKEN_NAME).delete_all
+            t = u.personal_access_tokens.create!(scopes: scopes, name: TOKEN_NAME,
+                                                 expires_at: VALIDITY.from_now)
+            t.set_token(value)
+            t.save!
+            puts "#{u.username}: token created"
+          end
+        end
+
+        root = User.find_by_username("root") or abort("no such GitLab user: root")
+
+        autograder = User.find_by_username("autograder")
+        if autograder.nil?
+          autograder = User.new(username: "autograder", name: "Autograder",
+                                email: "autograder@localhost")
+          autograder.skip_confirmation!
+          puts "autograder: user created"
+        end
+        set_password(autograder, ENV["AUTOGRADER_PASSWORD"])
+        puts "autograder: password set"
+
+        sync_token(root, ["api", "admin_mode"], ENV["ROOT_TOKEN"])
+        sync_token(autograder, ["api"], ENV["AUTOGRADER_TOKEN"])
       '

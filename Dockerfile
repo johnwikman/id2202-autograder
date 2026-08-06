@@ -1,14 +1,7 @@
-FROM quay.io/podman/stable:v5.6.1
+FROM quay.io/podman/stable:v5.8.2
 
 SHELL [ "/bin/bash", "-c" ]
 WORKDIR /root
-
-# Copy over the repo (except for the Docker files)
-ADD .gitignore README.md LICENSE Cargo.toml build.rs diesel.toml sailfish.toml /autograder/
-ADD diesel    /autograder/diesel
-ADD example   /autograder/example
-ADD src       /autograder/src
-ADD web       /autograder/web
 
 # Install rust
 RUN dnf -y install gcc libpq-devel git file \
@@ -16,6 +9,13 @@ RUN dnf -y install gcc libpq-devel git file \
     && chmod +x rustup.sh \
     && ./rustup.sh -y \
     && rm rustup.sh
+
+# Copy over the repo (except for the Docker files)
+ADD .gitignore README.md LICENSE Cargo.toml Cargo.lock build.rs diesel.toml sailfish.toml /autograder/
+ADD diesel    /autograder/diesel
+ADD example   /autograder/example
+ADD src       /autograder/src
+ADD web       /autograder/web
 
 WORKDIR /autograder
 
