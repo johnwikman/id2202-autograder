@@ -19,8 +19,15 @@ on a different OS.**
 
 For deployment:
 
- * `docker`
- * [`just`](https://github.com/casey/just)
+ * Docker
+ * SSH
+ * [`just`](https://github.com/casey/just) _(optional)_
+
+For development (optional, but recommended):
+
+ * Python (3.11 or later)
+ * `cargo` (Rust build system)
+ * [`dotenv`](https://github.com/theskumar/python-dotenv)
 
 ## Getting Started
 To use the autograder, we will build it as a docker image and run it through
@@ -32,7 +39,7 @@ it requires careful configuration of the docker compose file. See the
 specifically, see the configuration options for `cap_add`, `devices`,
 `security_opt`, `privileged`, and `init`.
 
-We use [`just`] as the command runner. To build
+We use `just` as the command runner. To build
 the docker image:
 
 ```sh
