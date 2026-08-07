@@ -54,7 +54,7 @@ diesel::table! {
         id -> Int8,
         date_submitted -> Timestamp,
         assigned_runner_id -> Nullable<Int4>,
-        grading_tags -> Text,
+        grading_tags -> Array<Text>,
         exec_finished -> Bool,
         exec_status_code -> Int4,
         exec_status_text -> Nullable<Text>,

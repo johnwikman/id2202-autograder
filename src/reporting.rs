@@ -578,6 +578,15 @@ pub struct ReportTagGrading {
 }
 
 impl ReportTagGrading {
+    /// Tags that this tag is derived from. Will return an empty vec if it is
+    /// just itself.
+    fn derivs<'a>(&'a self) -> Vec<&'a String> {
+        self.derived_from
+            .iter()
+            .filter(|d| **d != self.tag_name)
+            .collect()
+    }
+
     /// Generate a JSON blob
     pub fn to_json(&self) -> Result<String, Error> {
         serde_json::to_string(self).map_err(|e| e.into())
@@ -610,7 +619,7 @@ impl ReportTagGrading {
         dst: &mut impl Write,
         details: &mut Vec<DetailsTestFailure>,
     ) -> Result<(), Error> {
-        write!(dst, "## Results for tag `{}`", &self.tag_name)?;
+        write!(dst, "## Results for tag `{}`", self.tag_name)?;
         if settings.markdown.show_indicator_tag_header {
             if self.ok {
                 write!(dst, " ({})", settings.markdown.symbol_ok)?;
@@ -620,12 +629,7 @@ impl ReportTagGrading {
         }
 
         // Check if the tag is derived from a differently named tag group
-        let derivs: Vec<String> = self
-            .derived_from
-            .iter()
-            .filter(|d| **d != self.tag_name)
-            .map(String::to_owned)
-            .collect();
+        let derivs = self.derivs();
         if !derivs.is_empty() {
             write!(
                 dst,
@@ -672,9 +676,10 @@ impl ReportTagGrading {
         escape: bool,
         header_level: usize,
     ) -> Result<(), Error> {
-        if !self.derived_from.is_empty() {
+        let derivs = self.derivs();
+        if !derivs.is_empty() {
             dst.write_str("<p><em>(Derived from ")?;
-            for (i, t) in self.derived_from.iter().enumerate() {
+            for (i, t) in derivs.iter().enumerate() {
                 if i > 0 {
                     dst.write_str(", ")?;
                 }

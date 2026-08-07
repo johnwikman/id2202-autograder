@@ -85,7 +85,7 @@ pub struct Submission {
     pub id: i64,
     pub date_submitted: SystemTime,
     pub assigned_runner_id: Option<i32>,
-    pub grading_tags: String,
+    pub grading_tags: Vec<String>,
     pub exec_finished: bool,
     pub exec_status_code: i32,
     pub exec_status_text: Option<String>,
@@ -105,7 +105,7 @@ pub struct SubmissionWithReport {
     pub id: i64,
     pub date_submitted: SystemTime,
     pub assigned_runner_id: Option<i32>,
-    pub grading_tags: String,
+    pub grading_tags: Vec<String>,
     pub exec_finished: bool,
     pub exec_status_code: i32,
     pub exec_status_text: Option<String>,
@@ -120,7 +120,7 @@ pub struct SubmissionWithReport {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct NewSubmission {
     pub date_submitted: SystemTime,
-    pub grading_tags: String,
+    pub grading_tags: Vec<String>,
     pub exec_finished: bool,
     pub exec_status_code: i32,
     pub source_id: i64,

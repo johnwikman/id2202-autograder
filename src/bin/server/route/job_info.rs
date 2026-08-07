@@ -23,7 +23,7 @@ struct JobInfoTemplate<'a> {
 struct JobInfo<'a> {
     id: i64,
     date_submitted: String,
-    grading_tags: Vec<&'a str>,
+    grading_tags: &'a [String],
     status: String,
     /// ("symbol", "span class")
     status_symbol_and_class: Option<(String, String)>,
@@ -75,7 +75,7 @@ pub async fn get_job_info(
                 id: sub.id,
                 date_submitted: systemtime_to_utc_string(&sub.date_submitted)
                     .unwrap_or("NO_TIME".to_string()),
-                grading_tags: sub.grading_tags.split(";").collect(),
+                grading_tags: &sub.grading_tags,
                 status: SSC::from_i32(sub.exec_status_code)
                     .map_or("Unknown".to_string(), |c| format!("{c}")),
                 status_symbol_and_class: SSC::from_i32(sub.exec_status_code).and_then(

@@ -5,6 +5,7 @@
 
 [print_schema]
 file = "src/db/schema.rs"
+patch_file = "diesel/schema.patch"
 
 [migrations_directory]
 dir = "diesel/migrations"

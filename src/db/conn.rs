@@ -162,7 +162,7 @@ impl DatabaseConnection {
             let sub: Submission = diesel::insert_into(submissions::table)
                 .values(NewSubmission {
                     date_submitted: std::time::SystemTime::now(),
-                    grading_tags: grading_tags.join(";"),
+                    grading_tags: grading_tags.iter().map(|s| s.to_string()).collect(),
                     exec_finished: false,
                     exec_status_code: SubmissionStatusCode::NotStarted as i32,
                     source_id: src.id,
@@ -270,7 +270,7 @@ impl DatabaseConnection {
             let sub: Submission = diesel::insert_into(submissions::table)
                 .values(NewSubmission {
                     date_submitted: std::time::SystemTime::now(),
-                    grading_tags: grading_tags.join(";"),
+                    grading_tags: grading_tags.iter().map(|s| s.to_string()).collect(),
                     exec_finished: false,
                     exec_status_code: SubmissionStatusCode::NotStarted as i32,
                     source_id: src.id,

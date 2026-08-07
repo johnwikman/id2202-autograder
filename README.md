@@ -15,6 +15,13 @@ optional, it simplifies the setup with the database.
 user space programs. Certain aspects of the autograder might break if running
 on a different OS.**
 
+## Dependencies
+
+For deployment:
+
+ * `docker`
+ * [`just`](https://github.com/casey/just)
+
 ## Getting Started
 To use the autograder, we will build it as a docker image and run it through
 docker compose.
@@ -25,7 +32,7 @@ it requires careful configuration of the docker compose file. See the
 specifically, see the configuration options for `cap_add`, `devices`,
 `security_opt`, `privileged`, and `init`.
 
-We use [`just`](https://github.com/casey/just) as the command runner. To build
+We use [`just`] as the command runner. To build
 the docker image:
 
 ```sh
@@ -179,8 +186,8 @@ assume access to the `dotenv` utility, as well as a more recent version of
 `basenc` that has support for `--base58`.
 
 ```sh
-# Setup docker compose directories
-just setup-dirs
+# Setup docker compose directories and SSH keys for testing purposes
+just setup-dirs setup-sshkeys
 
 # Setup .env file (needed by diesel cli)
 #
@@ -191,6 +198,7 @@ just setup-dirs
 touch .env
 dotenv set DATABASE_URL "postgres://autograder:ChangeMe@localhost/autograder"
 dotenv set AUTOGRADER_GITHUB_AUTH_TOKENS "<domain>=<github_token>"
+dotenv set AUTOGRADER_RUNNER_SSH_KEYS "$(pwd)/data/ssh/id_ed25519"
 
 # Also, if using the GitLab test framework, it's necessary to add the following
 # variables to the .env file (randomly generated tokens and passwords)
@@ -207,19 +215,31 @@ sudo docker compose up -d --remove-orphans postgres
 diesel migration run
 ```
 
+If using the example GitLab instance for testing:
+
+```sh
+# Start the gitlab instance
+sudo docker compose up -d gitlab
+
+# Wait until GitLab is up and running (this can take a few minutes).
+until curl -sf -o /dev/null http://localhost:8929/users/sign_in; do sleep 5 && echo -n "."; done; echo
+
+# Setup root account and autograder account
+just setup-gitlab
+```
+
 Also make sure that the `known_hosts` file for the autograder is properly
 populated:
 
 ```sh
-./target/debug/entrypoint -s example/settings.toml verify-ssh-hosts
+dotenv run ./target/debug/entrypoint -s example/settings.toml verify-ssh-hosts
 ```
 
 To start a local instance of the autograder (unreachable from external hosts):
 
 ```sh
 # Ensures that the GitHub/GitLab tokens is available to the autograder
-export $(cat .env)
-./target/debug/entrypoint -s example/settings.toml start
+dotenv run ./target/debug/entrypoint -s example/settings.toml start
 ```
 
 
@@ -254,6 +274,5 @@ configure that the server listens on IP address `0.0.0.0` (otherwise
 inaccessible from the docker container):
 
 ```sh
-export $(cat .env)
-AUTOGRADER_SERVER_ADDRESS=0.0.0.0 ./target/debug/entrypoint -s example/settings.toml start
+AUTOGRADER_SERVER_ADDRESS=0.0.0.0 dotenv run --override ./target/debug/entrypoint -s example/settings.toml start
 ```

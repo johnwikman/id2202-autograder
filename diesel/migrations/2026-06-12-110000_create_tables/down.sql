@@ -3,3 +3,4 @@ DROP TABLE IF EXISTS "submission_info_github";
 DROP TABLE IF EXISTS "submission_source_github";
 DROP TABLE IF EXISTS "submissions";
 DROP TABLE IF EXISTS "submission_sources";
+DROP FUNCTION IF EXISTS array_is_distinct(text[]);

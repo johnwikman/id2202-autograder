@@ -138,7 +138,7 @@ impl SubmitResponse {
 pub struct SubmissionResponse<'a> {
     path: String,
     submission_id: i64,
-    grading_tags: Vec<&'a str>,
+    grading_tags: &'a [String],
     finished: bool,
     successful: Option<bool>,
     #[schema(value_type = String, format = DateTime)]
@@ -166,7 +166,7 @@ impl<'a> SubmissionResponse<'a> {
         SubmissionResponse {
             path: req.path().to_string(),
             submission_id: sub.id,
-            grading_tags: sub.grading_tags.split(";").collect(),
+            grading_tags: &sub.grading_tags,
             finished: sub.exec_finished,
             successful: if sub.exec_finished {
                 SSC::from_i32(sub.exec_status_code).map(|c| c == SSC::Success)
@@ -257,7 +257,7 @@ impl<'a> SubmissionSearchResponse<'a> {
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct SubmissionSearchResponseItem<'a> {
     submission_id: i64,
-    grading_tags: Vec<&'a str>,
+    grading_tags: &'a [String],
     finished: bool,
     #[schema(value_type = String, format = DateTime)]
     date_submitted: &'a SystemTime,
@@ -272,7 +272,7 @@ impl<'a> SubmissionSearchResponseItem<'a> {
     ) -> Self {
         SubmissionSearchResponseItem {
             submission_id: sub.id,
-            grading_tags: sub.grading_tags.split(";").collect(),
+            grading_tags: &sub.grading_tags,
             finished: sub.exec_finished,
             date_submitted: &sub.date_submitted,
             source: SubmissionResponseSource::new_github(gh_src, gh_info),
@@ -285,7 +285,7 @@ impl<'a> SubmissionSearchResponseItem<'a> {
     ) -> Self {
         SubmissionSearchResponseItem {
             submission_id: sub.id,
-            grading_tags: sub.grading_tags.split(";").collect(),
+            grading_tags: &sub.grading_tags,
             finished: sub.exec_finished,
             date_submitted: &sub.date_submitted,
             source: SubmissionResponseSource::new_gitlab(gl_src, gl_info),

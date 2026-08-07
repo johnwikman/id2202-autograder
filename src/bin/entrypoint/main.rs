@@ -129,7 +129,7 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     log::debug!("Checking that the podman image exists");
     let podimgs = podman::images().unwrap();
     if !podimgs.contains(&s.runner.podman_image) {
-        log::info!("Pulling the runner image {}", &s.runner.podman_image);
+        log::info!("Pulling the runner image {}", s.runner.podman_image);
         podman::pull(&s.runner.podman_image).unwrap();
     }
     log::debug!("Checking that the podman networks exists for each runner");
@@ -284,7 +284,7 @@ fn validate_settings(
             println!(
                 "{} - {}",
                 std::iter::repeat_n(" ", indent).collect::<String>(),
-                &tg.title
+                tg.title
             );
             for sg in tg.subgroups.iter() {
                 recursively_print(sg, indent + 4);

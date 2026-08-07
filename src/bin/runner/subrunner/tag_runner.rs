@@ -284,7 +284,7 @@ impl<'a> TagRunner<'a> {
         if self.build_result.is_some() {
             return Error::err_runtime(format!(
                 "Attempted to build project twice for tag \"{}\"",
-                &self.tag_name
+                self.tag_name
             ));
         }
 

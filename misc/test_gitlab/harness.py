@@ -188,13 +188,6 @@ class Context:
         # Last submission this scenario produced, so a failure can show its report.
         self.submission_id = None
 
-        # Without this GitLab refuses to deliver webhooks to the host.
-        self.gitlab(
-            "PUT",
-            "/application/settings",
-            {"allow_local_requests_from_web_hooks_and_services": True},
-        )
-
         groups = self.gitlab("GET", f"/groups?search={urllib.parse.quote(cfg.namespace)}")
         group = next((g for g in groups if g["full_path"] == cfg.namespace), None)
         if group is None:

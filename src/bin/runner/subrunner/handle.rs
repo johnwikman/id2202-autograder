@@ -151,11 +151,11 @@ impl<'a> SubmissionRunnerHandle<'a> {
 
         // Step 3: Collect the tags to grade
         log::debug!(
-            "Collecting grading tag information from {}",
+            "Collecting grading tag information from {:?}",
             sub.grading_tags
         );
         let mut tag_runners: BTreeMap<String, TagRunner> = BTreeMap::new();
-        for t in sub.grading_tags.split(";") {
+        for t in &sub.grading_tags {
             match tests.tag_groups.get(t) {
                 Some(vec_tag) => {
                     for tag in vec_tag {

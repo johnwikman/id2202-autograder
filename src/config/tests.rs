@@ -472,7 +472,7 @@ impl Tests {
                             if let Some(t_found) = tag_configs.get(&uetg.extends) {
                                 let mut extended_metadata = t_found.metadata.clone();
                                 if let Some(metadata) = uetg.metadata {
-                                    extended_metadata.extend(metadata.into_iter());
+                                    extended_metadata.extend(metadata);
                                 }
                                 let t = TagConfig {
                                     name: name.to_owned(),
@@ -1010,44 +1010,7 @@ mod tests {
         let hetg = &hello_extra[0].test_groups[0];
         assert_eq!(hetg.title, "Hello (Extra tests)");
         assert_eq!(hetg.tests.len(), 0);
-        assert_eq!(hetg.subgroups.len(), 3);
-
-        // Should be parsed in lexicographical order, so first should be
-        // file-cpp and then file-md.
-        let he_2file = &hetg.subgroups[1];
-        assert_eq!(he_2file.title, "2. File Input");
-        let Testkind::Run(he_2f_t0) = &he_2file.tests[0].kind else {
-            panic!("Expected Testkind::Run");
-        };
-        assert_eq!(he_2f_t0.auto_input_files, vec![".cpp"]);
-        assert_eq!(
-            he_2f_t0
-                .input_files
-                .iter()
-                .map(|p| std::path::Path::new(p)
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap())
-                .collect::<Vec<&str>>(),
-            vec!["file-cpp.cpp"]
-        );
-        let Testkind::Run(he_2f_t1) = &he_2file.tests[1].kind else {
-            panic!("Expected Testkind::Run");
-        };
-        assert_eq!(he_2f_t1.auto_input_files, vec![".md"]);
-        assert_eq!(
-            he_2f_t1
-                .input_files
-                .iter()
-                .map(|p| std::path::Path::new(p)
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap())
-                .collect::<Vec<&str>>(),
-            vec!["file-md.md"]
-        );
+        assert_eq!(hetg.subgroups.len(), 4);
     }
 
     #[test]

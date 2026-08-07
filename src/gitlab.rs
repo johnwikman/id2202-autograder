@@ -53,7 +53,7 @@ pub async fn create_commit_message(
         .post(format!(
             "{}://{}/api/v4/projects/{}/repository/commits/{}/comments",
             if instance.use_https { "https" } else { "http" },
-            &instance.domain,
+            instance.domain,
             repo_id(namespace, repo_name),
             commit_hash
         ))
@@ -126,7 +126,7 @@ pub async fn set_commit_status(
         .post(format!(
             "{}://{}/api/v4/projects/{}/statuses/{}",
             if instance.use_https { "https" } else { "http" },
-            &instance.domain,
+            instance.domain,
             repo_id(namespace, repo_name),
             commit_hash
         ))

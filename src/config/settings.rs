@@ -480,7 +480,7 @@ impl Settings {
         std::fs::create_dir_all(&self.log.dir).map_err(|e| {
             eprintln!(
                 "Error creating directory {} for the log file: {}",
-                &self.log.dir, e
+                self.log.dir, e
             );
             Error::fs("error creating log file directory", &self.log.dir).with_cause(Box::new(e))
         })?;

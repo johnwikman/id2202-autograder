@@ -33,6 +33,18 @@ test-basic:
 test-gitlab *SCENARIOS:
     dotenv run python3 -m misc.test_gitlab {{SCENARIOS}}
 
+setup-sshkeys:
+    #!/usr/bin/env bash
+    KEYS=( id_ed25519 itest_ed25519 )
+    for key in ${KEYS[@]}; do
+        if [ ! -f data/ssh/$key ]; then
+            ssh-keygen -t ed25519 -N "" -f data/ssh/$key
+            echo -e "created: data/ssh/$key"
+        else
+            echo -e "already exists: data/ssh/$key"
+        fi
+    done
+
 # Sets up the GitLab instance with an autograder user, together with API tokens
 # for the autograder user and the root user. The following environment
 # variables should be set inside the .env file:
@@ -43,6 +55,11 @@ setup-gitlab:
     #!/usr/bin/env bash
     set -euo pipefail
     export $(cat .env)
+    KEY_FILE="data/ssh/id_ed25519.pub"
+    if [[ ! -f "${KEY_FILE}" ]]; then
+      echo "missing ${KEY_FILE}." >&2
+      exit 1
+    fi
     sudo docker compose exec -T \
       -e ROOT_TOKEN="${GITLAB_ROOT_TOKEN}" \
       -e AUTOGRADER_TOKEN="${GITLAB_AUTOGRADER_TOKEN}" \
@@ -75,18 +92,41 @@ setup-gitlab:
           end
         end
 
+        # Without this GitLab refuses to deliver webhooks to the autograder.
+        # (See README.md for more details.)
+        ApplicationSetting.current.update!(outbound_local_requests_whitelist: ["host.docker.internal:8080"])
+        puts "instance: webhooks to the autograder allowed"
+
         root = User.find_by_username("root") or abort("no such GitLab user: root")
 
         autograder = User.find_by_username("autograder")
         if autograder.nil?
-          autograder = User.new(username: "autograder", name: "Autograder",
-                                email: "autograder@localhost")
-          autograder.skip_confirmation!
-          puts "autograder: user created"
+          Users::CreateService.new(nil,
+            username: "autograder", name: "Autograder",
+            email: "autograder@localhost",
+            password: ENV["AUTOGRADER_PASSWORD"],
+            password_confirmation: ENV["AUTOGRADER_PASSWORD"],
+            organization_id: Organizations::Organization.first.id,
+            skip_confirmation: true
+          ).execute
+          autograder = User.find_by_username("autograder") or abort("could not create GitLab user: autograder")
+          puts "autograder: user created and password set"
+        else
+          set_password(autograder, ENV["AUTOGRADER_PASSWORD"])
+          puts "autograder: password set"
         end
-        set_password(autograder, ENV["AUTOGRADER_PASSWORD"])
-        puts "autograder: password set"
 
         sync_token(root, ["api", "admin_mode"], ENV["ROOT_TOKEN"])
         sync_token(autograder, ["api"], ENV["AUTOGRADER_TOKEN"])
       '
+    GITLAB_API="http://localhost:8929/api/v4"
+    if curl -sf -H "PRIVATE-TOKEN: ${GITLAB_AUTOGRADER_TOKEN}" "${GITLAB_API}/user/keys" \
+         | grep -qF "$(cut -d ' ' -f2 "${KEY_FILE}")"; then
+      echo "autograder: SSH key already registered"
+    else
+      curl -sf -H "PRIVATE-TOKEN: ${GITLAB_AUTOGRADER_TOKEN}" \
+        --data-urlencode "title=id2202 itest" \
+        --data-urlencode "key=$(cat "${KEY_FILE}")" \
+        "${GITLAB_API}/user/keys" && echo
+      echo "autograder: SSH key registered"
+    fi

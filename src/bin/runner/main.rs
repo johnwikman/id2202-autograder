@@ -500,7 +500,7 @@ fn record_to_shadow(
     for tr in tag_runners {
         // Create the report
         let report = tr.results_report();
-        let content_path = path_absolute_join(&date_dir, format!("{}.results.json", &tr.tag_name))?;
+        let content_path = path_absolute_join(&date_dir, format!("{}.results.json", tr.tag_name))?;
         let mut f = std::fs::File::create(content_path)?;
         write_all_timeout(
             &mut f,
