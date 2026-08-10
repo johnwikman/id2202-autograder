@@ -12,7 +12,7 @@ use derive_more::derive::{Display, Error};
 use num_traits::FromPrimitive;
 
 use id2202_autograder::{
-    config::{Tag, TagBuildConfig, Tests},
+    config::{BuildConfig, Tag, Tests},
     db::models::{
         Submission, SubmissionInfoGitHub, SubmissionInfoGitLab, SubmissionSourceGitHub,
         SubmissionSourceGitLab, SubmissionWithReport,
@@ -303,7 +303,7 @@ pub struct TagListResponse {
 
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct TagListDetails {
-    build: TagBuildConfig,
+    build: BuildConfig,
     /// Arbitrary tag metadata, opaque to the autograder.
     #[schema(value_type = Object)]
     metadata: BTreeMap<String, serde_json::Value>,

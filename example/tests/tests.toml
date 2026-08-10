@@ -1,27 +1,31 @@
 # Default values
-[default]
-timeout_build = 60   # Timeout for building the project
-timeout_test = 60    # Timeout for a single test case
+[default.tag]
 timeout_total = 1200 # Timeout for a tag
+
+[default.build]
+srcdir = "."
+cmd = ["make"]
+timeout = 60         # Timeout for building the project
 max_output = 4194304 # Maximum length of captured output (4 MiB)
-truncate_len = 2000  # Truncate captured output that exceeds this many characters
-shown_failures = 3   # Number of failed tests that should be revealed to the user.
-build_cmd = ["make"]
-build_prohibit_binary_files = true
-build_allowed_binary_files = ["regalloc.pdf", "liveness.pdf"]
-build_allowed_binary_mimetypes = [
+prohibit_binary_files = true
+allowed_binary_files = ["regalloc.pdf", "liveness.pdf"]
+allowed_binary_mimetypes = [
     "application/pdf",
     "application/javascript",
     "application/json",
 ]
 
+[default.test]
+timeout = 60         # Timeout for a single test case
+max_output = 4194304 # Maximum length of captured output (4 MiB)
+kind = "run"         # Default test kind to use
+
 # Default configuration for test kinds
 # (These can be overidden by specific tests, if you want the compilation
 # process to fail, etc.)
-[default.kind.run]
+[default.test.kinds.run]
 bin = "cigrid"
 args = []
-stdin = ""
 stdin_ignore = true
 code = [0]
 stdout = []
@@ -33,11 +37,21 @@ stderr_strip_whitespace = false
 input_files = []
 auto_input_files = [".cpp"]
 
+[default.test.kinds.run_verifier]
+bin = "cigrid"
+args = []
+stdin_ignore = true
+input_files = []
+auto_input_files = [".cpp"]
+verifier_path = "path_to_verifier_script"
+verifier_params = {}
+verifier_param_schema = {}
+verifier_timeout = 60
+
 # Note: ASM is generated to stdout. So it will never be ignored
-[default.kind.gen_asm_and_run]
+[default.test.kinds.gen_asm_and_run]
 bin = "cigrid"
 args = ["--asm"]
-stdin = ""
 stdin_ignore = true
 code = [0]
 stderr = []
@@ -53,7 +67,6 @@ compile_cmd = ["gcc", "-no-pie", "a.o", "-o", "a.out"]
 compile_code = [0]
 # Defaults for running the generated binary
 run_cmd = ["./a.out"]
-run_stdin = ""
 run_stdin_ignore = true
 run_code = [0]
 run_stdout = []
@@ -63,9 +76,8 @@ run_stderr = []
 run_stderr_trim = true
 run_stderr_strip_whitespace = false
 
-[default.kind.check_file_exists]
+[default.test.kinds.check_file_exists]
 path = ""
-mimetype_prefix = ""
 mimetype_prefix_ignore = true
 
 # The test tags are specified below. Note that the source files are built once

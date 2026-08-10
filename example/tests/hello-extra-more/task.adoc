@@ -3,6 +3,8 @@ Hello (Extra) - Extended with more tests
 
 This extends the `hello-extra` tag with more functionality.
 
+==== `./hello-extra calc div LHS RHS`
+
 Now the `./hello-extra calc` mode must also support the `div` operator. It
 should follow the same principle as the previous operators, but it must also
 catch division by 0 errors and exit with return code 1 then.
@@ -21,6 +23,33 @@ Example:
 4
 # stderr/stdout is ignored here
 > ./hello-extra calc div 1 0
+> echo $?
+1
+----
+
+
+==== `./hello-extra factorize NUMBER`
+
+A new subcommand `factorize` must be implemented, which factorizes an integer
+into its prime factors an prints it out. If the integer is negative, it should
+also print out a single -1 as a factor of that number. If the provided NUMBER
+argument is not a valid integer non-zero integer, the program should exit with
+code 1. Otherwise the program should exit with code 0 and print the factors in
+a space separated list.
+
+Example:
+
+[source,bash]
+----
+> ./hello-extra factorize 10
+5 2
+# Order does not matter
+> ./hello-extra factorize 12
+2 3 2
+> ./hello-extra factorize -1260
+2 -1 2 3 5 3 7
+# stderr/stdout is ignored here
+> ./hello-extra factorize 1.5
 > echo $?
 1
 ----

@@ -83,12 +83,18 @@ podman_network_prefix = "id2202_runnernet"
 mount_repo = "/id2202/repo"
 mount_tests = "/id2202/tests"
 
+podman_verifier_image = "localhost/id2202-autograder-verifier:2.0.0-dev4"
+mount_verifiers = "/id2202/verifiers"
+
 workspace_dir = "./data/workspace" # storage for data currently being worked on
 shadow_dir = "./data/shadow"       # storage for submitted solutions
 test_config = "./tests/tests.toml" # configuration for test cases
 
 ssh_keys = []                              # empty means the default SSH configuration
 ssh_known_hosts = "./data/ssh/known_hosts" # host keys of the submission sources
+
+[reporting]
+shown_failures = 3 # Number of failed tests that should be revealed to the user.
 
 # Settings for markdown output during reporting.
 [reporting.markdown]

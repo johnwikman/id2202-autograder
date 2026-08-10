@@ -1,7 +1,14 @@
+[workspace]
+members = ["macros"]
+
+[workspace.package]
+version = "2.0.0-dev4"
+
 [package]
 name = "id2202_autograder"
-version = "2.0.0-dev4"
+version.workspace = true
 edition = "2021"
+rust-version = "1.88" # minimum version
 
 [features]
 # Enables the `docgen` binary and its (heavy) syntax-highlighting dependencies.
@@ -21,6 +28,7 @@ required-features = ["docs"]
 actix-web = "4.14.0"
 actix-web-static-files = { version = "4.1.1", features = ["static-files-03"] }
 asserting = "0.14.0"
+base64 = "0.22.1"
 bs58 = "0.5.1"
 chrono = "0.4.45"
 clap = { version = "4.6.1", features = ["derive"] }
@@ -31,6 +39,7 @@ dircpy = "0.3.20"
 fern = "0.7.1"
 hex = "0.4.3"
 hmac = "0.13.0"
+id2202_autograder_macros = { path = "macros" }
 itertools = "0.15.0"
 json = "0.12.4"
 log = "0.4.33"

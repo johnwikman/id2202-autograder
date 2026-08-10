@@ -1,0 +1,3 @@
+[test.options]
+args = ["factorize", "1.5"]
+verifier_params.expect_fail = true

@@ -8,6 +8,7 @@ pub use settings::{
 };
 
 pub use tests::{
-    tag_is_valid, tag_match, Tag, TagBuildConfig, Test, TestDefault, TestGroup, Testkind, Tests,
-    TestsLoadingOptions,
+    group::{Test, TestConfig, TestGroup},
+    tag::{tag_is_valid, tag_match, BuildConfig, Tag},
+    Tests, TestsLoadingOptions,
 };

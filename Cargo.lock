@@ -1640,6 +1640,7 @@ dependencies = [
  "fern",
  "hex",
  "hmac",
+ "id2202_autograder_macros",
  "itertools",
  "json",
  "log",
@@ -1671,6 +1672,15 @@ dependencies = [
  "url",
  "utoipa",
  "v_htmlescape",
+]
+
+[[package]]
+name = "id2202_autograder_macros"
+version = "2.0.0-dev4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

@@ -1,14 +1,17 @@
 use documented::{Documented, DocumentedFields};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_value::Value as SerdeValue;
+use serde::Deserialize;
 use smart_default::SmartDefault;
 use std::collections::BTreeMap;
 
-use crate::{
-    error::Error,
-    utils::{path_absolute_join, path_absolute_parent, path_join, single_linefeed_to_space},
-};
+use crate::{error::Error, utils::path_absolute_parent};
+
+pub mod group;
+pub mod kind;
+pub mod tag;
+
+use group::TestConfig;
+use tag::{BuildConfig, Tag, TagDefaults};
 
 /// The test system operates in two phases: **build** and **test**. First, the
 /// submitted code is compiled inside a container using a configured build
@@ -68,328 +71,21 @@ use crate::{
 #[derive(Debug, Clone, Documented)]
 #[documented(trim = false)]
 pub struct Tests {
-    pub default: TestDefault,
+    pub default: Defaults,
     pub tag_groups: BTreeMap<String, Vec<Tag>>,
 }
 
 /// Global defaults inherited by all tags and test cases unless overridden.
 #[derive(Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
-pub struct TestDefault {
-    /// Default build timeout in seconds.
-    pub timeout_build: u32,
+pub struct Defaults {
+    /// Defaults applying to a tag as a whole.
+    pub tag: TagDefaults,
 
-    /// Default per-test-case timeout in seconds.
-    pub timeout_test: u32,
+    /// Defaults for the build phase.
+    pub build: BuildConfig,
 
-    /// Total timeout for an entire tag, in seconds.
-    pub timeout_total: u32,
-
-    /// Maximum captured output on stdout and stderr for a test case,
-    /// in bytes.
-    pub max_output: usize,
-
-    /// Truncate displayed output beyond this many characters.
-    pub truncate_len: usize,
-
-    /// Number of failed tests revealed to the student.
-    pub shown_failures: usize,
-
-    /// Default build command.
-    pub build_cmd: Vec<String>,
-
-    /// If `true`, the solution directory may not contain any binary
-    /// files; every file has to be text.
-    pub build_prohibit_binary_files: bool,
-
-    /// Binary filenames exempt from the prohibition, e.g. a
-    /// PDF or `.docx` that is a required part of the submission.
-    pub build_allowed_binary_files: Vec<String>,
-
-    /// Additional MIME types not beginning with `text/` that
-    /// are allowed regardless.
-    pub build_allowed_binary_mimetypes: Vec<String>,
-
-    /// Per-test-kind default option values, documented separately per kind, so
-    /// they are kept out of this schema (and so out of the table below).
-    #[schemars(skip)]
-    pub kind: TestkindDefault,
-}
-
-/// Execute a binary and check its output.
-#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
-pub struct TestkindRun {
-    /// Binary to execute.
-    pub bin: String,
-    /// Command-line arguments.
-    pub args: Vec<String>,
-    /// Data piped to stdin.
-    pub stdin: String,
-    /// If true, stdin is not provided.
-    pub stdin_ignore: bool,
-    /// Acceptable exit codes.
-    pub code: Vec<i32>,
-    /// Expected stdout lines.
-    pub stdout: Vec<String>,
-    /// Trim whitespace from each line before comparing.
-    pub stdout_trim: bool,
-    /// Strip all whitespace before comparing.
-    pub stdout_strip_whitespace: bool,
-    /// Expected stderr lines.
-    pub stderr: Vec<String>,
-    /// Trim whitespace from each stderr line.
-    pub stderr_trim: bool,
-    /// Strip all whitespace from stderr.
-    pub stderr_strip_whitespace: bool,
-    /// Files to copy into the container.
-    pub input_files: Vec<String>,
-
-    /// Suffixes for automatically discovering input files,
-    /// e.g. `[".cpp"]`.
-    pub auto_input_files: Vec<String>,
-}
-
-impl TestkindRun {
-    const IDENT: &'static str = "run";
-}
-
-/// Multi-stage pipeline: run the student binary to generate an assembly file,
-/// assemble it, compile it, then run the compiled binary. The output from each
-/// stage is checked along the way, only proceeding to the next stage if the
-/// previous one was successful.
-#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
-pub struct TestkindGenASMAndRun {
-    /// Binary to execute to produce the assembly.
-    pub bin: String,
-    /// Arguments.
-    pub args: Vec<String>,
-    /// Data piped to stdin.
-    pub stdin: String,
-    /// If true, stdin is not provided.
-    pub stdin_ignore: bool,
-    /// Acceptable exit codes.
-    pub code: Vec<i32>,
-    /// Expected stderr lines.
-    pub stderr: Vec<String>,
-    /// Trim stderr lines.
-    pub stderr_trim: bool,
-    /// Strip all whitespace from stderr.
-    pub stderr_strip_whitespace: bool,
-    /// Files to copy into the container.
-    pub input_files: Vec<String>,
-    /// Suffixes for automatically discovering input files,
-    /// e.g. `[".cpp"]`.
-    pub auto_input_files: Vec<String>,
-
-    /// Assembler command. `<ASM_FILE>` is replaced with the
-    /// path of the generated assembly file.
-    pub assemble_cmd: Vec<String>,
-    /// Acceptable assembler exit codes.
-    pub assemble_code: Vec<i32>,
-
-    /// Compiler/linker command.
-    pub compile_cmd: Vec<String>,
-    /// Acceptable compiler exit codes.
-    pub compile_code: Vec<i32>,
-
-    /// Command to run the compiled binary.
-    pub run_cmd: Vec<String>,
-    /// Data piped to stdin of the compiled binary.
-    pub run_stdin: String,
-    /// If true, stdin is not provided.
-    pub run_stdin_ignore: bool,
-    /// Acceptable exit codes.
-    pub run_code: Vec<i32>,
-    /// Expected stdout lines.
-    pub run_stdout: Vec<String>,
-    /// Trim stdout lines.
-    pub run_stdout_trim: bool,
-    /// Strip all whitespace from stdout.
-    pub run_stdout_strip_whitespace: bool,
-    /// Expected stderr lines.
-    pub run_stderr: Vec<String>,
-    /// Trim stderr lines.
-    pub run_stderr_trim: bool,
-    /// Strip all whitespace from stderr.
-    pub run_stderr_strip_whitespace: bool,
-}
-
-impl TestkindGenASMAndRun {
-    const IDENT: &'static str = "gen_asm_and_run";
-}
-
-/// Verify that a file exists, optionally checking its MIME type.
-#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
-pub struct TestkindCheckFileExists {
-    /// Path to the file (relative to the repository root).
-    pub path: String,
-    /// Required MIME type prefix, e.g. `application/pdf`.
-    pub mimetype_prefix: String,
-    /// If true, the MIME type is not checked.
-    pub mimetype_prefix_ignore: bool,
-}
-
-impl TestkindCheckFileExists {
-    const IDENT: &'static str = "check_file_exists";
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct TestkindDefault {
-    pub run: TestkindRun,
-    pub gen_asm_and_run: TestkindGenASMAndRun,
-    pub check_file_exists: TestkindCheckFileExists,
-}
-
-impl TestkindDefault {
-    /// Returns the set of default toml values associated with the kind
-    /// identifier.
-    fn toml_from_ident(&self, ident: &str) -> Result<toml::Table, Error> {
-        match ident {
-            TestkindRun::IDENT => toml::Table::try_from(&self.run).map_err(Error::from),
-            TestkindGenASMAndRun::IDENT => {
-                toml::Table::try_from(&self.gen_asm_and_run).map_err(Error::from)
-            }
-            TestkindCheckFileExists::IDENT => {
-                toml::Table::try_from(&self.check_file_exists).map_err(Error::from)
-            }
-            _ => Error::err_identifier(
-                ident,
-                vec![
-                    TestkindRun::IDENT.to_string(),
-                    TestkindGenASMAndRun::IDENT.to_string(),
-                    TestkindCheckFileExists::IDENT.to_string(),
-                ],
-            ),
-        }
-    }
-}
-
-/// Enum for representing test kinds.
-#[derive(Debug, Clone)]
-pub enum Testkind {
-    Run(TestkindRun),
-    GenASMAndRun(TestkindGenASMAndRun),
-    CheckFileExists(TestkindCheckFileExists),
-}
-
-impl Testkind {
-    /// Automatically discover input files for a test kind. Will look for files
-    /// located in `dir` and which has the matching prefix `prefix`. The actual
-    /// criteria for automatically discovering a file is specified for each
-    /// testkind using the `auto_input_files` field if present.
-    fn auto_discover_input_files(&mut self, dir: &str, prefix: &str) -> Result<(), Error> {
-        /// Finds input files for the test case based on prefix matching.
-        fn find_input_files(
-            input_files: &mut Vec<String>,
-            auto_input_files: &[String],
-            dir: &str,
-            prefix: &str,
-        ) -> Result<(), Error> {
-            // First ensure that any files specified are preserved, and
-            // converted to absolute paths relative to this dir.
-            for f in input_files.iter_mut() {
-                *f = path_join(dir, &f)?;
-            }
-            let contents = std::fs::read_dir(dir).map_err(|e| {
-                Error::fs("listing files for auto discovery", dir).with_cause(Box::new(e))
-            })?;
-            for entry in contents {
-                let filename = entry?
-                    .file_name()
-                    .to_str()
-                    .map(String::from)
-                    .ok_or_else(|| {
-                        Error::convert("Couldn't get string representation of DirEntry")
-                    })?;
-                for suffix in auto_input_files {
-                    if let Some((p, "")) = filename.rsplit_once(suffix) {
-                        if p == prefix {
-                            input_files.push(path_join(dir, &filename)?);
-                        }
-                    }
-                }
-            }
-            Ok(())
-        }
-        match self {
-            Self::Run(t) => find_input_files(&mut t.input_files, &t.auto_input_files, dir, prefix),
-            Self::GenASMAndRun(t) => {
-                find_input_files(&mut t.input_files, &t.auto_input_files, dir, prefix)
-            }
-            Self::CheckFileExists(_) => Ok(()),
-        }
-    }
-}
-
-/// Configuration related to building the project for a test tag.
-#[derive(Debug, Clone, Serialize, JsonSchema, utoipa::ToSchema)]
-pub struct TagBuildConfig {
-    /// The source directory that contains the files to build
-    pub srcdir: String,
-
-    /// The command used for building the project once located in the project folder.
-    pub cmd: Vec<String>,
-
-    /// Timeout (in seconds) for building the project.
-    pub timeout: u32,
-
-    /// If this is true, then the runner will give a build error if there are
-    /// any binary files present in the build directory.
-    pub prohibit_binary_files: bool,
-
-    /// If prohibit_binary_files is true, then this specifies a list of
-    /// exceptions. I.e. binary files that should still be allowed.
-    pub allowed_binary_files: Vec<String>,
-
-    /// Additional MIME types that do not begin with `"text/"` that shall be
-    /// allowed regardless.
-    pub allowed_binary_mimetypes: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TagConfig {
-    pub name: String,
-    pub dirs: Vec<String>,
-    pub build: TagBuildConfig,
-    pub metadata: BTreeMap<String, SerdeValue>,
-    pub task_file: Option<String>,
-}
-
-/// A test case to run.
-#[derive(Debug, Clone)]
-pub struct Test {
-    pub name: String,
-    pub description: Option<String>,
-    pub timeout: u32,
-    pub kind: Testkind,
-}
-
-/// A group of test cases to run. Can also involve several subtests.
-#[derive(Debug, Clone)]
-pub struct TestGroup {
-    pub title: String,
-    pub description: Option<String>,
-    pub tests: Vec<Test>,
-    pub subgroups: Vec<TestGroup>,
-}
-
-/// A test tag that can be invoked and graded.
-#[derive(Debug, Clone)]
-pub struct Tag {
-    /// Tag name identifier.
-    pub name: String,
-
-    /// Optional path to a file containing the instructions for the task that
-    /// this is running the test cases for. This is an optional field, and the
-    /// content of this file is opaque to the autograder. If provided, the
-    /// autograder will check that this actually points to a file.
-    pub task_file: Option<String>,
-
-    /// Opaque metadata for the tag. This will never be inspected by the
-    /// autograder.
-    pub metadata: BTreeMap<String, SerdeValue>,
-
-    pub test_groups: Vec<TestGroup>,
-    pub build: TagBuildConfig,
+    /// Defaults for individual test cases.
+    pub test: TestConfig,
 }
 
 /// Options to set when loading tests.
@@ -414,35 +110,9 @@ impl Tests {
         // "Hidden" structs that are only used for deserialization
         #[derive(Deserialize, Debug, Clone)]
         struct _UntreatedTests {
-            pub default: TestDefault,
+            pub default: Defaults,
             pub tags: BTreeMap<String, toml::Value>,
             pub tag_groups: BTreeMap<String, Vec<String>>,
-        }
-
-        #[derive(Deserialize, Debug, Clone)]
-        struct _UntreatedExtensibleTag {
-            extends: String,
-            dirs: Vec<String>,
-            metadata: Option<BTreeMap<String, SerdeValue>>,
-            task_file: Option<String>,
-        }
-
-        #[derive(Deserialize, Debug, Clone)]
-        pub struct _UntreatedTagBuild {
-            pub srcdir: String,
-            pub cmd: Option<Vec<String>>,
-            pub timeout: Option<u32>,
-            pub prohibit_binary_files: Option<bool>,
-            pub allowed_binary_files: Option<Vec<String>>,
-            pub allowed_binary_mimetypes: Option<Vec<String>>,
-        }
-
-        #[derive(Deserialize, Debug, Clone)]
-        struct _UntreatedTag {
-            dirs: Vec<String>,
-            build: _UntreatedTagBuild,
-            metadata: Option<BTreeMap<String, SerdeValue>>,
-            task_file: Option<String>,
         }
 
         let options = options.as_ref();
@@ -452,105 +122,15 @@ impl Tests {
         let contents: String = std::fs::read_to_string(path)
             .inspect_err(|e| log::error!("Could not load configuration from \"{path}\": {e}"))
             .map_err(Error::from)?;
-        let mut ut: _UntreatedTests = toml::from_str(&contents)
+        let ut: _UntreatedTests = toml::from_str(&contents)
             .inspect_err(|e| log::error!("Error parsing configuration from \"{path}\": {e}"))
             .map_err(Error::from)?;
 
+        log::debug!("Instantiating tags");
         let root_dir = path_absolute_parent(path)?;
+        let tags = Tag::from_toml(ut.tags, &ut.default, &root_dir, path, options)?;
 
-        log::debug!("Extracting each tag configuration");
-        let mut tag_configs: BTreeMap<String, TagConfig> = BTreeMap::new();
-        while !ut.tags.is_empty() {
-            let mut found: Vec<String> = vec![];
-
-            for (name, data) in ut.tags.iter() {
-                match data {
-                    toml::Value::Table(t) => {
-                        if t.contains_key("extends") {
-                            let uetg: _UntreatedExtensibleTag =
-                                data.to_owned().try_into().map_err(Error::from)?;
-                            if let Some(t_found) = tag_configs.get(&uetg.extends) {
-                                let mut extended_metadata = t_found.metadata.clone();
-                                if let Some(metadata) = uetg.metadata {
-                                    extended_metadata.extend(metadata);
-                                }
-                                let t = TagConfig {
-                                    name: name.to_owned(),
-                                    dirs: [t_found.dirs.to_owned(), uetg.dirs].concat(),
-                                    build: t_found.build.to_owned(),
-                                    metadata: extended_metadata,
-                                    task_file: uetg.task_file.or_else(|| t_found.task_file.clone()),
-                                };
-                                log::debug!("Found tag {t:?}");
-                                found.push(name.to_string());
-                                tag_configs.insert(name.to_string(), t);
-                            }
-                        } else {
-                            // This is a root tag that doesn't extend anything
-                            let utg: _UntreatedTag =
-                                data.to_owned().try_into().map_err(Error::from)?;
-                            let t = TagConfig {
-                                name: name.to_owned(),
-                                dirs: utg.dirs,
-                                build: TagBuildConfig {
-                                    srcdir: utg.build.srcdir,
-                                    cmd: utg.build.cmd.unwrap_or(ut.default.build_cmd.clone()),
-                                    timeout: utg.build.timeout.unwrap_or(ut.default.timeout_build),
-                                    prohibit_binary_files: utg
-                                        .build
-                                        .prohibit_binary_files
-                                        .unwrap_or(ut.default.build_prohibit_binary_files),
-                                    allowed_binary_files: utg
-                                        .build
-                                        .allowed_binary_files
-                                        .unwrap_or(ut.default.build_allowed_binary_files.clone()),
-                                    allowed_binary_mimetypes: utg
-                                        .build
-                                        .allowed_binary_mimetypes
-                                        .unwrap_or(
-                                            ut.default.build_allowed_binary_mimetypes.clone(),
-                                        ),
-                                },
-                                metadata: utg.metadata.unwrap_or_default(),
-                                task_file: utg.task_file,
-                            };
-                            log::debug!("Found tag {t:?}");
-                            found.push(name.to_string());
-                            tag_configs.insert(name.to_string(), t);
-                        }
-                    }
-                    _ => {
-                        return Err(Error::test_config_msg("tag specification must be a table")
-                            .tag(name)
-                            .path(path)
-                            .into());
-                    }
-                }
-            }
-
-            if found.is_empty() {
-                return Err(Error::test_config_msg(format!(
-                    "Could not instantiate tag configuration. Remaining keys: {:?}",
-                    ut.tags
-                ))
-                .path(path)
-                .into());
-            } else {
-                log::debug!("Removing all found keys");
-                for k in found {
-                    ut.tags.remove(&k);
-                }
-            }
-        }
-
-        log::debug!("Converting all configuration to tags and instantiating the tag groups");
-        let mut tags: BTreeMap<String, Tag> = BTreeMap::new();
-        for (k, v) in tag_configs.iter() {
-            // While this technically is a .map() operation, we do it as a loop
-            // to propagate the error from .to_tag().
-            tags.insert(k.to_owned(), v.to_tag(&ut.default, &root_dir, options)?);
-        }
-
+        log::debug!("Instantiating the tag groups");
         let mut tag_groups: BTreeMap<String, Vec<Tag>> = tags
             .iter()
             .map(|(k, t)| (k.to_owned(), vec![t.to_owned()]))
@@ -589,334 +169,6 @@ impl Tests {
     }
 }
 
-// Used to track the default setup keys for a test case
-#[derive(Deserialize, Debug, Clone)]
-struct _UntreatedTest {
-    pub kind: Option<String>,
-    pub timeout: Option<u32>,
-    pub options: Option<toml::Table>,
-}
-
-impl _UntreatedTest {
-    /// Merges two untreated test configs, with config specified in `other`
-    /// overriding the config specified in `self`.
-    fn merge(&self, other: &Option<Self>) -> Self {
-        if let Some(ut) = other {
-            let mut new_ut = self.clone();
-            new_ut.kind = ut.kind.clone().or_else(|| self.kind.clone());
-            new_ut.timeout = ut.timeout.or(self.timeout);
-            if let Some(opts) = &ut.options {
-                if let Some(ut_opts) = &self.options {
-                    // Override options from ut_opts
-                    let mut new_opts = ut_opts.to_owned();
-                    for (k, v) in opts.iter() {
-                        // Check if we should "unignore a key"
-                        match k.as_str() {
-                            "stdin" | "run_stdin" | "mimetype_prefix" => {
-                                new_opts.insert(format!("{k}_ignore"), toml::Value::Boolean(false));
-                            }
-                            _ => {}
-                        }
-                        new_opts.insert(k.to_owned(), v.to_owned());
-                    }
-                    new_ut.options = Some(new_opts);
-                } else {
-                    // No default options, use the ones from this test group
-                    new_ut.options = Some(opts.to_owned());
-                }
-            }
-            new_ut
-        } else {
-            self.clone()
-        }
-    }
-}
-
-impl TagConfig {
-    /// Instantiates a tag from a configuration.
-    ///
-    /// The `defaults` variable provide standard default values to provide for
-    /// each test kind and build variables that may be absent.
-    /// The `root_dir` is the directory from which every path is relative to.
-    fn to_tag(
-        &self,
-        defaults: &TestDefault,
-        root_dir: &str,
-        options: &TestsLoadingOptions,
-    ) -> Result<Tag, Error> {
-        log::debug!("Instantiating tag \"{}\"", self.name);
-        if !tag_is_valid(&self.name) {
-            return Err(Error::test_config_msg("invalid tag name")
-                .tag(&self.name)
-                .into());
-        }
-
-        let task_file = if let Some(p) = &self.task_file {
-            let abs_path = path_absolute_join(root_dir, p)?;
-            if !std::fs::exists(&abs_path)? {
-                return Err(
-                    Error::test_config_msg(format!("task file \"{abs_path}\" not found"))
-                        .tag(&self.name)
-                        .into(),
-                );
-            }
-            Some(abs_path)
-        } else {
-            None
-        };
-
-        let mut t = Tag {
-            name: self.name.to_owned(),
-            metadata: self.metadata.to_owned(),
-            task_file,
-            test_groups: vec![],
-            build: self.build.to_owned(),
-        };
-
-        if !options.taginfo_only {
-            log::debug!("Converting each directory to a test group");
-            for dir in self.dirs.iter() {
-                log::debug!("Scanning directory {dir}");
-                let absdir = path_absolute_join(root_dir, dir)?;
-                t.test_groups.push(TestGroup::new(
-                    &absdir,
-                    defaults,
-                    &_UntreatedTest {
-                        kind: None,
-                        timeout: None,
-                        options: None,
-                    },
-                    vec![],
-                )?);
-            }
-        } else {
-            log::debug!("Skipping the loading of test groups due to the taginfo_only flag.");
-        }
-
-        Ok(t)
-    }
-}
-
-impl TestGroup {
-    /// Constructs a new test group located in the directory dir.
-    ///
-    /// First scans the config.toml file under dir that updates the
-    /// test_defaults with new default test configuration. Then dir is scanned
-    /// for tests.
-    ///
-    /// If a file is encountered that ends with .test.toml, a new test case is
-    /// created.
-    ///
-    /// If a directory is encountered, then that is treated as a test group
-    /// which will be a sub group to this test group.
-    ///
-    /// # Parameters
-    ///
-    /// - `dir`: The directory to scan
-    /// - `defaults`: Default configuration to use for absent values
-    /// - `test_defaults`: Test defaults which subsequent config.toml and
-    ///                    .test.toml files extends.
-    /// - `numbering`: Sequence of numbers that keeps that track of numbering
-    ///                for test group titles.
-    fn new(
-        dir: &str,
-        defaults: &TestDefault,
-        test_defaults: &_UntreatedTest,
-        numbering: Vec<i32>,
-    ) -> Result<TestGroup, Error> {
-        log::debug!("Creating test group from directory {dir}");
-
-        #[derive(Deserialize, Debug, Clone)]
-        struct _UntreatedTestGroup {
-            pub title: Option<String>,
-            pub description: Option<String>,
-            pub include: Option<Vec<String>>,
-            pub test: Option<_UntreatedTest>,
-        }
-
-        let config_path = path_join(dir, "config.toml")?;
-
-        let mut tc_err = Error::test_config().path(&config_path);
-
-        let contents: String = std::fs::read_to_string(&config_path).map_err(|e| {
-            tc_err
-                .to_owned()
-                .msg("could not read into string")
-                .as_error()
-                .with_cause(Box::new(e))
-        })?;
-        let utg: _UntreatedTestGroup = toml::from_str(&contents).map_err(|e| {
-            tc_err
-                .to_owned()
-                .msg("could not deserialize toml")
-                .as_error()
-                .with_cause(Box::new(e))
-        })?;
-
-        // Setting up the defaults for this test group
-        let testgroup_defaults = test_defaults.merge(&utg.test);
-
-        // Build title with numbering prefix (e.g., "1.2.3. Title")
-        let title = utg
-            .title
-            .ok_or_else(|| tc_err.to_owned().msg("missing title for test group"))?;
-        let prefix: String = numbering.iter().map(|i| format!("{i}.")).collect();
-        let tg_title = if prefix.is_empty() {
-            title
-        } else {
-            format!("{prefix} {title}")
-        };
-
-        // Associate the title with any potential errors.
-        tc_err.title = Some(tg_title.to_owned());
-
-        let mut tg = TestGroup {
-            title: tg_title,
-            description: utg.description.map(single_linefeed_to_space),
-            tests: vec![],
-            subgroups: vec![],
-        };
-
-        // Find all the test cases in the same directory
-        // filenames: [(fname: String, is_dir: bool), ...]
-        let mut filenames: Vec<(String, bool)> = std::fs::read_dir(dir)?
-            .map(|e| {
-                let e = e?;
-                let name = e.file_name().to_str().map(String::from).ok_or_else(|| {
-                    tc_err
-                        .to_owned()
-                        .msg("Couldn't get string representation of DirEntry")
-                        .as_error()
-                })?;
-                Ok((name, e.metadata()?.is_dir()))
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        filenames.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-        // Add any included directories
-        // (there are checked last, in the specified order)
-        if let Some(dirs) = utg.include {
-            for d in dirs.into_iter() {
-                let d_path = path_absolute_join(dir, d)?;
-                if std::path::Path::new(&d_path).is_dir() {
-                    filenames.push((d_path, true))
-                } else {
-                    return Err(tc_err.msg(format!("{d_path} is not a directory")).into());
-                }
-            }
-        }
-
-        let mut group_number: i32 = 0;
-        for (filename, is_dir) in filenames {
-            if is_dir {
-                group_number += 1;
-                let mut new_numbering = numbering.clone();
-                new_numbering.push(group_number);
-                let subdir = path_absolute_join(dir, &filename)?;
-                //log::debug!("Scanning test subgroup from {subdir}");
-                tg.subgroups.push(TestGroup::new(
-                    &subdir,
-                    defaults,
-                    &testgroup_defaults,
-                    new_numbering,
-                )?);
-            } else if let Some((prefix, "")) = filename.rsplit_once(".test.toml") {
-                let testfile_path = path_absolute_join(dir, &filename)?;
-                //log::debug!("Found test file {testfile_path}");
-
-                tc_err.path = Some(testfile_path.to_owned());
-
-                let contents: String = std::fs::read_to_string(&testfile_path).map_err(|e| {
-                    tc_err
-                        .to_owned()
-                        .msg("could not read into string")
-                        .as_error()
-                        .with_cause(Box::new(e))
-                })?;
-                let test_contents: _UntreatedTestGroup =
-                    toml::from_str(&contents).map_err(|e| {
-                        tc_err
-                            .to_owned()
-                            .msg("could not deserialize toml")
-                            .as_error()
-                            .with_cause(Box::new(e))
-                    })?;
-
-                let testkind_opts = testgroup_defaults.clone().merge(&test_contents.test);
-
-                let kind_ident = testkind_opts
-                    .kind
-                    .ok_or_else(|| tc_err.to_owned().msg("no test kind provided"))?;
-
-                tc_err.kind = Some(kind_ident.to_owned());
-
-                let opts = testkind_opts.options.unwrap_or_default();
-
-                // Override options in existing defaults
-                let mut run_opts = defaults.kind.toml_from_ident(&kind_ident).map_err(|e| {
-                    tc_err
-                        .to_owned()
-                        .msg("could not get defaults")
-                        .as_error()
-                        .with_cause(Box::new(e))
-                })?;
-                for (k, v) in opts {
-                    if !run_opts.contains_key(&k) {
-                        return Err(tc_err.msg("invalid test.option key").key(k).into());
-                    }
-                    run_opts.insert(k.clone(), v.clone());
-                }
-                let mut tk = match kind_ident.as_str() {
-                    TestkindRun::IDENT => Testkind::Run(run_opts.try_into()?),
-                    TestkindGenASMAndRun::IDENT => Testkind::GenASMAndRun(run_opts.try_into()?),
-                    TestkindCheckFileExists::IDENT => {
-                        Testkind::CheckFileExists(run_opts.try_into()?)
-                    }
-                    _ => return Err(tc_err.msg("invalid test kind").into()),
-                };
-
-                tk.auto_discover_input_files(dir, prefix)?;
-
-                tg.tests.push(Test {
-                    name: prefix.to_string(),
-                    description: test_contents
-                        .description
-                        .map(single_linefeed_to_space)
-                        .or(tg.description.clone()),
-                    timeout: testkind_opts.timeout.unwrap_or(defaults.timeout_test),
-                    kind: tk,
-                });
-            }
-        }
-
-        Ok(tg)
-    }
-}
-
-/// Matches the string `s` if it contains any leading tag. Returns a tuple with
-/// the matched tag and the remaining text after the tag.
-pub fn tag_match(s: &str) -> (&str, &str) {
-    for (i, c) in s.char_indices() {
-        // Could technically use a regex here instead, but could not find a
-        // lightweight and well-documented regex library that allows for
-        // compile-time evaluation.
-        if !matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '-' | '_') {
-            // Invalid character, here the tag ends.
-            return s.split_at(i);
-        }
-    }
-    (s, "")
-}
-
-/// Returns `true` if the tag is valid, otherwise `false`.
-pub fn tag_is_valid(tag: &str) -> bool {
-    if tag.is_empty() {
-        return false;
-    }
-    let (_, rest) = tag_match(tag);
-    rest.is_empty()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,13 +184,12 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify default values are loaded correctly
-        assert_that!(tests.default.timeout_build).is_equal_to(60);
-        assert_that!(tests.default.timeout_test).is_equal_to(60);
-        assert_that!(tests.default.timeout_total).is_equal_to(1200);
-        assert_that!(tests.default.max_output).is_equal_to(4194304);
-        assert_that!(tests.default.truncate_len).is_equal_to(2000);
-        assert_that!(tests.default.shown_failures).is_equal_to(3);
-        assert_that!(tests.default.build_prohibit_binary_files).is_true();
+        assert_that!(tests.default.build.timeout).is_equal_to(60);
+        assert_that!(tests.default.test.timeout).is_equal_to(60);
+        assert_that!(tests.default.tag.timeout_total).is_equal_to(1200);
+        assert_that!(tests.default.test.max_output).is_equal_to(4194304);
+        assert_that!(tests.default.test.kind.as_str()).is_equal_to("run");
+        assert_that!(tests.default.build.prohibit_binary_files).is_true();
     }
 
     #[test]
@@ -947,11 +198,11 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify all expected tags exist
-        assert_that!(tests.tag_groups.contains_key("hello")).is_true();
-        assert_that!(tests.tag_groups.contains_key("hello-extra")).is_true();
-        assert_that!(tests.tag_groups.contains_key("hello-asm")).is_true();
-        assert_that!(tests.tag_groups.contains_key("hello-file")).is_true();
-        assert_that!(tests.tag_groups.contains_key("hello-all")).is_true();
+        assert_that!(&tests.tag_groups).contains_key("hello");
+        assert_that!(&tests.tag_groups).contains_key("hello-extra");
+        assert_that!(&tests.tag_groups).contains_key("hello-asm");
+        assert_that!(&tests.tag_groups).contains_key("hello-file");
+        assert_that!(&tests.tag_groups).contains_key("hello-all");
     }
 
     #[test]
@@ -967,10 +218,10 @@ mod tests {
         assert_that!(hello_all.len()).is_equal_to(4);
 
         let tag_names: Vec<&str> = hello_all.iter().map(|t| t.name.as_str()).collect();
-        assert_that!(tag_names.contains(&"hello")).is_true();
-        assert_that!(tag_names.contains(&"hello-extra")).is_true();
-        assert_that!(tag_names.contains(&"hello-asm")).is_true();
-        assert_that!(tag_names.contains(&"hello-file")).is_true();
+        assert_that!(&tag_names).contains(&"hello");
+        assert_that!(&tag_names).contains(&"hello-extra");
+        assert_that!(&tag_names).contains(&"hello-asm");
+        assert_that!(&tag_names).contains(&"hello-file");
     }
 
     #[test]
@@ -983,7 +234,7 @@ mod tests {
 
         let hello_tag = &hello_tags[0];
         assert_that!(hello_tag.name.as_str()).is_equal_to("hello");
-        assert_that!(hello_tag.test_groups.is_empty()).is_false();
+        assert_that!(&hello_tag.test_groups).is_not_empty();
 
         // The hello tag should have at least one test
         let total_tests: usize = hello_tag.test_groups.iter().map(|g| g.tests.len()).sum();
@@ -1019,10 +270,10 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify default kind.run configuration
-        let run_config = &tests.default.kind.run;
+        let run_config = &tests.default.test.kinds.run;
         assert_that!(run_config.bin.as_str()).is_equal_to("cigrid");
         assert_that!(&run_config.code).contains_exactly(&[0i32]);
-        assert_that!(run_config.stdin_ignore).is_true();
+        assert_that!(&run_config.stdin).is_none();
         assert_that!(run_config.stdout_trim).is_true();
         assert_that!(run_config.stderr_trim).is_true();
         assert_eq!(run_config.auto_input_files, vec![".cpp"]);
@@ -1034,7 +285,7 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify default kind.gen_asm_and_run configuration
-        let asm_config = &tests.default.kind.gen_asm_and_run;
+        let asm_config = &tests.default.test.kinds.gen_asm_and_run;
         assert_that!(asm_config.bin.as_str()).is_equal_to("cigrid");
         assert_eq!(asm_config.args, vec!["--asm"]);
         assert_that!(&asm_config.assemble_code).contains_exactly(&[0i32]);
@@ -1048,125 +299,17 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify allowed binary files
-        assert_that!(tests
-            .default
-            .build_allowed_binary_files
-            .contains(&"regalloc.pdf".to_string()))
-        .is_true();
-        assert_that!(tests
-            .default
-            .build_allowed_binary_files
-            .contains(&"liveness.pdf".to_string()))
-        .is_true();
+        assert_that!(&tests.default.build.allowed_binary_files)
+            .contains(&"regalloc.pdf".to_string());
+        assert_that!(&tests.default.build.allowed_binary_files)
+            .contains(&"liveness.pdf".to_string());
 
         // Verify allowed binary mimetypes
-        assert_that!(tests
-            .default
-            .build_allowed_binary_mimetypes
-            .contains(&"application/pdf".to_string()))
-        .is_true();
-        assert_that!(tests
-            .default
-            .build_allowed_binary_mimetypes
-            .contains(&"application/javascript".to_string()))
-        .is_true();
-        assert_that!(tests
-            .default
-            .build_allowed_binary_mimetypes
-            .contains(&"application/json".to_string()))
-        .is_true();
-    }
-
-    /// Test cases for tag_match and tag_is_valid.
-    /// Each tuple is (input, expected_tag, expected_remainder).
-    /// tag_is_valid is derived: true when remainder is empty.
-    const TAG_TEST_CASES: &[(&str, &str, &str)] = &[
-        // Basic cases
-        ("hello 5", "hello", " 5"),
-        (" hello 5", "", " hello 5"),
-        ("some-thing. else", "some-thing", ". else"),
-        ("A_B_c_Zz-009", "A_B_c_Zz-009", ""),
-        ("hello", "hello", ""),
-        ("hello5", "hello5", ""),
-        // Single characters
-        ("a", "a", ""),
-        ("Z", "Z", ""),
-        ("5", "5", ""),
-        ("-", "-", ""),
-        ("_", "_", ""),
-        (".", "", "."),
-        // Numbers at start
-        ("123abc", "123abc", ""),
-        ("123", "123", ""),
-        ("0-tag", "0-tag", ""),
-        ("1st-tag", "1st-tag", ""),
-        // Only special valid characters
-        ("---", "---", ""),
-        ("___", "___", ""),
-        ("-_-_-", "-_-_-", ""),
-        ("-_-", "-_-", ""),
-        // Whitespace delimiters
-        ("tag\ttab", "tag", "\ttab"),
-        ("tag\nnewline", "tag", "\nnewline"),
-        ("tag\r\nwindows", "tag", "\r\nwindows"),
-        ("tag\n", "tag", "\n"),
-        ("\t", "", "\t"),
-        ("\n", "", "\n"),
-        ("\r\n", "", "\r\n"),
-        (" ", "", " "),
-        ("  ", "", "  "),
-        ("\t\t", "", "\t\t"),
-        (" tag", "", " tag"),
-        ("\ttag", "", "\ttag"),
-        ("\ntag", "", "\ntag"),
-        ("tag ", "tag", " "),
-        ("tag\t", "tag", "\t"),
-        ("tag \t\n", "tag", " \t\n"),
-        ("a b c", "a", " b c"),
-        ("tag\x0b", "tag", "\x0b"), // vertical tab
-        ("tag\x0c", "tag", "\x0c"), // form feed
-        // Unicode characters (should stop at them)
-        ("tagåäö", "tag", "åäö"),
-        ("héllo", "h", "éllo"),
-        ("日本語", "", "日本語"),
-        ("tägname", "t", "ägname"),
-        ("tag™", "tag", "™"),
-        // Special characters as delimiters
-        ("tag@email", "tag", "@email"),
-        ("tag/path", "tag", "/path"),
-        ("tag:value", "tag", ":value"),
-        ("tag=value", "tag", "=value"),
-        ("tag.name", "tag", ".name"),
-        ("!! hello", "", "!! hello"),
-        ("#hello", "", "#hello"),
-    ];
-
-    #[test]
-    fn test_tag_match() {
-        // Empty string is a special case
-        assert_eq!(tag_match(""), ("", ""));
-
-        for &(input, expected_tag, expected_rest) in TAG_TEST_CASES {
-            assert_eq!(
-                tag_match(input),
-                (expected_tag, expected_rest),
-                "tag_match({input:?})"
-            );
-        }
-    }
-
-    #[test]
-    fn test_tag_is_valid() {
-        // Empty string is a special case: not a valid tag
-        assert!(!tag_is_valid(""));
-
-        for &(input, _, expected_rest) in TAG_TEST_CASES {
-            let expected_valid = expected_rest.is_empty();
-            assert_eq!(
-                tag_is_valid(input),
-                expected_valid,
-                "tag_is_valid({input:?})"
-            );
-        }
+        assert_that!(&tests.default.build.allowed_binary_mimetypes)
+            .contains(&"application/pdf".to_string());
+        assert_that!(&tests.default.build.allowed_binary_mimetypes)
+            .contains(&"application/javascript".to_string());
+        assert_that!(&tests.default.build.allowed_binary_mimetypes)
+            .contains(&"application/json".to_string());
     }
 }

@@ -1,6 +1,7 @@
 /// Handle for running and grading all tags that are part of a submission.
 use std::{
     collections::BTreeMap,
+    rc::Rc,
     time::{Duration, SystemTime},
 };
 
@@ -8,15 +9,16 @@ use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
     db::models::{SubmissionInfo, SubmissionStatusCode},
     error::Error,
+    podman::{Mount, PodmanContainer},
     reporting::{Report, ReportInvalidTag, ReportMessage, ReportSubmission, ReportTagGrading},
     utils::{path_absolute_join, syscommand_timeout, SyscommandSettings},
 };
 
-use crate::subrunner::{container::ContainerInfo, tag_runner::TagRunner};
+use crate::subrunner::{container::ContainerInfo, tag_runner::TagRunner, verifier};
 
 static ERRMSG_INTERNAL_ERROR: &str = "Internal error when starting job. Contact course staff.";
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SubmissionRunnerHandle<'a> {
     /// The directory in which this runner will place artifacts. E.g. cloned
     /// git repositories here, input files for test cases, etc. This directory
@@ -137,17 +139,48 @@ impl<'a> SubmissionRunnerHandle<'a> {
             internal_error_report()
         })?;
 
-        // Step 2: Set up the container
-        let container = ContainerInfo {
-            podman_image: settings.runner.podman_image.clone(),
-            podman_container_name: format!("id2202_runner{}", runner_id),
-            podman_network_name: format!("{}{}", settings.runner.podman_network_prefix, runner_id),
+        // Step 2: Describe the container each tag is built and graded in. Each
+        // tag runner gets its own, since a container is removed when dropped.
+        let container = || ContainerInfo {
+            podman: {
+                let mut c = PodmanContainer::new(
+                    settings.runner.podman_image.clone(),
+                    format!("id2202_runner{}", runner_id),
+                );
+                c.network = Some(format!(
+                    "{}{}",
+                    settings.runner.podman_network_prefix, runner_id
+                ));
+                c
+            },
             internal_build_dir: "/root/graded_solution".to_string(),
-            mount_solution: settings.runner.mount_repo.clone(),
-            mount_tests: settings.runner.mount_tests.clone(),
-            external_solution: solution_dir,
-            external_tests: tests_dir,
+            solution_dir: Mount {
+                host_path: solution_dir.clone(),
+                container_path: settings.runner.mount_repo.clone(),
+                writable: false,
+            },
+            tests_dir: Mount {
+                host_path: tests_dir.clone(),
+                container_path: settings.runner.mount_tests.clone(),
+                writable: false,
+            },
         };
+
+        let verifier = Rc::new(
+            verifier::Verifier::start(
+                settings,
+                &format!("id2202_verifier{}", runner_id),
+                &path_absolute_join(&workspace_dir, "verifiers").map_err(|e| {
+                    log::error!("Could not join verifier directory path: {e}");
+                    internal_error_report()
+                })?,
+                &tests,
+            )
+            .map_err(|e| {
+                log::error!("Could not start the verifier container: {e}");
+                internal_error_report()
+            })?,
+        );
 
         // Step 3: Collect the tags to grade
         log::debug!(
@@ -167,9 +200,9 @@ impl<'a> SubmissionRunnerHandle<'a> {
                                 let mut runner = TagRunner::new(
                                     settings,
                                     tag,
-                                    &container,
-                                    &tests.default,
+                                    container(),
                                     &source_dir,
+                                    verifier.clone(),
                                 );
                                 runner.derived_from.insert(t.to_owned());
                                 tag_runners.insert(tag.name.clone(), runner);
@@ -201,9 +234,6 @@ impl<'a> SubmissionRunnerHandle<'a> {
                 }
             }
         }
-
-        // After this point we need to make sure that the workspace_dir is
-        // deleted when the TestRunnerHandle is dropped.
 
         let (ssh_url, commit) = subinfo.ssh_url_and_commit();
 
@@ -271,7 +301,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
             })?;
 
         let deadline_time = SystemTime::now()
-            .checked_add(Duration::from_secs(tests.default.timeout_total.into()))
+            .checked_add(Duration::from_secs(tests.default.tag.timeout_total.into()))
             .ok_or_else(|| {
                 log::error!("Internal error setting deadline date.");
                 internal_error_report()
@@ -287,7 +317,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
             next_tag_index: 0,
             tag_runners: tag_runners.into_values().collect(),
             tests_collected_details: 0,
-            tests_max_details: tests.default.shown_failures,
+            tests_max_details: settings.reporting.shown_failures,
             deadline_time,
             cleaned_up: false,
             status_code: SubmissionStatusCode::Running,

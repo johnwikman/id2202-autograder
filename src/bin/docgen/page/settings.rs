@@ -18,8 +18,8 @@ use serde_json::Value;
 use id2202_autograder::config::settings::Settings;
 
 use crate::html::{code_block, details, html_page, slug, Body};
-use crate::markdown::{escape, inline};
-use crate::page::common::{collapse_ws, doc_table, name_heading, type_badge, warn_untyped};
+use crate::markdown::{collapse_ws, escape, inline};
+use crate::page::common::{doc_table, name_heading, type_badge, warn_untyped};
 use crate::schema::{self, Defs};
 
 /// The repository's example settings file, embedded at build time and shown on
@@ -234,7 +234,7 @@ fn object<'a>(body: &mut Body, title: &str, def: &'a Value, defs: Defs<'a, '_>, 
             .and_then(|prop| prop.get("description"))
             .and_then(Value::as_str)
             .unwrap_or_default();
-        resolve(&collapse_ws(doc), links)
+        resolve(doc, links)
     }));
 }
 

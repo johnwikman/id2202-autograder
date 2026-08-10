@@ -93,7 +93,14 @@ h4 { margin-top: 1.75rem; }
 .table > thead { --bs-table-bg: var(--bs-tertiary-bg); }
 .table > thead th { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--bs-secondary-color); }
 .table :is(th, td):not(:last-child) { width: 1%; white-space: nowrap; }
-.table td:first-child code { font-weight: 600; }
+/* The name of a documented field, and the note on how its key behaves beyond
+   carrying a value. Both are marked in the HTML: which cell they land in is the
+   table's business, not theirs. */
+.doc-field { font-weight: 600; }
+.doc-field-note { color: var(--bs-secondary-color); }
+/* A description cell holds rendered markdown, so it may run to several blocks;
+   only the space between them is wanted, not below the last one. */
+.table td > :is(p, ul, ol, pre):last-child { margin-bottom: 0; }
 
 /* A `details` block framed as a card: the summary is a header bar with a caret
    that turns when it opens, and the content sits flush inside the frame. The

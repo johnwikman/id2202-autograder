@@ -1,0 +1,2 @@
+[test.options]
+args = ["factorize", "15"]

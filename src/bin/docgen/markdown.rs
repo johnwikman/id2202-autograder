@@ -6,6 +6,11 @@
 
 use crate::html::code_block;
 
+/// Collapses each run of whitespace into a single space.
+pub fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Escapes the five characters that are significant in HTML text/attributes.
 pub fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -56,6 +61,27 @@ pub fn inline(s: &str) -> String {
                 out.push_str("</strong>");
                 i += 2 + end + 2;
                 continue;
+            }
+        }
+        if let Some(delim) = rest.chars().next().filter(|c| matches!(c, '*' | '_')) {
+            let inner = &rest[1..];
+            // An underscore within a word (`snake_case`) opens nothing, and a
+            // closing one has to end a word rather than start one.
+            let intraword = plain.chars().last().is_some_and(char::is_alphanumeric);
+            let end = inner.find(delim).filter(|&end| end > 0);
+            if let (false, Some(end)) = (intraword, end) {
+                if !inner[end + 1..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_alphanumeric)
+                {
+                    flush!();
+                    out.push_str("<em>");
+                    out.push_str(&inline(&inner[..end]));
+                    out.push_str("</em>");
+                    i += 1 + end + 1;
+                    continue;
+                }
             }
         }
         if rest.starts_with('[') {
@@ -148,7 +174,7 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
                     break;
                 }
                 if is_bullet(nt) {
-                    out.push_str(&format!("<li>{}</li>\n", inline(&item)));
+                    out.push_str(&format!("<li>{}</li>\n", inline(&collapse_ws(&item))));
                     item = bullet_text(nt).to_string();
                 } else {
                     item.push(' ');
@@ -156,7 +182,7 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
                 }
                 lines.next();
             }
-            out.push_str(&format!("<li>{}</li>\n", inline(&item)));
+            out.push_str(&format!("<li>{}</li>\n", inline(&collapse_ws(&item))));
             out.push_str("</ul>\n");
             continue;
         }
@@ -175,7 +201,7 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
             para.push_str(nt.trim_start());
             lines.next();
         }
-        out.push_str(&format!("<p>{}</p>\n", inline(&para)));
+        out.push_str(&format!("<p>{}</p>\n", inline(&collapse_ws(&para))));
     }
     out
 }

@@ -1,0 +1,11 @@
+title = "Factorize"
+description = "Checks the factorize functionality of the hello-extra program."
+
+[test]
+kind = "run_verifier"
+
+[test.options]
+bin = "hello-extra"
+verifier_path = "verify.py"
+[test.options.verifier_param_schema]
+expect_fail = {type = "bool", default = false}

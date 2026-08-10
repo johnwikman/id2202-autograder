@@ -2,10 +2,10 @@
 /// This contains the functionality for building the project, as well as for
 /// iterating over the test cases.
 ///
-use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, rc::Rc, time::Duration};
 
 use id2202_autograder::{
-    config::{Settings, Tag, TagBuildConfig, Test, TestDefault, TestGroup, Testkind},
+    config::{tests::kind::Kind as Testkind, BuildConfig, Settings, Tag, Test, TestGroup},
     db::models::SubmissionStatusCode,
     error::{Error, ErrorKind, SyscommandError},
     podman,
@@ -17,6 +17,7 @@ use num_traits::ToPrimitive;
 use crate::subrunner::{
     container::ContainerInfo,
     test_grader::{FailureCause, GradingResult},
+    verifier,
 };
 
 #[derive(Debug, Clone)]
@@ -48,7 +49,7 @@ pub enum BuildResult {
 /// The runner for a grading tag. This spawns a podman container, builds the
 /// project inside the container, and proceeds to run every test case defined
 /// for this tag.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TagRunner<'a> {
     /// Program settings, passed on to the test kinds that need them.
     pub settings: &'a Settings,
@@ -65,10 +66,10 @@ pub struct TagRunner<'a> {
     pub derived_from: BTreeSet<String>,
 
     /// Build configuration for this specific tag.
-    pub build_conf: TagBuildConfig,
+    pub build_conf: BuildConfig,
 
-    /// Test case defaults, useful for things such as timeout
-    pub test_default: TestDefault,
+    /// The verifiers, shared with every other tag runner of this submission.
+    verifier: Rc<verifier::Verifier>,
 
     /// Iterators for each respective test group contained within this tag.
     toplevel_iterator: TestGroupIterator,
@@ -97,17 +98,17 @@ impl<'a> TagRunner<'a> {
     pub fn new(
         settings: &'a Settings,
         tag: &Tag,
-        container: &ContainerInfo,
-        test_default: &TestDefault,
+        container: ContainerInfo,
         source_dir: &str,
+        verifier: Rc<verifier::Verifier>,
     ) -> Self {
         TagRunner {
             settings,
             tag_name: tag.name.to_owned(),
-            container: container.to_owned(),
+            container,
             build_conf: tag.build.to_owned(),
-            test_default: test_default.to_owned(),
             derived_from: BTreeSet::new(),
+            verifier,
 
             toplevel_iterator: TestGroupIterator::from_groups(
                 format!("top-level for tag \"{}\"", tag.name),
@@ -252,20 +253,14 @@ impl<'a> TagRunner<'a> {
     /// Removes the podman container if it is still running and makes sure that
     /// the build directory is removed.
     pub fn cleanup(&mut self) -> Result<(), Error> {
-        if podman::ps_names()?.contains(&self.container.podman_container_name) {
-            log::debug!(
-                "Removing the container used for grading \"{}\"",
-                self.tag_name
-            );
-            podman::force_rm(&self.container.podman_container_name)?;
-        }
+        self.container.podman.stop();
 
-        if std::fs::exists(&self.container.external_solution)? {
+        if std::fs::exists(&self.container.solution_dir.host_path)? {
             log::debug!(
                 "Removing the build directory used for grading \"{}\"",
                 self.tag_name
             );
-            std::fs::remove_dir_all(&self.container.external_solution)?;
+            std::fs::remove_dir_all(&self.container.solution_dir.host_path)?;
         }
 
         Ok(())
@@ -295,18 +290,18 @@ impl<'a> TagRunner<'a> {
         );
 
         let running_containers = podman::ps_names()?;
-        if running_containers.contains(&self.container.podman_container_name) {
+        if running_containers.contains(&self.container.podman.name) {
             log::warn!("Removing dangling image from previous run");
-            podman::force_rm(&self.container.podman_container_name)?;
+            podman::force_rm(&self.container.podman.name)?;
         }
 
-        if std::fs::exists(&self.container.external_solution)? {
+        if std::fs::exists(&self.container.solution_dir.host_path)? {
             // Remove the old build dir
-            std::fs::remove_dir_all(&self.container.external_solution)?;
+            std::fs::remove_dir_all(&self.container.solution_dir.host_path)?;
         }
-        if !std::fs::exists(&self.container.external_tests)? {
+        if !std::fs::exists(&self.container.tests_dir.host_path)? {
             // Ensure that the test directory exists outside the container
-            std::fs::create_dir_all(&self.container.external_tests)?;
+            std::fs::create_dir_all(&self.container.tests_dir.host_path)?;
         }
 
         // Copy the solution directory to the <workspace>/build
@@ -319,7 +314,7 @@ impl<'a> TagRunner<'a> {
             return Ok(false);
         }
 
-        dircpy::copy_dir(&solution_dir, &self.container.external_solution)?;
+        dircpy::copy_dir(&solution_dir, &self.container.solution_dir.host_path)?;
 
         // Check for forbidden binary files inside the solution directory
         // (Path, mime output)
@@ -380,7 +375,7 @@ impl<'a> TagRunner<'a> {
                 &mut forbidden_files,
                 &self.build_conf.allowed_binary_files,
                 &self.build_conf.allowed_binary_mimetypes,
-                PathBuf::from(&self.container.external_solution),
+                PathBuf::from(&self.container.solution_dir.host_path),
                 "".to_string(),
             )
             .inspect_err(|e| log::error!("Error when scanning for prohibited files: {e}"))?;
@@ -393,23 +388,11 @@ impl<'a> TagRunner<'a> {
         }
 
         log::debug!("Starting podman container");
-        podman::start_container(&podman::ContainerOptions {
-            image: self.container.podman_image.to_owned(),
-            container_name: self.container.podman_container_name.to_owned(),
-            network_name: self.container.podman_network_name.to_owned(),
-            mounts: vec![
-                (
-                    self.container.external_solution.to_owned(),
-                    self.container.mount_solution.to_owned(),
-                    "ro,z".to_string(),
-                ),
-                (
-                    self.container.external_tests.to_owned(),
-                    self.container.mount_tests.to_owned(),
-                    "ro,z".to_string(),
-                ),
-            ],
-        })?;
+        self.container.podman.mounts = vec![
+            self.container.solution_dir.clone(),
+            self.container.tests_dir.clone(),
+        ];
+        self.container.podman.start()?;
 
         // Wait for the container to start
         let mut start_attempts = 0;
@@ -420,9 +403,7 @@ impl<'a> TagRunner<'a> {
                 return Error::err_runtime("container would not start after 10 attempts");
             }
             for ps_output in podman::ps()?.iter() {
-                if ps_output
-                    .names
-                    .contains(&self.container.podman_container_name)
+                if ps_output.names.contains(&self.container.podman.name)
                     && ps_output.state == "running"
                 {
                     container_started = true;
@@ -433,39 +414,41 @@ impl<'a> TagRunner<'a> {
             }
         }
 
+        let checked = SyscommandSettings {
+            expected_code: Some(0),
+            max_stderr_length: Some(128 * 1024),
+            ..Default::default()
+        };
+
         // Double-check that the target repo doesn't exist
-        podman::exec(
-            &self.container.podman_container_name,
-            &["test", "!", "-d", &self.container.internal_build_dir],
+        self.container.podman.exec(
+            None,
+            ["test", "!", "-d", &self.container.internal_build_dir],
+            checked.clone(),
         )?;
 
         // Now copy the solution to the root repository
-        podman::exec(
-            &self.container.podman_container_name,
-            &[
+        self.container.podman.exec(
+            None,
+            [
                 "cp",
                 "-r",
-                &self.container.mount_solution,
+                &self.container.solution_dir.container_path,
                 &self.container.internal_build_dir,
             ],
+            checked,
         )?;
 
-        let mut build_cmd: Vec<&str> = vec![
-            "podman",
-            "exec",
-            "-w",
-            &self.container.internal_build_dir,
-            &self.container.podman_container_name,
-        ];
-        build_cmd.extend(self.build_conf.cmd.iter().map(String::as_str));
+        let build_cmd: Vec<&str> = self.build_conf.cmd.iter().map(String::as_str).collect();
 
         log::info!("Starting build {build_cmd:?}");
 
-        match syscommand_timeout(
+        match self.container.podman.exec(
+            Some(&self.container.internal_build_dir),
             build_cmd.as_slice(),
             SyscommandSettings {
-                max_stdout_length: Some(self.test_default.max_output),
-                max_stderr_length: Some(self.test_default.max_output),
+                max_stdout_length: Some(self.build_conf.max_output),
+                max_stderr_length: Some(self.build_conf.max_output),
                 timeout: Duration::from_secs(self.build_conf.timeout.into()),
                 ..Default::default()
             },
@@ -519,8 +502,8 @@ impl<'a> TagRunner<'a> {
                 "podman",
                 "network",
                 "disconnect",
-                &self.container.podman_network_name,
-                &self.container.podman_container_name,
+                self.container.podman.network.as_deref().unwrap_or("none"),
+                &self.container.podman.name,
             ],
             SyscommandSettings {
                 expected_code: Some(0),
@@ -542,6 +525,8 @@ impl<'a> TagRunner<'a> {
     /// If `include_report` is true, then a failure report will be collected
     /// if this test case fails.
     pub fn run_test(&mut self, include_report: bool) -> Result<bool, Error> {
+        use crate::subrunner::test_grader::grade;
+
         // First validate the solution is built
         match &self.build_result {
             Some(BuildResult::Ok) => {} // OK
@@ -570,33 +555,25 @@ impl<'a> TagRunner<'a> {
         };
 
         let result = match &test.kind {
-            Testkind::Run(conf) => {
-                use crate::subrunner::test_grader::Run;
-                Run::grade_from_testkind(conf, &self.test_default, &self.container, include_report)?
-            }
+            Testkind::Run(conf) => grade::run(conf, test, &self.container, include_report)?,
             Testkind::GenASMAndRun(conf) => {
-                use crate::subrunner::test_grader::GenASMAndRun;
-                GenASMAndRun::grade_from_testkind(
-                    self.settings,
-                    conf,
-                    &self.test_default,
-                    &self.container,
-                    include_report,
-                )?
+                grade::gen_asm_and_run(self.settings, conf, test, &self.container, include_report)?
             }
             Testkind::CheckFileExists(conf) => {
-                use crate::subrunner::test_grader::CheckFileExists;
-                CheckFileExists::grade_from_testkind(
-                    conf,
-                    &self.test_default,
-                    &self.container,
-                    include_report,
-                )?
+                grade::check_file_exists(conf, &self.container, include_report)?
             }
+            Testkind::RunVerifier(conf) => grade::run_verifier(
+                conf,
+                test,
+                &self.container,
+                &self.verifier,
+                self.verifier.container_path(&conf.verifier_path)?,
+                include_report,
+            )?,
         };
 
         match &result {
-            GradingResult::Success { captured_stdout: _ } => {} // ok
+            GradingResult::Success => {} // ok
             GradingResult::Failure { cause, report } => {
                 self.testfail_count += 1;
                 if report.is_some() {
@@ -748,7 +725,7 @@ impl TestGroupIterator {
             tests_passed: self
                 .results
                 .iter()
-                .filter(|r| matches!(r, GradingResult::Success { .. }))
+                .filter(|r| matches!(r, GradingResult::Success))
                 .count(),
             test_details: self
                 .results

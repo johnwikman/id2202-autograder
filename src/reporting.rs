@@ -580,7 +580,7 @@ pub struct ReportTagGrading {
 impl ReportTagGrading {
     /// Tags that this tag is derived from. Will return an empty vec if it is
     /// just itself.
-    fn derivs<'a>(&'a self) -> Vec<&'a String> {
+    fn derivs(&self) -> Vec<&String> {
         self.derived_from
             .iter()
             .filter(|d| **d != self.tag_name)

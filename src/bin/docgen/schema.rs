@@ -27,6 +27,21 @@ fn resolve<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> &'a Value {
     }
 }
 
+/// The type a schema states. A nullable value carries an array of its type
+/// alongside `"null"` rather than a bare string, and the `"null"` is not part
+/// of what the value is.
+fn type_of(schema: &Value) -> &str {
+    match schema.get("type") {
+        Some(Value::String(ty)) => ty.as_str(),
+        Some(Value::Array(types)) => types
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|ty| *ty != "null")
+            .unwrap_or_default(),
+        _ => "",
+    }
+}
+
 /// The type of a value, and whether that name pluralises when it is an array's
 /// element type. A `format` is a name (`uint16`), so it does not; a plain type
 /// or a definition's title is a noun, so it does.
@@ -40,17 +55,7 @@ fn describe<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> (String, bool) {
             None => ("object".to_string(), true),
         };
     }
-    // The type may be a bare string or, for a nullable value, an array holding
-    // the type alongside "null".
-    let ty = match schema.get("type") {
-        Some(Value::String(ty)) => ty.as_str(),
-        Some(Value::Array(types)) => types
-            .iter()
-            .filter_map(Value::as_str)
-            .find(|ty| *ty != "null")
-            .unwrap_or_default(),
-        _ => "",
-    };
+    let ty = type_of(schema);
     if ty == "array" {
         let element = match schema.get("items") {
             Some(items) => describe(items, defs),
@@ -83,10 +88,10 @@ pub fn type_name<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> String {
 /// rather than the displayed name, which may be a format (`uint16`) or a title.
 /// `ty-other` covers an object and anything the schema gives no type to.
 fn scalar_class(schema: &Value) -> &'static str {
-    match schema.get("type").and_then(Value::as_str) {
-        Some("string") => "ty-string",
-        Some("integer") | Some("number") => "ty-integer",
-        Some("boolean") => "ty-boolean",
+    match type_of(schema) {
+        "string" => "ty-string",
+        "integer" | "number" => "ty-integer",
+        "boolean" => "ty-boolean",
         _ => "ty-other",
     }
 }
@@ -95,8 +100,8 @@ fn scalar_class(schema: &Value) -> &'static str {
 /// holds — so `array of strings` scans as a string setting — and is marked
 /// `is-array` for the rails that tell the two apart.
 pub fn type_class(schema: &Value) -> String {
-    match schema.get("type").and_then(Value::as_str) {
-        Some("array") => {
+    match type_of(schema) {
+        "array" => {
             let element = schema.get("items").map(scalar_class).unwrap_or("ty-other");
             format!("{element} is-array")
         }

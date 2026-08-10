@@ -308,6 +308,17 @@ pub struct RunnerSettings {
     #[config(env = "AUTOGRADER_RUNNER_MOUNT_TESTS")]
     pub mount_tests: String,
 
+    /// The podman image all verifier programs run in. The entrypoint can build
+    /// this image if it is missing, but custom pre-built images can also be
+    /// specified here.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_VERIFIER_IMAGE")]
+    pub podman_verifier_image: String,
+
+    /// The directory inside the verifier container where the verifier
+    /// programs are mounted.
+    #[config(env = "AUTOGRADER_RUNNER_MOUNT_VERIFIERS")]
+    pub mount_verifiers: String,
+
     /// Directory to use as a workspace, to store temporary files.
     #[config(env = "AUTOGRADER_RUNNER_WORKSPACE_DIR")]
     pub workspace_dir: String,
@@ -335,6 +346,11 @@ pub struct RunnerSettings {
 /// Settings controlling how grading results are reported.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct ReportingSettings {
+    /// Maximum number of failed test cases revealed to the student in a single
+    /// submission.
+    #[config(env = "AUTOGRADER_REPORTING_SHOWN_FAILURES")]
+    pub shown_failures: usize,
+
     /// Markdown output settings
     #[config(nested)]
     pub markdown: ReportingMarkdownSettings,
