@@ -20,11 +20,11 @@ avt.expect(math.prod(out_values) == in_value, "invalid factorization")
 
 # Check that the factors are either prime or -1
 def is_prime(x):
-    limit = int(math.sqrt(x) + 1) if x > 10 else x
+    limit = int(math.sqrt(x) * 1.1 + 1) if x > 10 else x
     if x < 2:        return False
     elif x == 2:     return True
     elif x % 2 == 0: return False
-    for d in range(3, limit + 1, 2):
+    for d in range(3, limit, 2):
         if x % d == 0:
             return False
     return True
