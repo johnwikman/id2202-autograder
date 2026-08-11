@@ -12,8 +12,10 @@ RUN dnf -y install gcc libpq-devel git file \
 
 # Copy over the repo (except for the Docker files)
 ADD .gitignore README.md LICENSE Cargo.toml Cargo.lock build.rs diesel.toml sailfish.toml /autograder/
+ADD container /autograder/container
 ADD diesel    /autograder/diesel
 ADD example   /autograder/example
+ADD macros    /autograder/macros
 ADD src       /autograder/src
 ADD web       /autograder/web
 

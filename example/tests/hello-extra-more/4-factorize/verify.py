@@ -3,7 +3,7 @@ import autograder_verifier_tools as avt
 
 run = avt.read_stdin()
 
-if run.param["expect_fail"]:
+if run.params["expect_fail"]:
     avt.expect(run.code == 1, "invalid return code")
     avt.accept()
 

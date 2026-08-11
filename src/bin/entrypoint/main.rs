@@ -8,20 +8,17 @@ use std::sync::mpsc;
 use std::time::Duration;
 use subprocess::{Exec, Job};
 
-use id2202_autograder::{
-    config::{Settings, TestGroup, Tests, TestsLoadingOptions},
-    db::conn::DatabaseConnection,
-    error::Error,
-    podman,
-    utils::systemtime_to_utc_string,
-};
+use id2202_autograder::{config::Settings, db::conn::DatabaseConnection, error::Error, podman};
+
+mod setup;
+mod testing;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Path to the TOML file containing the program settings
-    #[arg(short, long)]
-    settings: String,
+    #[arg(short, long, global = true)]
+    settings: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -29,91 +26,42 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Start {},
-    ValidateSettings {
-        /// Print out the title hierarchy of all test groups
-        #[arg(short = 'T', long, default_value_t = false)]
-        print_titles: bool,
-
-        /// Print out the entire test configuration
-        #[arg(short = 'C', long, default_value_t = false)]
-        print_test_config: bool,
-    },
-    CheckDatabase {
-        /// Fetch all submissions from the database
-        #[arg(short = 'S', long, default_value_t = false)]
-        all_submissions: bool,
-
-        /// A runner to assign to jobs
-        #[arg(long)]
-        assign_runner: Option<i32>,
-    },
-    TestPodman {
-        /// Test listing images
-        #[arg(long = "images", default_value_t = false)]
-        list_images: bool,
-
-        /// Test listing networks
-        #[arg(long = "networks", default_value_t = false)]
-        list_networks: bool,
-
-        /// Test listing networks
-        #[arg(long = "ps", default_value_t = false)]
-        list_containers: bool,
-    },
-    TestSyscommand {
-        /// Test the cat command with the specific stdin
-        #[arg(long = "stdin")]
-        example_stdin: Option<String>,
-
-        /// Test output with specified number of lines
-        #[arg(long = "lines")]
-        std_lines: Option<usize>,
-    },
-    VerifySshHosts {
-        /// Exit code that `ssh -T` returns on a successful GitHub connection
-        #[arg(long, default_value_t = 1)]
-        github_exit_code: i32,
-
-        /// Exit code that `ssh -T` returns on a successful GitLab connection
-        #[arg(long, default_value_t = 0)]
-        gitlab_exit_code: i32,
-    },
+    Start,
+    ValidateSettings(testing::ValidateSettingsArgs),
+    CheckDatabase(testing::CheckDatabaseArgs),
+    TestPodman(testing::TestPodmanArgs),
+    TestSyscommand(testing::TestSyscommandArgs),
+    BuildImage(setup::BuildImageArgs),
+    PullImage,
+    VerifySshHosts(setup::VerifySshHostsArgs),
 }
 
 fn main() -> Result<(), Error> {
     let args: Args = Args::parse();
-    let s = Settings::load(&args.settings)?;
+    // Global rather than a plain option, so it may appear on either side of the
+    // subcommand. clap forbids `required` on a global argument, so the check is
+    // here instead.
+    let settings = args
+        .settings
+        .as_deref()
+        .ok_or_else(|| Error::runtime("missing required option --settings <SETTINGS>"))?;
+    let s = Settings::load(settings)?;
     s.setup_logging("entrypoint")?;
     match args.command {
-        Commands::Start {} => start(&args, &s),
-        Commands::ValidateSettings {
-            print_titles,
-            print_test_config,
-        } => validate_settings(s, print_titles, print_test_config),
-        Commands::CheckDatabase {
-            all_submissions,
-            assign_runner,
-        } => check_database(s, all_submissions, assign_runner),
-        Commands::TestPodman {
-            list_images,
-            list_networks,
-            list_containers,
-        } => test_podman(s, list_images, list_networks, list_containers),
-        Commands::TestSyscommand {
-            example_stdin,
-            std_lines,
-        } => test_syscommand(s, example_stdin, std_lines),
-        Commands::VerifySshHosts {
-            github_exit_code,
-            gitlab_exit_code,
-        } => verify_ssh_hosts(s, github_exit_code, gitlab_exit_code),
+        Commands::Start => start(&s),
+        Commands::ValidateSettings(a) => testing::validate_settings(s, a),
+        Commands::CheckDatabase(a) => testing::check_database(s, a),
+        Commands::TestPodman(a) => testing::test_podman(s, a),
+        Commands::TestSyscommand(a) => testing::test_syscommand(s, a),
+        Commands::BuildImage(a) => setup::build_image(s, a),
+        Commands::PullImage => setup::pull_image(s),
+        Commands::VerifySshHosts(a) => setup::verify_ssh_hosts(s, a),
     }
 }
 
 /// Starts the autograder, spawning the web API server process and the job
 /// runner processes.
-fn start(args: &Args, s: &Settings) -> Result<(), Error> {
+fn start(s: &Settings) -> Result<(), Error> {
     let entrypoint_bin = std::env::current_exe()?;
     let binary_dir = entrypoint_bin
         .parent()
@@ -125,12 +73,20 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
     log::debug!("Server binary: {}", server_bin.to_str().unwrap());
     log::debug!("Runner binary: {}", runner_bin.to_str().unwrap());
 
-    // Verify existence of podman image and networks
-    log::debug!("Checking that the podman image exists");
+    // Verify existence of podman image and networks. Images are never fetched
+    // here: `pull-image` and `build-image` do that, so that starting the
+    // autograder does not depend on the network.
+    log::debug!("Checking that the podman images exist");
     let podimgs = podman::images().unwrap();
-    if !podimgs.contains(&s.runner.podman_image) {
-        log::info!("Pulling the runner image {}", s.runner.podman_image);
-        podman::pull(&s.runner.podman_image).unwrap();
+    for (image, how) in [
+        (&s.runner.podman_image, "pull-image"),
+        (&s.runner.podman_verifier_image, "build-image"),
+    ] {
+        if !podimgs.contains(image) {
+            return Err(Error::runtime(format!(
+                "the podman image \"{image}\" does not exist, run `entrypoint {how}` first"
+            )));
+        }
     }
     log::debug!("Checking that the podman networks exists for each runner");
     let podnets = podman::networks().unwrap();
@@ -186,7 +142,7 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
             match Exec::cmd(server_bin.as_os_str())
                 .args([
                     &OsString::from("--settings"),
-                    &OsString::from(&args.settings),
+                    &OsString::from(&s.origin_path),
                     &OsString::from("serve"),
                 ])
                 .start()
@@ -205,7 +161,7 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
                 match Exec::cmd(runner_bin.as_os_str())
                     .args([
                         &OsString::from("--settings"),
-                        &OsString::from(&args.settings),
+                        &OsString::from(&s.origin_path),
                         &OsString::from("--runner-id"),
                         &OsString::from(i.to_string()),
                     ])
@@ -258,269 +214,5 @@ fn start(args: &Args, s: &Settings) -> Result<(), Error> {
         .unwrap_or_else(|e| log::warn!("Could not notify: {e:#}"));
 
     log::info!("Entrypoint process exiting");
-    Ok(())
-}
-
-/// Validates the loaded settings, used for printing them out
-fn validate_settings(
-    s: Settings,
-    print_titles: bool,
-    print_test_config: bool,
-) -> Result<(), Error> {
-    log::info!("VALIDATING SETTINGS");
-    dbg!(&s);
-
-    log::debug!("Loading test config");
-    let tc = Tests::load(&s.runner.test_config, TestsLoadingOptions::default())?;
-
-    if print_test_config {
-        log::debug!("Printing the entire test configuration");
-        dbg!(&tc);
-    };
-
-    if print_titles {
-        log::debug!("Printing the test configuration titles");
-        fn recursively_print(tg: &TestGroup, indent: usize) {
-            println!(
-                "{} - {}",
-                std::iter::repeat_n(" ", indent).collect::<String>(),
-                tg.title
-            );
-            for sg in tg.subgroups.iter() {
-                recursively_print(sg, indent + 4);
-            }
-        }
-        for (tagname, groups) in tc.tag_groups.iter() {
-            println!("#{}", tagname);
-            for tag in groups.iter() {
-                for tg in tag.test_groups.iter() {
-                    recursively_print(tg, 0);
-                }
-            }
-        }
-    };
-    Ok(())
-}
-
-/// Checks the database connection
-fn check_database(
-    s: Settings,
-    get_all_submissions: bool,
-    assign_runner: Option<i32>,
-) -> Result<(), Error> {
-    use diesel::{self, ExpressionMethods, QueryDsl, RunQueryDsl, SelectableHelper};
-    use id2202_autograder::db::conn::DatabaseConnection;
-
-    log::info!("CHECKING DATABASE");
-
-    log::debug!("Opening database connection");
-    let mut dbconn = DatabaseConnection::connect(&s)?;
-
-    if get_all_submissions {
-        log::debug!("Fetching all submissions");
-        use id2202_autograder::db::{
-            models::Submission,
-            schema::submissions::{self, id},
-        };
-        match submissions::table
-            .select(Submission::as_select())
-            .order(id.desc())
-            .limit(100)
-            .load(&mut dbconn.conn)
-        {
-            Ok(sub_vec) => {
-                for sub in sub_vec.iter() {
-                    let d = systemtime_to_utc_string(&sub.date_submitted)
-                        .unwrap_or("NO_TIME".to_string());
-                    println!("Date Submitted: {}\n{sub:#?}", d);
-                }
-            }
-            Err(e) => {
-                log::error!("Could not fetch all submissions: {e}")
-            }
-        }
-    }
-    if let Some(runner_id) = assign_runner {
-        match dbconn.try_assign_submission(runner_id) {
-            Ok(Some(sub)) => {
-                println!("Assigned submission: {sub:#?}");
-            }
-            Ok(None) => {
-                println!("No submission to assign");
-            }
-            Err(e) => {
-                println!("Database error: {e}");
-            }
-        }
-    }
-
-    log::debug!("Done connecting");
-    Ok(())
-}
-
-/// Test the notification on a specific file
-fn test_podman(
-    _s: Settings,
-    list_images: bool,
-    list_networks: bool,
-    list_containers: bool,
-) -> Result<(), Error> {
-    if list_images {
-        log::debug!("Listing images");
-        match podman::images() {
-            Ok(imgs) => println!("{:?}", imgs),
-            Err(e) => println!("Could not list images: {e}"),
-        }
-    }
-
-    if list_networks {
-        log::debug!("Listing networks");
-        match podman::networks() {
-            Ok(nets) => println!("{:?}", nets),
-            Err(e) => println!("Could not list networks: {e}"),
-        }
-    }
-
-    if list_containers {
-        log::debug!("Listing containers");
-        match podman::ps_names() {
-            Ok(names) => println!("{:?}", names),
-            Err(e) => println!("Could not list containers: {e}"),
-        }
-    }
-
-    Ok(())
-}
-
-/// Test the notification on a specific file
-fn test_syscommand(
-    _s: Settings,
-    example_stdin: Option<String>,
-    std_lines: Option<usize>,
-) -> Result<(), Error> {
-    use id2202_autograder::utils::{syscommand_timeout, SyscommandSettings};
-
-    if let Some(s) = example_stdin {
-        log::info!("Testing stdin for string \"{s}\"");
-        match syscommand_timeout(
-            ["bash", "-c", "cat"],
-            SyscommandSettings {
-                stdin: Some(s),
-                max_stdout_length: Some(64 * 1024),
-                max_stderr_length: Some(64 * 1024),
-                ..Default::default()
-            },
-        ) {
-            Ok(output) => println!("Got the following stdout back:\n\"{}\"", output.stdout),
-            Err(e) => println!("Error running syscommand: {e}"),
-        }
-    }
-
-    if let Some(lc) = std_lines {
-        log::info!("Outputting {lc} lines to stdout");
-        match syscommand_timeout(
-            [
-                "bash",
-                "-c",
-                &format!(
-                    "for i in $(seq 1 {lc}); do echo {}; sleep 0.15; echo {} 1>&2; sleep 0.35; done",
-                    "'(stdout) foo bar babar'", "'(stderr) foo bar babar'",
-                ),
-            ],
-            SyscommandSettings {
-                max_stdout_length: Some(64 * 1024),
-                max_stderr_length: Some(64 * 1024),
-                ..Default::default()
-            },
-        ) {
-            Ok(output) => {
-                println!("stdout ({} bytes):\n\"{}\"", output.stdout.len(), output.stdout);
-                println!("stderr ({} bytes):\n\"{}\"", output.stderr.len(), output.stderr);
-            }
-            Err(e) => println!("Error running syscommand: {e}"),
-        }
-    }
-
-    Ok(())
-}
-
-/// Connects to every configured submission source over SSH, using the same
-/// keys and known hosts file that the runner fetches with. An unknown host key
-/// is presented by SSH itself, which records it once it has been accepted.
-fn verify_ssh_hosts(
-    s: Settings,
-    github_exit_code: i32,
-    gitlab_exit_code: i32,
-) -> Result<(), Error> {
-    use id2202_autograder::utils::{
-        create_dir_if_not_exists, path_absolute_parent, syscommand_timeout, SyscommandSettings,
-    };
-    use std::collections::BTreeSet;
-
-    // SSH creates the known hosts file, but not the directory holding it.
-    create_dir_if_not_exists(path_absolute_parent(&s.runner.ssh_known_hosts)?)?;
-
-    let targets: BTreeSet<(&str, u16, i32)> = s
-        .submission
-        .github
-        .known_instances
-        .iter()
-        .map(|gh| (gh.domain.as_str(), gh.ssh_port, github_exit_code))
-        .chain(
-            s.submission
-                .gitlab
-                .known_instances
-                .iter()
-                .map(|gl| (gl.domain.as_str(), gl.ssh_port, gitlab_exit_code)),
-        )
-        .map(|(domain, port, code)| match domain.rsplit_once(':') {
-            // The domain carries the port of the web interface when it is not
-            // served on the default one, which is not the port SSH is on.
-            Some((host, p)) if p.parse::<u16>().is_ok() => (host, port, code),
-            _ => (domain, port, code),
-        })
-        .collect();
-
-    let mut failures = 0;
-    for (host, port, expected_code) in targets {
-        let mut cmd: Vec<String> = vec![
-            "ssh".to_string(),
-            "-T".to_string(),
-            "-p".to_string(),
-            port.to_string(),
-            "-o".to_string(),
-            format!("UserKnownHostsFile={}", s.runner.ssh_known_hosts),
-        ];
-        if !s.runner.ssh_keys.is_empty() {
-            cmd.extend(["-o".to_string(), "IdentitiesOnly=yes".to_string()]);
-            for key in &s.runner.ssh_keys {
-                cmd.extend(["-i".to_string(), key.to_owned()]);
-            }
-        }
-        cmd.push(format!("git@{host}"));
-
-        println!("Connecting to {host} on port {port}");
-        let output = syscommand_timeout(
-            &cmd,
-            SyscommandSettings {
-                // The connection is interactive when the host key is unknown.
-                timeout: Duration::from_secs(300),
-                ..Default::default()
-            },
-        )?;
-        if output.code == expected_code {
-            println!("{host}:{port}: ok");
-        } else {
-            println!(
-                "{host}:{port}: failed, exited with {} rather than {expected_code}",
-                output.code
-            );
-            failures += 1;
-        }
-    }
-
-    if failures > 0 {
-        return Err(Error::runtime("could not connect to every configured host"));
-    }
     Ok(())
 }

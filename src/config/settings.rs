@@ -67,6 +67,12 @@ pub struct Settings {
     #[config(default = "")]
     #[schemars(skip)]
     pub reldir: String,
+
+    /// Absolute path of the configuration file itself, populated automatically
+    /// on load just like `reldir`.
+    #[config(default = "")]
+    #[schemars(skip)]
+    pub origin_path: String,
 }
 
 /// Logging settings
@@ -410,6 +416,10 @@ impl Settings {
 
         //eprintln!("Setting up canonical dir that the settings file is located in");
         s.reldir = path_absolute_parent(path)?;
+        s.origin_path = match std::path::Path::new(path).file_name() {
+            Some(name) => path_absolute_join(&s.reldir, name)?,
+            None => return Err(Error::fs("settings path names no file", path)),
+        };
 
         //eprintln!("Converting relative paths to absolute paths");
         s.log.dir = path_absolute_join(&s.reldir, &s.log.dir)?;

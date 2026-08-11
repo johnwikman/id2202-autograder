@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling>=1.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autograder-verifier-tools"
+version = "0.1.0"
+description = "Helpers for writing ID2202 autograder verifiers in Python"
+requires-python = ">=3.13"
+
+[tool.hatch.build.targets.wheel]
+packages = ["autograder_verifier_tools"]

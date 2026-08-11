@@ -67,6 +67,14 @@ sudo chown root:root data/ssh/id_ed25519*
 sudo docker compose run --rm --no-deps autograder \
     /autograder/target/release/entrypoint --settings /mnt/example/settings.toml verify-ssh-hosts
 
+# Fetch the grading image and build the verifier image ahead of time. The
+# autograder will not start if there images are absent. The `pull-image`
+# command takes a while (~10 minutes).
+sudo docker compose run --rm --no-deps autograder \
+    /autograder/target/release/entrypoint --settings /mnt/example/settings.toml pull-image
+sudo docker compose run --rm --no-deps autograder \
+    /autograder/target/release/entrypoint --settings /mnt/example/settings.toml build-image
+
 # Start the postgres instance
 sudo docker compose up -d postgres
 
@@ -78,18 +86,6 @@ sudo docker compose run --rm \
 
 # Start the autograder
 sudo docker compose up -d autograder
-
-# It will take some time (~10 minutes) for the autograder to start since it
-# needs to download the image that will be used for grading submissions, so
-# monitor the progress to see when it is ready:
-sudo docker compose logs -f autograder
-
-# Once you see the following it should be up and running:
-#  > Spawning a new server process
-#  > Spawning a new runner process (ID: 0)
-#  > Spawning a new runner process (ID: 1)
-#  > Spawning a new runner process (ID: 2)
-#  > Spawning a new runner process (ID: 3)
 ```
 
 The next time you start the autograder it should start immediately. Now stop

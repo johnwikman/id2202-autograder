@@ -173,6 +173,23 @@ pub fn pull(tag: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Builds an image from `context_dir` and tags it `tag`. Shares the pull
+/// timeout, since a build starts by pulling its base image. The output is
+/// bounded rather than unlimited so that a failed build carries its log in the
+/// returned error.
+pub fn build(tag: &str, context_dir: &str) -> Result<(), Error> {
+    let _output = syscommand_timeout(
+        ["podman", "build", "-t", tag, context_dir],
+        SyscommandSettings {
+            expected_code: Some(0),
+            timeout: Duration::from_secs(1200),
+            ..Default::default()
+        },
+    )?;
+
+    Ok(())
+}
+
 /// Create a network
 pub fn create_network(network_name: &str) -> Result<(), Error> {
     let _output = syscommand_timeout(
