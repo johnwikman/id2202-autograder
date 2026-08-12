@@ -68,35 +68,20 @@ let mode_factorize () =
   if Array.length Sys.argv <> 3 then
     print_exit 1 "usage: ./hello-extra factorize INTEGER"
   else match int_of_string_opt Sys.argv.(2) with
-    | Some i when i <> 0 -> (
-        let (lst, i) = if i < 0 then ([-1], Int.neg i) else ([], i) in
-        let is_prime n =
-          if n < 2 then false
-          else if n = 2 then true
-          else if (n mod 2) = 0 then false
-          else
-            let rec iterate d =
-              if d >= n then true
-              else if (n mod d) = 0 then false
-              else iterate (d + 2)
-            in
-            iterate 3
-        in
+    | None -> print_exit 1 "provided value is not an integer"
+    | Some 0 -> print_exit 1 "cannot factorize 0"
+    | Some i ->
         let rec factor acc n d =
           if n = 1 then acc
-          else if not (is_prime d) then
-            factor acc n (d + 1)
-          else if (n mod d) = 0 then
-            factor (d :: acc) (n / d) d
-          else
-            factor acc n (d + 1)
+          else if d * d > n then n :: acc
+          else if n mod d = 0 then factor (d :: acc) (n / d) d
+          else factor acc n (d + 1)
         in
-        let lst = factor lst i 2 in
-        List.map string_of_int lst
+        let lst, n = if i < 0 then ([-1], -i) else ([], i) in
+        factor lst n 2
+        |> List.map string_of_int
         |> String.concat " "
         |> print_endline
-      )
-    | _ -> print_exit 1 "provided value code not an integer != 0"
 
 
 let () =
