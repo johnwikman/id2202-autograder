@@ -1,3 +1,6 @@
+# Read environment variables from `.env`.
+set dotenv-load := true
+
 image_version := "2.0.0-dev4"
 image_name    := "localhost/id2202-autograder"
 image_tag     := image_name + ":" + image_version
@@ -31,7 +34,7 @@ test-basic:
 # Run the GitLab test suite against an already running stack. Optionally takes
 # the names of the scenarios to run. See misc/test_gitlab/__main__.py.
 test-gitlab *SCENARIOS:
-    dotenv run python3 -m misc.test_gitlab {{SCENARIOS}}
+    python3 -m misc.test_gitlab {{SCENARIOS}}
 
 setup-sshkeys:
     #!/usr/bin/env bash
@@ -54,7 +57,6 @@ setup-sshkeys:
 setup-gitlab:
     #!/usr/bin/env bash
     set -euo pipefail
-    export $(cat .env)
     KEY_FILE="data/ssh/id_ed25519.pub"
     if [[ ! -f "${KEY_FILE}" ]]; then
       echo "missing ${KEY_FILE}." >&2

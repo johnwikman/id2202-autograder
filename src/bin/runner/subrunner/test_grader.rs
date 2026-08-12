@@ -454,6 +454,7 @@ pub mod grade {
         );
         container.exec(&container::ExecOptions {
             cmd: &["bash", "-c", &asm_setup],
+            workdir: "/", // cannot be in GRADING_DIR while setting it up
             expected_code: Some(0),
             ..stage_exec
         })?;

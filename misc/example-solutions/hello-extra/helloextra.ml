@@ -63,6 +63,41 @@ let mode_code () =
     | Some code -> exit code
     | None -> print_exit 1 "provided exit code not an integer"
 
+(* ./hello-extra factorize INTEGER *)
+let mode_factorize () =
+  if Array.length Sys.argv <> 3 then
+    print_exit 1 "usage: ./hello-extra factorize INTEGER"
+  else match int_of_string_opt Sys.argv.(2) with
+    | Some i when i <> 0 -> (
+        let (lst, i) = if i < 0 then ([-1], Int.neg i) else ([], i) in
+        let is_prime n =
+          if n < 2 then false
+          else if n = 2 then true
+          else if (n mod 2) = 0 then false
+          else
+            let rec iterate d =
+              if d >= n then true
+              else if (n mod d) = 0 then false
+              else iterate (d + 2)
+            in
+            iterate 3
+        in
+        let rec factor acc n d =
+          if n = 1 then acc
+          else if not (is_prime d) then
+            factor acc n (d + 1)
+          else if (n mod d) = 0 then
+            factor (d :: acc) (n / d) d
+          else
+            factor acc n (d + 1)
+        in
+        let lst = factor lst i 2 in
+        List.map string_of_int lst
+        |> String.concat " "
+        |> print_endline
+      )
+    | _ -> print_exit 1 "provided value code not an integer != 0"
+
 
 let () =
   if Array.length Sys.argv < 2 then
@@ -71,4 +106,5 @@ let () =
     | "echo" -> mode_echo ()
     | "calc" -> mode_calc ()
     | "code" -> mode_code ()
+    | "factorize" -> mode_factorize ()
     | _ -> print_exit 1 "Invalid mode"

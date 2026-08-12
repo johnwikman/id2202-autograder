@@ -2,10 +2,10 @@
 anything: bring up postgres, gitlab and the autograder first.
 
     sudo docker compose up -d postgres gitlab
-    export $(cat .env)
     export AUTOGRADER_SERVER_API_AUTH_TOKENS="itest-token"
     export AUTOGRADER_RUNNER_SSH_KEYS="$(pwd)/data/ssh/itest_ed25519"
-    AUTOGRADER_SERVER_ADDRESS=0.0.0.0 ./target/debug/entrypoint -s example/settings.toml start
+    AUTOGRADER_SERVER_ADDRESS=0.0.0.0 dotenv run --override \
+        ./target/debug/entrypoint -s example/settings.toml start
 
 The push goes over SSH as a dedicated GitLab user, which the suite creates and
 grants access itself. The one thing it will not do for you is generate the key
