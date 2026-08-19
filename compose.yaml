@@ -26,12 +26,14 @@ services:
         read_only: true
         bind:
           selinux: z
-        # Ensure that containers are saved between autograder restarts
-      - type: bind
-        source: data/containers
+        # Ensure that containers are saved between autograder restarts.
+        # This has to be a docker volume rather than a bind mount: podman
+        # stores its images on an overlay filesystem, which requires a native
+        # Linux filesystem underneath. A bind mount from the host does not
+        # provide that on macOS (VirtioFS) or Windows.
+      - type: volume
+        source: containers
         target: /var/lib/containers/storage
-        bind:
-          selinux: z
         # Necessary for the autograder to be able to fetch repositories
       - type: bind
         source: data/ssh
@@ -118,3 +120,7 @@ services:
         gitlab_rails['gitlab_shell_ssh_port'] = 2424
         gitlab_sshd['enable'] = true
         gitlab_sshd['listen_address'] = '[::]:2424'
+
+volumes:
+  # Podman image and container storage for the autograder service.
+  containers:

@@ -158,14 +158,20 @@ pub fn ps() -> Result<Vec<PodmanPSOutput>, Error> {
     Ok(pslist)
 }
 
-/// Pulls an image. This will time out after 20 minutes, which should be
-/// sufficient for even the larger images.
+/// Time budget for fetching or building a grading image. Generous on purpose:
+/// the grading image is several gigabytes, so the download alone outlasts a
+/// short timeout on an ordinary connection, and a failure here costs the whole
+/// transfer. Only the `pull-image` and `build-image` setup commands wait this
+/// long; grading never does.
+const IMAGE_SETUP_TIMEOUT: Duration = Duration::from_secs(3 * 3600);
+
+/// Pulls an image, bounded by `IMAGE_SETUP_TIMEOUT`.
 pub fn pull(tag: &str) -> Result<(), Error> {
     let _output = syscommand_timeout(
         ["podman", "pull", tag],
         SyscommandSettings {
             expected_code: Some(0),
-            timeout: Duration::from_secs(1200),
+            timeout: IMAGE_SETUP_TIMEOUT,
             ..Default::default()
         },
     )?;
@@ -182,7 +188,7 @@ pub fn build(tag: &str, context_dir: &str) -> Result<(), Error> {
         ["podman", "build", "-t", tag, context_dir],
         SyscommandSettings {
             expected_code: Some(0),
-            timeout: Duration::from_secs(1200),
+            timeout: IMAGE_SETUP_TIMEOUT,
             ..Default::default()
         },
     )?;

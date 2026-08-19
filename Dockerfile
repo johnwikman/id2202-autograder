@@ -27,6 +27,17 @@ RUN source /root/.bashrc \
     && cargo build ${CARGO_BUILD_FLAGS} \
     && cargo install diesel_cli --no-default-features --features "postgres"
 
+# The base image is configured for rootless podman, which has to go through
+# fuse-overlayfs. Here podman runs as root on a volume that supports overlayfs
+# natively, so let it use the kernel driver: binaries cannot be executed from a
+# FUSE mount on some kernels (notably the one Docker Desktop ships), which
+# otherwise fails every grading container with "exec container process:
+# Invalid argument". `fsync=0` goes along with it, as the kernel driver
+# rejects that fuse-overlayfs option with EINVAL when mounting.
+RUN sed -i -e '/^\s*mount_program\s*=/d' \
+           -e 's/^\s*mountopt\s*=.*/mountopt = "nodev"/' \
+           /etc/containers/storage.conf
+
 ENV PATH="/root/.cargo/bin:$PATH"
 
 CMD [ "bash" ]

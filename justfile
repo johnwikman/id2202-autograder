@@ -15,7 +15,7 @@ rm-image:
     docker rmi {{image_tag}}
 
 setup-dirs:
-    mkdir -p data/containers data/log data/shadow data/ssh \
+    mkdir -p data/log data/shadow data/ssh \
         data/postgres \
         data/gitlab/config data/gitlab/logs data/gitlab/data
 
@@ -64,7 +64,14 @@ setup-gitlab:
       echo "missing ${KEY_FILE}." >&2
       exit 1
     fi
-    sudo docker compose exec -T \
+    # `magic-setup` records how it reaches the docker engine in MAGIC_SUDO.
+    # Standalone, fall back to sudo only when the engine is out of reach
+    # without it (`sudo docker` is not usable on a Docker Desktop host).
+    SUDO="${MAGIC_SUDO:-}"
+    if [[ -z "${SUDO}" ]] && ! docker info >/dev/null 2>&1; then
+      SUDO="sudo"
+    fi
+    ${SUDO} docker compose exec -T \
       -e ROOT_TOKEN="${GITLAB_ROOT_TOKEN}" \
       -e AUTOGRADER_TOKEN="${GITLAB_AUTOGRADER_TOKEN}" \
       -e AUTOGRADER_PASSWORD="${GITLAB_AUTOGRADER_PASSWORD}" \
@@ -173,7 +180,9 @@ magic-setup:
      else \
          read -rp "data/ holds a previous magic instance, remove it? [y/N] " ans; \
          case "$ans" in \
-         [yY]*) $(dotenv get MAGIC_SUDO) rm -rf data && echo "removed: data/";; \
+         [yY]*) $(dotenv get MAGIC_SUDO) docker compose down -v --remove-orphans \
+                && $(dotenv get MAGIC_SUDO) rm -rf data \
+                && echo "removed: data/ and the podman storage volume";; \
          *) echo "kept: data/";; \
          esac; \
      fi
