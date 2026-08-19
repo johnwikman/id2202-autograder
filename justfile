@@ -15,7 +15,9 @@ rm-image:
     docker rmi {{image_tag}}
 
 setup-dirs:
-    mkdir -p data/containers data/log data/postgres data/ssh
+    mkdir -p data/containers data/log data/shadow data/ssh \
+        data/postgres \
+        data/gitlab/config data/gitlab/logs data/gitlab/data
 
 # Generate the static HTML documentation.
 gen-docs settings="example/settings.toml" output_dir="target/docs/site":
@@ -132,3 +134,116 @@ setup-gitlab:
         "${GITLAB_API}/user/keys" && echo
       echo "autograder: SSH key registered"
     fi
+
+
+#  .+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.+"+.
+# (                                                         )
+#  )     888b     d888                   d8b               (
+# (      8888b   d8888                   Y8P                )
+#  )     88888b.d88888                                     (
+# (      888Y88888P888  8888b.   .d88b.  888  .d8888b       )
+#  )     888 Y888P 888     "88b d88P"88b 888 d88P"         (
+# (      888  Y8P  888 .d888888 888  888 888 888            )
+#  )     888   "   888 888  888 Y88b 888 888 Y88b.         (
+# (      888       888 "Y888888  "Y88888 888  "Y8888P       )
+#  )                                 888                   (
+# (                             Y8b d88P                    )
+#  "+.+"+.+"+.+"+.+"+.+"+.+"+.+"+"Y88P""+.+"+.+"+.+"+.+"+.+"
+#
+# A "magic" setup of the autograder, where passwords and config is chosen for
+# the user. This should never be used in a production environment. Only for
+# familiarizing oneself with the autograder test configuration and its API.
+# This is a non-interactive process by default, but can prompt the user if
+# things arise.
+magic-setup:
+    # Check whether we need sudo to interact with the docker engine.
+    @echo "checking how to reach the docker engine (this may ask for your sudo password)"
+    @if docker info >/dev/null 2>&1; then \
+         dotenv set MAGIC_SUDO "" && echo "reachable as $(whoami): docker engine"; \
+     elif sudo docker info >/dev/null 2>&1; then \
+         dotenv set MAGIC_SUDO "sudo" && echo "reachable with sudo: docker engine"; \
+     else \
+         echo "cannot reach the docker engine. Is docker installed and running?" >&2; \
+         exit 1; \
+     fi
+    # An earlier magic instance is otherwise reused as-is, which is rarely what
+    # we want if it was left half-finished.
+    @if [ ! -e data/gitlab ]; then \
+         echo "not present: data/gitlab, skipping removal check"; \
+     else \
+         read -rp "data/ holds a previous magic instance, remove it? [y/N] " ans; \
+         case "$ans" in \
+         [yY]*) $(dotenv get MAGIC_SUDO) rm -rf data && echo "removed: data/";; \
+         *) echo "kept: data/";; \
+         esac; \
+     fi
+    just setup-dirs
+    just setup-sshkeys
+
+    # Set up dummy credentials in .env. DO NOT USE THESE IN PRODUCTION.
+    dotenv set GITLAB_ROOT_TOKEN "glpat-FHGY8yS6oxcn9KM9WmdDE7"
+    dotenv set GITLAB_AUTOGRADER_TOKEN "glpat-Hmmn72ezZ53PHB6zLt6pPf"
+    dotenv set GITLAB_AUTOGRADER_PASSWORD "Kwccyk7iBQ8"
+    dotenv set AUTOGRADER_SERVER_API_AUTH_TOKENS "example-api-token"
+    dotenv set AUTOGRADER_GITLAB_AUTH_TOKENS \
+         "localhost:8929=$(dotenv get GITLAB_AUTOGRADER_TOKEN)"
+
+    # Build the autograder image
+    $(dotenv get MAGIC_SUDO) just build-image
+    $(dotenv get MAGIC_SUDO) docker compose up -d --remove-orphans postgres gitlab
+    # Postgres only starts listening on TCP once it is done initializing the
+    # database, which takes a moment on a fresh data/postgres.
+    @echo -n "waiting for postgres to accept connections"
+    @until $(dotenv get MAGIC_SUDO) docker compose exec -T postgres \
+         pg_isready -h 127.0.0.1 -U autograder >/dev/null 2>&1; do \
+         sleep 1 && echo -n "."; \
+     done; echo -e "\npostgres is up"
+    # Setup database tables
+    $(dotenv get MAGIC_SUDO) docker compose run --rm \
+        -e "DATABASE_URL=postgres://autograder:ChangeMe@postgres/autograder" \
+        autograder diesel migration run
+    # Fetches and builds necessary images
+    $(dotenv get MAGIC_SUDO) docker compose run --rm --no-deps autograder \
+        /autograder/target/release/entrypoint \
+        --settings /mnt/example/settings.toml pull-image
+    $(dotenv get MAGIC_SUDO) docker compose run --rm --no-deps autograder \
+        /autograder/target/release/entrypoint \
+        --settings /mnt/example/settings.toml build-image
+
+    # A freshly created GitLab needs a few minutes before it answers, so
+    # hopefully it should be up by now.
+    @echo -n "waiting for gitlab to come up"
+    @until curl -sf -o /dev/null http://localhost:8929/users/sign_in; do \
+         sleep 5 && echo -n "."; \
+     done; echo -e "\ngitlab is up"
+    just setup-gitlab
+
+    # Now verify SSH hosts when everything is properly set up
+    $(dotenv get MAGIC_SUDO) docker compose run --rm --no-deps autograder \
+        /autograder/target/release/entrypoint \
+        --settings /mnt/example/settings.toml verify-ssh-hosts
+
+    $(dotenv get MAGIC_SUDO) docker compose down
+    @echo "setup done. Start the instance with 'just magic-start'"
+
+# Start the magic instance in the background. Requires a prior `magic-setup`.
+magic-start:
+    @test -n "${MAGIC_SUDO+isset}" || { \
+         echo "no magic instance here yet, run 'just magic-setup' first" >&2; \
+         exit 1; \
+     }
+    $MAGIC_SUDO docker compose up -d --remove-orphans postgres gitlab autograder
+    @echo -n "waiting for gitlab to come up"
+    @until curl -sf -o /dev/null http://localhost:8929/users/sign_in; do \
+         sleep 5 && echo -n "."; \
+     done; echo -e "\ngitlab is up"
+    @echo "autograder: http://localhost:8080"
+    @echo "gitlab:     http://localhost:8929"
+
+# Stop the magic instance. Everything under `data/` is kept for the next start.
+magic-stop:
+    @test -n "${MAGIC_SUDO+isset}" || { \
+         echo "no magic instance here yet, run 'just magic-setup' first" >&2; \
+         exit 1; \
+     }
+    $MAGIC_SUDO docker compose down

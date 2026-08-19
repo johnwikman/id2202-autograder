@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use confique::Config;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -12,6 +14,54 @@ fn parse_env_bool(s: &str) -> Result<bool, Error> {
         "true" | "t" | "yes" | "y" => Ok(true),
         "false" | "f" | "no" | "n" => Ok(false),
         _ => Error::err_parse_type("bool", s),
+    }
+}
+
+/// The configured addresses of an instance, as they are written in the
+/// settings file.
+trait KnownInstanceSettings {
+    /// The configured domain identifier of the instance.
+    fn domain(&self) -> &str;
+    /// Optional outbound hostname of the instance. If empty string, this
+    /// should be interpreted to use the hostname from the configured domain.
+    fn outbound(&self) -> &str;
+}
+
+/// Instances that can be addressed by a domain.
+pub trait KnownInstance {
+    /// The hostname of the domain, without the port number.
+    fn host(&self) -> &str;
+
+    /// The host that outbound traffic is sent to.
+    fn outbound_host(&self) -> &str;
+
+    /// An outbound domain to send requests to, which also includes the port
+    /// number from the domain itself.
+    fn outbound_domain(&self) -> Cow<'_, str>;
+}
+
+impl<T: KnownInstanceSettings> KnownInstance for T {
+    fn host(&self) -> &str {
+        match self.domain().rsplit_once(':') {
+            Some((host, port)) if port.parse::<u16>().is_ok() => host,
+            _ => self.domain(),
+        }
+    }
+
+    fn outbound_host(&self) -> &str {
+        match self.outbound() {
+            "" => self.host(),
+            host => host,
+        }
+    }
+
+    fn outbound_domain(&self) -> Cow<'_, str> {
+        match (self.outbound_host(), self.domain().rsplit_once(':')) {
+            (host, Some((_, port))) if port.parse::<u16>().is_ok() => {
+                Cow::Owned(format!("{host}:{port}"))
+            }
+            (host, _) => Cow::Borrowed(host),
+        }
     }
 }
 
@@ -154,8 +204,15 @@ pub struct GitHubServerSettings {
     /// The domain address at which the GitHub instance is hosted at.
     pub domain: String,
 
+    /// The hostname of the server for outbound traffic. If empty, that means
+    /// that the domain is also used for outbound traffic.
+    pub outbound_host: String,
+
     /// The port at which the instance accepts SSH connections.
     pub ssh_port: u16,
+
+    /// The user to use in the SSH connections. (Usually `git` for git cloning.)
+    pub ssh_user: String,
 
     /// GitHub authorization token for using the API.
     pub auth_token: String,
@@ -179,6 +236,15 @@ pub struct GitHubServerSettings {
     /// A repository is not allowed to end with any of these
     /// strings to be graded.
     pub prohibited_repo_suffixes: Vec<String>,
+}
+
+impl KnownInstanceSettings for GitHubServerSettings {
+    fn domain(&self) -> &str {
+        &self.domain
+    }
+    fn outbound(&self) -> &str {
+        &self.outbound_host
+    }
 }
 
 /// Settings specific to incoming GitLab requests. See [ServerSettings] for
@@ -205,8 +271,15 @@ pub struct GitLabServerSettings {
     /// The domain address at which the GitLab instance is hosted at.
     pub domain: String,
 
+    /// The hostname of the server for outbound traffic. If empty, that means
+    /// that the domain is also used for outbound traffic.
+    pub outbound_host: String,
+
     /// The port at which the instance accepts SSH connections.
     pub ssh_port: u16,
+
+    /// The user to use in the SSH connections. (Usually `git` for git cloning.)
+    pub ssh_user: String,
 
     /// GitLab authorization token for using the API.
     pub auth_token: String,
@@ -235,6 +308,15 @@ pub struct GitLabServerSettings {
     /// should only ever be disabled when testing against a local GitLab
     /// instance. Use with caution.
     pub use_https: bool,
+}
+
+impl KnownInstanceSettings for GitLabServerSettings {
+    fn domain(&self) -> &str {
+        &self.domain
+    }
+    fn outbound(&self) -> &str {
+        &self.outbound_host
+    }
 }
 
 /// Connection details for the PostgreSQL database.
@@ -452,49 +534,45 @@ impl Settings {
         s.runner.shadow_dir = path_absolute_join(&s.reldir, &s.runner.shadow_dir)?;
         s.runner.test_config = path_absolute_join(&s.reldir, &s.runner.test_config)?;
 
-        // Additional environment variables not captured by confique
-        if let Ok(values) = std::env::var("AUTOGRADER_GITHUB_AUTH_TOKENS") {
-            // Format: domain1=token;domain2=token
-            for (domain, token) in values.split(";").filter_map(|p| p.split_once('=')) {
-                match s
-                    .submission
-                    .github
-                    .known_instances
-                    .iter_mut()
-                    .find(|gh| gh.domain == domain.trim())
-                {
-                    Some(gh_instance) => {
-                        gh_instance.auth_token = token.trim().to_string();
-                    }
+        /// Helper function for parsing variables provided a semicolon
+        /// separated associations for preconfigured domains. I.e.
+        ///
+        /// ```txt
+        /// <domain1>=<value>;<domain2>=<value>;...
+        /// ```
+        fn env_domain_pair_set<T: KnownInstanceSettings>(
+            key: &str,
+            instances: &mut [T],
+            mut set: impl FnMut(&mut T, String),
+        ) {
+            let Ok(values) = std::env::var(key) else {
+                return;
+            };
+            for (domain, value) in values.split(';').filter_map(|p| p.split_once('=')) {
+                match instances.iter_mut().find(|i| i.domain() == domain.trim()) {
+                    Some(instance) => set(instance, value.trim().to_string()),
                     None => {
-                        log::warn!(
-                            "Unrecognized domain in environment variable AUTOGRADER_GITHUB_AUTH_TOKENS"
-                        );
+                        log::warn!("Unrecognized domain {domain} in environment variable {key}")
                     }
                 }
             }
         }
 
-        if let Ok(values) = std::env::var("AUTOGRADER_GITLAB_AUTH_TOKENS") {
-            for (domain, token) in values.split(";").filter_map(|p| p.split_once('=')) {
-                match s
-                    .submission
-                    .gitlab
-                    .known_instances
-                    .iter_mut()
-                    .find(|gl| gl.domain == domain.trim())
-                {
-                    Some(gl_instance) => {
-                        gl_instance.auth_token = token.trim().to_string();
-                    }
-                    None => {
-                        log::warn!(
-                            "Unrecognized domain in environment variable AUTOGRADER_GITLAB_AUTH_TOKENS"
-                        );
-                    }
-                }
-            }
-        }
+        let gh = &mut s.submission.github.known_instances;
+        env_domain_pair_set("AUTOGRADER_GITHUB_AUTH_TOKENS", gh, |gh, v| {
+            gh.auth_token = v
+        });
+        env_domain_pair_set("AUTOGRADER_GITHUB_OUTBOUND_HOSTS", gh, |gh, v| {
+            gh.outbound_host = v
+        });
+
+        let gl = &mut s.submission.gitlab.known_instances;
+        env_domain_pair_set("AUTOGRADER_GITLAB_AUTH_TOKENS", gl, |gl, v| {
+            gl.auth_token = v
+        });
+        env_domain_pair_set("AUTOGRADER_GITLAB_OUTBOUND_HOSTS", gl, |gl, v| {
+            gl.outbound_host = v
+        });
 
         Ok(s)
     }

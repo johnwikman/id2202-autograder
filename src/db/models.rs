@@ -7,6 +7,9 @@ use diesel::prelude::{
 use serde::Serialize;
 use std::time::SystemTime;
 
+use crate::config::{settings::KnownInstance, Settings};
+use crate::error::Error;
+
 /// Cheekily using HTTP-like codes here, although they have nothing to do with
 /// the HTTP protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive, ToPrimitive)]
@@ -264,15 +267,50 @@ impl SubmissionInfo {
         }
     }
 
-    /// Returns a tuple containing `(SSH URL, Commit)`
-    pub fn ssh_url_and_commit(&self) -> (&str, &str) {
-        match self {
+    /// Returns a tuple containing `(Git clone URL, Commit)`
+    pub fn git_clone_url_and_commit(&self, settings: &Settings) -> Result<(String, &str), Error> {
+        let (user, host, port, path, commit) = match self {
             Self::GitHub {
                 gh_src, gh_info, ..
-            } => (&gh_src.ssh_url, &gh_info.commit),
+            } => {
+                let instance = settings
+                    .submission
+                    .github
+                    .known_instances
+                    .iter()
+                    .find(|gh| gh.domain == gh_src.domain)
+                    .ok_or_else(|| {
+                        Error::runtime(format!("unknown GitHub instance {}", gh_src.domain))
+                    })?;
+                (
+                    instance.ssh_user.as_str(),
+                    instance.outbound_host(),
+                    instance.ssh_port,
+                    format!("{}/{}", gh_src.org, gh_src.repo),
+                    gh_info.commit.as_str(),
+                )
+            }
             Self::GitLab {
                 gl_src, gl_info, ..
-            } => (&gl_src.ssh_url, &gl_info.commit),
-        }
+            } => {
+                let instance = settings
+                    .submission
+                    .gitlab
+                    .known_instances
+                    .iter()
+                    .find(|gl| gl.domain == gl_src.domain)
+                    .ok_or_else(|| {
+                        Error::runtime(format!("unknown GitLab instance {}", gl_src.domain))
+                    })?;
+                (
+                    instance.ssh_user.as_str(),
+                    instance.outbound_host(),
+                    instance.ssh_port,
+                    format!("{}/{}", gl_src.namespace, gl_src.repo),
+                    gl_info.commit.as_str(),
+                )
+            }
+        };
+        Ok((format!("ssh://{user}@{host}:{port}/{path}.git"), commit))
     }
 }

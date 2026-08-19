@@ -21,17 +21,53 @@ For deployment:
 
  * Docker
  * SSH
- * [`just`](https://github.com/casey/just) _(optional)_
+ * [`just`](https://github.com/casey/just) _(only used to run predefined commands within the `justfile`)_
 
-For development (optional, but recommended):
+For testing (in addition to _deployment_ dependencies):
+
+ * [`dotenv`](https://github.com/theskumar/python-dotenv)
+
+For development (in addition to _deployment_ and _testing_ dependencies):
 
  * Python (3.11 or later)
  * `cargo` (Rust build system)
- * [`dotenv`](https://github.com/theskumar/python-dotenv)
 
-## Getting Started
-To use the autograder, we will build it as a docker image and run it through
-docker compose.
+
+## Testing: Getting Started
+
+To familiarize yourself with test configuration and to exploring the
+autograder, you can spin up a default _magic_ instance of the autograder with a
+database and an accompanying GitLab instance:
+
+```sh
+# First-time setup when using the magic instance. It will prompt for sudo
+# permissions when necessary. May also prompt for other decisions to make.
+just magic-setup
+
+# ON REPEATED USAGE: Just use the following two recipes.
+
+# Start the magic instance as a background process.
+just magic-start
+
+# Stop the magic instance.
+just magic-stop
+```
+
+After `just magic-start`, you can access the following services in your
+browser:
+
+ * autograder: http://localhost:8080
+ * gitlab: http://localhost:8929
+
+It will read settings from `example/settings.toml` and test configuration from
+`example/tests/tests.toml`. Change those files to edit the configuration of the
+autograder. If you edit `example/settings.toml`, you need to restart the
+autograder for your changes to come into effect.
+
+## Deployment: Getting Started
+
+To use the autograder for deployment in a production environment, we will build
+it as a docker image and run it through docker compose.
 
 The autograder container will itself spawn additional podman containers, hence
 it requires careful configuration of the docker compose file. See the
@@ -39,8 +75,7 @@ it requires careful configuration of the docker compose file. See the
 specifically, see the configuration options for `cap_add`, `devices`,
 `security_opt`, `privileged`, and `init`.
 
-We use `just` as the command runner. To build
-the docker image:
+We use `just` as the command runner. To build the docker image:
 
 ```sh
 # (sudo can be omitted if running rootless docker)
@@ -161,7 +196,7 @@ A diagram to illustrate the setup (entrypoint omitted):
                                                ...
 ```
 
-## Development Practice
+## Development: Getting Started
 
 Development is easiest when running the autograder locally on your computer.
 
@@ -209,6 +244,10 @@ dotenv set GITLAB_ROOT_TOKEN "glpat-$(head -c 16 /dev/random | basenc --base58)"
 dotenv set GITLAB_AUTOGRADER_TOKEN "glpat-$(head -c 16 /dev/random | basenc --base58)"
 dotenv set GITLAB_AUTOGRADER_PASSWORD "glpat-$(head -c 8 /dev/random | basenc --base58)"
 dotenv set AUTOGRADER_GITLAB_AUTH_TOKENS "localhost:8929=$(dotenv get GITLAB_AUTOGRADER_TOKEN)"
+
+# Also make sure that we have an API token to use for testing purposes
+# (In practice this should be randomly generated)
+dotenv set AUTOGRADER_SERVER_API_AUTH_TOKENS "example-api-token"
 
 # Start the database
 sudo docker compose up -d --remove-orphans postgres

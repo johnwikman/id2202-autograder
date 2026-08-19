@@ -148,11 +148,7 @@ impl TestGroup {
     ///                every ancestor `config.toml`.
     /// - `numbering`: Sequence of numbers that keeps that track of numbering
     ///                for test group titles.
-    pub fn new(
-        dir: &str,
-        inherited: &TestConfig,
-        numbering: Vec<i32>,
-    ) -> Result<TestGroup, Error> {
+    pub fn new(dir: &str, inherited: &TestConfig, numbering: Vec<i32>) -> Result<TestGroup, Error> {
         log::debug!("Creating test group from directory {dir}");
 
         /// A deserializable test group, i.e. the contents of a `config.toml` file.

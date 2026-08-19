@@ -2,7 +2,10 @@
 //! https://docs.rs/reqwest/latest/reqwest/
 
 use crate::{
-    config::{settings::GitHubServerSettings, Settings},
+    config::{
+        settings::{GitHubServerSettings, KnownInstance},
+        Settings,
+    },
     error::Error,
 };
 use reqwest::{
@@ -61,7 +64,10 @@ pub async fn create_commit_message(
     let response = c
         .post(format!(
             "https://{}/api/v3/repos/{}/{}/commits/{}/comments",
-            instance.domain, organization_name, repo_name, commit_hash
+            instance.outbound_domain(),
+            organization_name,
+            repo_name,
+            commit_hash
         ))
         .headers(common_headers(settings, instance)?)
         .json(&GhCommitMessage {
@@ -127,7 +133,10 @@ pub async fn create_commit_status(
     let response = c
         .post(format!(
             "https://{}/api/v3/repos/{}/{}/statuses/{}",
-            instance.domain, organization_name, repo_name, commit_hash
+            instance.outbound_domain(),
+            organization_name,
+            repo_name,
+            commit_hash
         ))
         .headers(common_headers(settings, instance)?)
         .json(&GhCommitStatus {
@@ -171,7 +180,9 @@ pub async fn repo_exists(
     let response = c
         .get(format!(
             "https://{}/api/v3/repos/{}/{}",
-            instance.domain, organization_name, repo_name
+            instance.outbound_domain(),
+            organization_name,
+            repo_name
         ))
         .headers(common_headers(settings, instance)?)
         .send()
@@ -212,7 +223,8 @@ pub async fn create_repo(
     let response = c
         .post(format!(
             "https://{}/api/v3/orgs/{}/repos",
-            instance.domain, organization_name
+            instance.outbound_domain(),
+            organization_name
         ))
         .headers(common_headers(settings, instance)?)
         .json(&GhCreateRepo {

@@ -2,7 +2,7 @@
 anything: bring up postgres, gitlab and the autograder first.
 
     sudo docker compose up -d postgres gitlab
-    export AUTOGRADER_SERVER_API_AUTH_TOKENS="itest-token"
+    export AUTOGRADER_SERVER_API_AUTH_TOKENS="example-api-token"
     export AUTOGRADER_RUNNER_SSH_KEYS="$(pwd)/data/ssh/itest_ed25519"
     AUTOGRADER_SERVER_ADDRESS=0.0.0.0 dotenv run --override \
         ./target/debug/entrypoint -s example/settings.toml start

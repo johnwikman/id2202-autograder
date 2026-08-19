@@ -4,7 +4,11 @@
 use clap::Args;
 use std::time::Duration;
 
-use id2202_autograder::{config::Settings, error::Error, podman};
+use id2202_autograder::{
+    config::{settings::KnownInstance, Settings},
+    error::Error,
+    podman,
+};
 
 /// The build context for the verifier image. Since it ships inside the
 /// autograder image next to the sources, it is located relative to the crate
@@ -85,29 +89,31 @@ pub fn verify_ssh_hosts(s: Settings, args: VerifySshHostsArgs) -> Result<(), Err
     // SSH creates the known hosts file, but not the directory holding it.
     create_dir_if_not_exists(path_absolute_parent(&s.runner.ssh_known_hosts)?)?;
 
-    let targets: BTreeSet<(&str, u16, i32)> = s
+    let targets: BTreeSet<(&str, &str, u16, i32)> = s
         .submission
         .github
         .known_instances
         .iter()
-        .map(|gh| (gh.domain.as_str(), gh.ssh_port, args.github_exit_code))
-        .chain(
-            s.submission
-                .gitlab
-                .known_instances
-                .iter()
-                .map(|gl| (gl.domain.as_str(), gl.ssh_port, args.gitlab_exit_code)),
-        )
-        .map(|(domain, port, code)| match domain.rsplit_once(':') {
-            // The domain carries the port of the web interface when it is not
-            // served on the default one, which is not the port SSH is on.
-            Some((host, p)) if p.parse::<u16>().is_ok() => (host, port, code),
-            _ => (domain, port, code),
+        .map(|gh| {
+            (
+                gh.ssh_user.as_str(),
+                gh.outbound_host(),
+                gh.ssh_port,
+                args.github_exit_code,
+            )
         })
+        .chain(s.submission.gitlab.known_instances.iter().map(|gl| {
+            (
+                gl.ssh_user.as_str(),
+                gl.outbound_host(),
+                gl.ssh_port,
+                args.gitlab_exit_code,
+            )
+        }))
         .collect();
 
     let mut failures = 0;
-    for (host, port, expected_code) in targets {
+    for (user, host, port, expected_code) in targets {
         let mut cmd: Vec<String> = vec![
             "ssh".to_string(),
             "-T".to_string(),
@@ -122,7 +128,7 @@ pub fn verify_ssh_hosts(s: Settings, args: VerifySshHostsArgs) -> Result<(), Err
                 cmd.extend(["-i".to_string(), key.to_owned()]);
             }
         }
-        cmd.push(format!("git@{host}"));
+        cmd.push(format!("{user}@{host}"));
 
         println!("Connecting to {host} on port {port}");
         let output = syscommand_timeout(

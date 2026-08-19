@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 /// Various GitLab related utilities
 use crate::{
-    config::{settings::GitLabServerSettings, Settings},
+    config::{
+        settings::{GitLabServerSettings, KnownInstance},
+        Settings,
+    },
     error::Error,
 };
 use reqwest::{self, header::HeaderMap, Client as ReqwestClient};
@@ -53,7 +56,7 @@ pub async fn create_commit_message(
         .post(format!(
             "{}://{}/api/v4/projects/{}/repository/commits/{}/comments",
             if instance.use_https { "https" } else { "http" },
-            instance.domain,
+            instance.outbound_domain(),
             repo_id(namespace, repo_name),
             commit_hash
         ))
@@ -126,7 +129,7 @@ pub async fn set_commit_status(
         .post(format!(
             "{}://{}/api/v4/projects/{}/statuses/{}",
             if instance.use_https { "https" } else { "http" },
-            instance.domain,
+            instance.outbound_domain(),
             repo_id(namespace, repo_name),
             commit_hash
         ))

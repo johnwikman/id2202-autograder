@@ -235,7 +235,10 @@ impl<'a> SubmissionRunnerHandle<'a> {
             }
         }
 
-        let (ssh_url, commit) = subinfo.ssh_url_and_commit();
+        let (ssh_url, commit) = subinfo.git_clone_url_and_commit(settings).map_err(|e| {
+            log::error!("Could not resolve the clone URL of the submission: {e}");
+            internal_error_report()
+        })?;
 
         // A way to check out a specific commit, without the cloning the whole history
         let gitcmd_settings = SyscommandSettings {
@@ -268,7 +271,15 @@ impl<'a> SubmissionRunnerHandle<'a> {
             })
             .and_then(|_| {
                 syscommand_timeout(
-                    ["git", "-C", &source_dir, "remote", "add", "origin", ssh_url],
+                    [
+                        "git",
+                        "-C",
+                        &source_dir,
+                        "remote",
+                        "add",
+                        "origin",
+                        &ssh_url,
+                    ],
                     gitcmd_settings.to_owned(),
                 )
             })

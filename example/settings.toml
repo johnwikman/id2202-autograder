@@ -26,17 +26,21 @@ comment_signature = "(_This is an automated response from the autograder_ \U0001
 # Information about GitHub instances that can submit grading jobs
 [submission.github]
 webhook_secret = "s3cr3t"
+known_instances = [] # remove this line if including the example below
 
-# Known GitHub servers that we can accept requests from
-[[submission.github.known_instances]]
-domain = "gits-15.sys.kth.se"
-ssh_port = 22
-auth_token = "ChangeMe"
-allowed_orgs = ["ID2202-jwikman-test"]
-allowed_repo_prefixes = ["id2202-"]
-allowed_repo_suffixes = []
-prohibited_repo_prefixes = []
-prohibited_repo_suffixes = ["-shadow"]
+# Known GitHub servers that we can accept requests from. Uncomment this when
+# performing integration testing against GitHub instances.
+#[[submission.github.known_instances]]
+#domain = "gits-15.sys.kth.se"
+#outbound_host = ""
+#ssh_port = 22
+#ssh_user = "git"
+#auth_token = "ChangeMe"
+#allowed_orgs = ["ID2202-jwikman-test"]
+#allowed_repo_prefixes = ["id2202-"]
+#allowed_repo_suffixes = []
+#prohibited_repo_prefixes = []
+#prohibited_repo_suffixes = ["-shadow"]
 
 # Information about GitLab instances that can submit grading jobs
 [submission.gitlab]
@@ -45,9 +49,11 @@ webhook_secret = "s3cr3t"
 # Known GitLab instances that we can accept requests from
 [[submission.gitlab.known_instances]]
 domain = "localhost:8929"
+outbound_host = ""   # if empty, the host of `domain` is used
 ssh_port = 2424
+ssh_user = "git"
 auth_token = "ChangeMe"
-allowed_namespaces = ["id2202-test", "id2202-2025-testing", "autograder-testing"]
+allowed_namespaces = ["id2202-test", "autograder-testing"]
 allowed_repo_prefixes = ["id2202-"]
 allowed_repo_suffixes = []
 prohibited_repo_prefixes = []
