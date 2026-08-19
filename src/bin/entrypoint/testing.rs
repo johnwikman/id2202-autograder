@@ -37,11 +37,7 @@ pub fn validate_settings(s: Settings, args: ValidateSettingsArgs) -> Result<(), 
     if args.print_titles {
         log::debug!("Printing the test configuration titles");
         fn recursively_print(tg: &TestGroup, indent: usize) {
-            println!(
-                "{} - {}",
-                std::iter::repeat_n(" ", indent).collect::<String>(),
-                tg.title
-            );
+            println!("{} - {}", std::iter::repeat_n(" ", indent).collect::<String>(), tg.title);
             for sg in tg.subgroups.iter() {
                 recursively_print(sg, indent + 4);
             }

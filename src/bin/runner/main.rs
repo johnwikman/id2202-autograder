@@ -235,18 +235,16 @@ fn main() -> Result<(), Error> {
                 };
 
                 // 2. Write a comment to the GitHub commit
-                conn.report_and_status(&settings, &subinfo, &report, status, true)
-                    .unwrap_or_else(|e| {
-                        log::warn!("Could not set commit message and/or status: {e}")
-                    });
-                conn.set_exec_date_finished(subinfo.get_submission().id)
-                    .unwrap_or_else(|e| {
-                        log::warn!(
-                            "Could not set finish date for job {}: {}",
-                            subinfo.get_submission().id,
-                            e
-                        )
-                    });
+                conn.report_and_status(&settings, &subinfo, &report, status, true).unwrap_or_else(
+                    |e| log::warn!("Could not set commit message and/or status: {e}"),
+                );
+                conn.set_exec_date_finished(subinfo.get_submission().id).unwrap_or_else(|e| {
+                    log::warn!(
+                        "Could not set finish date for job {}: {}",
+                        subinfo.get_submission().id,
+                        e
+                    )
+                });
 
                 log::info!("Grading of submission {} done.", run_handle.submission_id);
                 run_handle.cleanup();
@@ -339,9 +337,7 @@ fn main() -> Result<(), Error> {
                 }
             }
 
-            let sleep_time = next_offset
-                .checked_sub(init_time.elapsed())
-                .unwrap_or(Duration::ZERO);
+            let sleep_time = next_offset.checked_sub(init_time.elapsed()).unwrap_or(Duration::ZERO);
             match msg_recv.recv_timeout(sleep_time) {
                 Ok(cause) => {
                     if cause == MSG_SIGNAL {
@@ -396,29 +392,13 @@ fn record_to_shadow(
 ) -> Result<(), Error> {
     // 1. Create the shadow repository if it does not exist.
     let shadow_repo = match subinfo {
-        SubmissionInfo::GitHub {
-            sub: _,
-            src: _,
-            gh_src,
-            gh_info: _,
-        } => path_absolute_join(
+        SubmissionInfo::GitHub { sub: _, src: _, gh_src, gh_info: _ } => path_absolute_join(
             &settings.runner.shadow_dir,
-            format!(
-                "github/{}/{}/{}.git",
-                gh_src.domain, gh_src.org, gh_src.repo
-            ),
+            format!("github/{}/{}/{}.git", gh_src.domain, gh_src.org, gh_src.repo),
         )?,
-        SubmissionInfo::GitLab {
-            sub: _,
-            src: _,
-            gl_src,
-            gl_info: _,
-        } => path_absolute_join(
+        SubmissionInfo::GitLab { sub: _, src: _, gl_src, gl_info: _ } => path_absolute_join(
             &settings.runner.shadow_dir,
-            format!(
-                "gitlab/{}/{}/{}.git",
-                gl_src.domain, gl_src.namespace, gl_src.repo
-            ),
+            format!("gitlab/{}/{}/{}.git", gl_src.domain, gl_src.namespace, gl_src.repo),
         )?,
     };
     if !std::fs::exists(&shadow_repo)? {
@@ -427,10 +407,7 @@ fn record_to_shadow(
 
         syscommand_timeout(
             ["git", "-C", &shadow_repo, "init", "--bare"],
-            SyscommandSettings {
-                expected_code: Some(0),
-                ..Default::default()
-            },
+            SyscommandSettings { expected_code: Some(0), ..Default::default() },
         )?;
     }
 
@@ -452,44 +429,19 @@ fn record_to_shadow(
     log::debug!("Cloning shadow directory {shadow_repo} to {shadow_dir}");
     syscommand_timeout(
         ["git", "clone", "--local", &shadow_repo, &shadow_dir],
-        SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        },
+        SyscommandSettings { expected_code: Some(0), ..Default::default() },
     )
     .inspect_err(|e| log::error!("Could not clone shadow repo {shadow_repo}: {e}"))?;
 
     syscommand_timeout(
-        [
-            "git",
-            "-C",
-            &shadow_dir,
-            "config",
-            "--local",
-            "user.name",
-            &settings.name,
-        ],
-        SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        },
+        ["git", "-C", &shadow_dir, "config", "--local", "user.name", &settings.name],
+        SyscommandSettings { expected_code: Some(0), ..Default::default() },
     )
     .inspect_err(|e| log::error!("Could not set git config for shadow repo: {e}"))?;
 
     syscommand_timeout(
-        [
-            "git",
-            "-C",
-            &shadow_dir,
-            "config",
-            "--local",
-            "user.email",
-            "id2202@localhost",
-        ],
-        SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        },
+        ["git", "-C", &shadow_dir, "config", "--local", "user.email", "id2202@localhost"],
+        SyscommandSettings { expected_code: Some(0), ..Default::default() },
     )
     .inspect_err(|e| log::error!("Could not set git config for shadow repo: {e}"))?;
 
@@ -536,37 +488,20 @@ fn record_to_shadow(
 
     syscommand_timeout(
         cmdadd.as_slice(),
-        SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        },
+        SyscommandSettings { expected_code: Some(0), ..Default::default() },
     )
     .inspect_err(|e| log::error!("Could not add files to shadow repo {shadow_repo}: {e}"))?;
 
     let commit_msg = format!("Results for submission {}", subinfo.get_submission().id);
     syscommand_timeout(
-        [
-            "git",
-            "-C",
-            &shadow_dir,
-            "commit",
-            "--allow-empty",
-            "-m",
-            &commit_msg,
-        ],
-        SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        },
+        ["git", "-C", &shadow_dir, "commit", "--allow-empty", "-m", &commit_msg],
+        SyscommandSettings { expected_code: Some(0), ..Default::default() },
     )
     .inspect_err(|e| log::error!("Could not commit files to shadow repo {shadow_repo}: {e}"))?;
 
     syscommand_timeout(
         ["git", "-C", &shadow_dir, "push"],
-        SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        },
+        SyscommandSettings { expected_code: Some(0), ..Default::default() },
     )
     .inspect_err(|e| log::error!("Could not push files to shadow repo {shadow_repo}: {e}"))?;
 

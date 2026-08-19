@@ -94,21 +94,9 @@ pub fn verify_ssh_hosts(s: Settings, args: VerifySshHostsArgs) -> Result<(), Err
         .github
         .known_instances
         .iter()
-        .map(|gh| {
-            (
-                gh.ssh_user.as_str(),
-                gh.outbound_host(),
-                gh.ssh_port,
-                args.github_exit_code,
-            )
-        })
+        .map(|gh| (gh.ssh_user.as_str(), gh.outbound_host(), gh.ssh_port, args.github_exit_code))
         .chain(s.submission.gitlab.known_instances.iter().map(|gl| {
-            (
-                gl.ssh_user.as_str(),
-                gl.outbound_host(),
-                gl.ssh_port,
-                args.gitlab_exit_code,
-            )
+            (gl.ssh_user.as_str(), gl.outbound_host(), gl.ssh_port, args.gitlab_exit_code)
         }))
         .collect();
 

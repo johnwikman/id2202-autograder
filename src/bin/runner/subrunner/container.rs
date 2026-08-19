@@ -98,10 +98,7 @@ impl ContainerInfo {
             let hostfile = path_absolute_join(&self.tests_dir.host_path, &infile.name)?;
             // Copy file to the directory that is mounted into the container
             std::fs::copy(&infile.host_path, &hostfile).inspect_err(|e| {
-                log::error!(
-                    "Could not copy input file {} to {hostfile}: {e}",
-                    infile.host_path
-                )
+                log::error!("Could not copy input file {} to {hostfile}: {e}", infile.host_path)
             })?;
             hostfiles_to_remove.push(hostfile);
         }

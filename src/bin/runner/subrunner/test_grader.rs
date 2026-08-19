@@ -37,13 +37,7 @@ fn treat_output(s: &str, trim: bool, remove_whitespace: bool) -> Result<String, 
         String::from_utf8(
             s.as_bytes()
                 .iter()
-                .filter_map(|c| {
-                    if c.is_ascii_whitespace() {
-                        None
-                    } else {
-                        Some(c.to_owned())
-                    }
-                })
+                .filter_map(|c| if c.is_ascii_whitespace() { None } else { Some(c.to_owned()) })
                 .collect(),
         )
         .map_err(|e| Error::runtime("error removing whitespace").with_cause(Box::new(e)))
@@ -144,18 +138,13 @@ fn base_report(
         }
         infile_contents.push(SourceFileInfo {
             content,
-            extension: path
-                .extension()
-                .and_then(|ex| ex.to_str())
-                .map(String::from),
+            extension: path.extension().and_then(|ex| ex.to_str()).map(String::from),
         });
     }
     Ok(DetailsTestFailure {
         command: Some(cmdvec.join(" ")),
-        stdin_contents: stdin.map(|s| SourceFileInfo {
-            content: s.to_string(),
-            ..Default::default()
-        }),
+        stdin_contents: stdin
+            .map(|s| SourceFileInfo { content: s.to_string(), ..Default::default() }),
         input_file_contents: infile_contents,
         ..Default::default()
     })
@@ -173,10 +162,7 @@ fn report_execution_error(
     let during = stage.map(|s| format!(" when {s}")).unwrap_or_default();
     match e.kind.as_mut() {
         ErrorKind::Syscommand(SyscommandError {
-            timeout: Some(duration),
-            stdout,
-            stderr,
-            ..
+            timeout: Some(duration), stdout, stderr, ..
         }) => Ok(GradingResult::Failure {
             cause: FailureCause::Timeout(*duration),
             report: base.map(|b| {
@@ -191,20 +177,19 @@ fn report_execution_error(
                 })
             }),
         }),
-        ErrorKind::Syscommand(SyscommandError {
-            output_limit_exceeded: Some(limit),
-            ..
-        }) => Ok(GradingResult::Failure {
-            cause: FailureCause::OutputLimitExceeded { limit: *limit },
-            report: base.map(|b| {
-                Box::new(DetailsTestFailure {
-                    additional_failure_causes: vec![format!(
-                        "Output stream exceeded {limit} bytes{during}."
-                    )],
-                    ..b
-                })
-            }),
-        }),
+        ErrorKind::Syscommand(SyscommandError { output_limit_exceeded: Some(limit), .. }) => {
+            Ok(GradingResult::Failure {
+                cause: FailureCause::OutputLimitExceeded { limit: *limit },
+                report: base.map(|b| {
+                    Box::new(DetailsTestFailure {
+                        additional_failure_causes: vec![format!(
+                            "Output stream exceeded {limit} bytes{during}."
+                        )],
+                        ..b
+                    })
+                }),
+            })
+        }
         _ => {
             log::error!("Unknown error happened when running test case in a container: {e}");
             Err(e)
@@ -466,13 +451,7 @@ pub mod grade {
         let asm_cmd: Vec<&str> = kind
             .assemble_cmd
             .iter()
-            .map(|s| {
-                if s == "<ASM_FILE>" {
-                    gradingpath_asm.as_str()
-                } else {
-                    s.as_str()
-                }
-            })
+            .map(|s| if s == "<ASM_FILE>" { gradingpath_asm.as_str() } else { s.as_str() })
             .collect();
 
         let compile_cmd: Vec<&str> = kind.compile_cmd.iter().map(String::as_str).collect();
@@ -482,10 +461,8 @@ pub mod grade {
             (&asm_cmd, &kind.assemble_code, STATUS_ASSEMBLING),
             (&compile_cmd, &kind.compile_code, STATUS_COMPILING),
         ] {
-            let out = match container.exec(&container::ExecOptions {
-                cmd: exec_cmd,
-                ..stage_exec
-            }) {
+            let out = match container.exec(&container::ExecOptions { cmd: exec_cmd, ..stage_exec })
+            {
                 Ok(out) => out,
                 Err(e) => {
                     return report_execution_error(
@@ -496,11 +473,7 @@ pub mod grade {
                 }
             };
 
-            match (Expectation {
-                code: allowed_codes,
-                ..Default::default()
-            })
-            .check(
+            match (Expectation { code: allowed_codes, ..Default::default() }).check(
                 &out,
                 include_report.then_some(|| {
                     Ok(DetailsTestFailure {

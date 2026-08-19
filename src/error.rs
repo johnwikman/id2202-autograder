@@ -9,10 +9,7 @@ pub struct Error {
 impl Error {
     /// Associates a cause with the error, overwriting any existing cause.
     pub fn with_cause(self, cause: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        Self {
-            kind: self.kind,
-            cause: Some(cause),
-        }
+        Self { kind: self.kind, cause: Some(cause) }
     }
 }
 
@@ -104,14 +101,7 @@ impl Default for TestConfigError {
 
 impl TestConfigError {
     pub fn new() -> Self {
-        Self {
-            msg: "".to_string(),
-            path: None,
-            title: None,
-            key: None,
-            kind: None,
-            tag: None,
-        }
+        Self { msg: "".to_string(), path: None, title: None, key: None, kind: None, tag: None }
     }
     pub fn new_msg(msg: impl Into<String>) -> Self {
         Self::new().msg(msg)
@@ -247,19 +237,10 @@ impl std::fmt::Display for Error {
                 write!(f, "format error \"{}\" for value \"{}\"", msg, value)
             }
             ErrorKind::Identifier { got, expected } => {
-                write!(
-                    f,
-                    "got identifier {}, expected one of: {}",
-                    got,
-                    expected.join(", ")
-                )
+                write!(f, "got identifier {}, expected one of: {}", got, expected.join(", "))
             }
             ErrorKind::HttpResponse { msg, code, text } => {
-                write!(
-                    f,
-                    "http response error {} with code {}: {}",
-                    msg, code, text
-                )
+                write!(f, "http response error {} with code {}: {}", msg, code, text)
             }
             ErrorKind::Syscommand(e) => {
                 write!(f, "syscommand error on {:?}", e.cmd)?;
@@ -270,11 +251,7 @@ impl std::fmt::Display for Error {
                     write!(f, "\n  timeout: {:?}", timeout)?;
                 }
                 if let Some((received, expected)) = &e.code_mismatch {
-                    write!(
-                        f,
-                        "\n  expected code {}, received code {}",
-                        expected, received
-                    )?;
+                    write!(f, "\n  expected code {}, received code {}", expected, received)?;
                 }
                 if let Some(limit) = &e.output_limit_exceeded {
                     write!(f, "\n  exceeded output limit of {} bytes", limit)?;
@@ -364,18 +341,12 @@ impl Error {
 
 impl From<TestConfigError> for Error {
     fn from(e: TestConfigError) -> Self {
-        Error {
-            kind: Box::new(ErrorKind::TestConfig(e)),
-            cause: None,
-        }
+        Error { kind: Box::new(ErrorKind::TestConfig(e)), cause: None }
     }
 }
 
 impl From<SyscommandError> for Error {
     fn from(e: SyscommandError) -> Self {
-        Error {
-            kind: Box::new(ErrorKind::Syscommand(e)),
-            cause: None,
-        }
+        Error { kind: Box::new(ErrorKind::Syscommand(e)), cause: None }
     }
 }

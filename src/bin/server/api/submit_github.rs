@@ -136,13 +136,8 @@ pub async fn github_submission(
 
     log::info!(
         "GitHub submission request from {} (Hook ID: {})",
-        req.peer_addr()
-            .map(|addr| addr.to_string())
-            .unwrap_or("unknown".to_string()),
-        req.headers()
-            .get("X-Github-Hook-ID")
-            .and_then(|hv| hv.to_str().ok())
-            .unwrap_or("unknown"),
+        req.peer_addr().map(|addr| addr.to_string()).unwrap_or("unknown".to_string()),
+        req.headers().get("X-Github-Hook-ID").and_then(|hv| hv.to_str().ok()).unwrap_or("unknown"),
     );
 
     // Disregard it request immediately if it is not a GitHub event
@@ -158,10 +153,7 @@ pub async fn github_submission(
         .headers()
         .get("X-Hub-Signature-256")
         .and_then(|hv| hv.to_str().ok())
-        .ok_or(ErrorResponse::unauthorized(
-            &req,
-            "missing secret signature",
-        ))?
+        .ok_or(ErrorResponse::unauthorized(&req, "missing secret signature"))?
         .to_string();
 
     let payload_bytes = payload
@@ -244,11 +236,7 @@ pub async fn github_submission(
             ErrorResponse::unauthorized(&req, "Unknown GitHub instance")
         })?;
 
-    let commitinfo = CommitMessageInfo {
-        settings,
-        instance: instance_settings,
-        sub: &sub,
-    };
+    let commitinfo = CommitMessageInfo { settings, instance: instance_settings, sub: &sub };
 
     if let Err(rejection) = validate_repo_prefix_suffix(
         &sub.repository.organization,
@@ -328,10 +316,7 @@ pub async fn github_submission(
 
     // Notifying the other runners (TODO: make this name configurable)
     dbconn.notify("submission").unwrap_or_else(|e| {
-        log::warn!(
-            "Could not notify the runners about the new submission: {}",
-            e
-        )
+        log::warn!("Could not notify the runners about the new submission: {}", e)
     });
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");

@@ -117,9 +117,7 @@ impl Verifier {
         for source in sources {
             let file = std::path::Path::new(&source);
             let (Some(stem), Some(ext)) = (file.file_stem(), file.extension()) else {
-                return Err(Error::convert(format!(
-                    "malformed verifier path \"{source}\""
-                )));
+                return Err(Error::convert(format!("malformed verifier path \"{source}\"")));
             };
             // Hashed, since verifiers are not necessarily under the test config
             // root and their directory layout cannot be mirrored.
@@ -148,14 +146,11 @@ impl Verifier {
 
     /// The path inside the container for a verifier's path on the host.
     pub fn container_path(&self, host_path: &str) -> Result<&str, Error> {
-        self.paths
-            .get(host_path)
-            .map(String::as_str)
-            .ok_or_else(|| {
-                Error::runtime(format!(
-                    "verifier \"{host_path}\" was not collected before grading started"
-                ))
-            })
+        self.paths.get(host_path).map(String::as_str).ok_or_else(|| {
+            Error::runtime(format!(
+                "verifier \"{host_path}\" was not collected before grading started"
+            ))
+        })
     }
 
     /// Runs one verifier over one blob. Every failure here is an autograder
@@ -191,10 +186,8 @@ impl Verifier {
             })?;
 
         serde_json::from_str(&output.stdout).map_err(|e| {
-            Error::convert(format!(
-                "verifier \"{script}\" did not write a verdict on stdout"
-            ))
-            .with_cause(Box::new(e))
+            Error::convert(format!("verifier \"{script}\" did not write a verdict on stdout"))
+                .with_cause(Box::new(e))
         })
     }
 }

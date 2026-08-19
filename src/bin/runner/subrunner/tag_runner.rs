@@ -256,10 +256,7 @@ impl<'a> TagRunner<'a> {
         self.container.podman.stop();
 
         if std::fs::exists(&self.container.solution_dir.host_path)? {
-            log::debug!(
-                "Removing the build directory used for grading \"{}\"",
-                self.tag_name
-            );
+            log::debug!("Removing the build directory used for grading \"{}\"", self.tag_name);
             std::fs::remove_dir_all(&self.container.solution_dir.host_path)?;
         }
 
@@ -348,10 +345,7 @@ impl<'a> TagRunner<'a> {
                 } else {
                     // Check mime-type of this file
                     let mimetype = utils::mimetype(entry.path())?;
-                    if allowed_mimetypes
-                        .iter()
-                        .any(|prefix| mimetype.starts_with(prefix))
-                    {
+                    if allowed_mimetypes.iter().any(|prefix| mimetype.starts_with(prefix)) {
                         log::info!(
                         "Found allowed binary file: {path} (due to allowed MIME type {mimetype})"
                     );
@@ -381,17 +375,14 @@ impl<'a> TagRunner<'a> {
             .inspect_err(|e| log::error!("Error when scanning for prohibited files: {e}"))?;
         }
         if !forbidden_files.is_empty() {
-            self.build_result.replace(BuildResult::ProhibitedFiles {
-                found_files: forbidden_files,
-            });
+            self.build_result
+                .replace(BuildResult::ProhibitedFiles { found_files: forbidden_files });
             return Ok(false);
         }
 
         log::debug!("Starting podman container");
-        self.container.podman.mounts = vec![
-            self.container.solution_dir.clone(),
-            self.container.tests_dir.clone(),
-        ];
+        self.container.podman.mounts =
+            vec![self.container.solution_dir.clone(), self.container.tests_dir.clone()];
         self.container.podman.start()?;
 
         // Wait for the container to start
@@ -468,10 +459,7 @@ impl<'a> TagRunner<'a> {
             }
             Err(mut boxed_e) => match boxed_e.kind.as_mut() {
                 ErrorKind::Syscommand(SyscommandError {
-                    timeout: Some(_),
-                    stdout,
-                    stderr,
-                    ..
+                    timeout: Some(_), stdout, stderr, ..
                 }) => {
                     self.build_result.replace(BuildResult::Timeout {
                         timeout: self.build_conf.timeout,
@@ -484,8 +472,7 @@ impl<'a> TagRunner<'a> {
                     output_limit_exceeded: Some(limit),
                     ..
                 }) => {
-                    self.build_result
-                        .replace(BuildResult::OutputLimitExceeded { limit: *limit });
+                    self.build_result.replace(BuildResult::OutputLimitExceeded { limit: *limit });
                     return Ok(false);
                 }
                 _ => {
@@ -505,10 +492,7 @@ impl<'a> TagRunner<'a> {
                 self.container.podman.network.as_deref().unwrap_or("none"),
                 &self.container.podman.name,
             ],
-            SyscommandSettings {
-                expected_code: Some(0),
-                ..Default::default()
-            },
+            SyscommandSettings { expected_code: Some(0), ..Default::default() },
         )?;
 
         log::info!("Proceeding to run test cases.");
@@ -650,10 +634,8 @@ impl TestGroupIterator {
     /// Returns the next test to run. Returns None if there is not a next test
     /// to run or if `TestGroupIterator::next()` has not yet been invoked.
     fn peek(&self) -> Option<&Test> {
-        if let Some(Some(t_opt)) = self
-            .subgroup_iterators
-            .get(self.next_subgroup)
-            .map(|sg| sg.peek())
+        if let Some(Some(t_opt)) =
+            self.subgroup_iterators.get(self.next_subgroup).map(|sg| sg.peek())
         {
             return Some(t_opt);
         }
@@ -663,9 +645,7 @@ impl TestGroupIterator {
             return None;
         }
 
-        self.next_test_idx
-            .to_usize()
-            .and_then(|i| self.tests.get(i))
+        self.next_test_idx.to_usize().and_then(|i| self.tests.get(i))
     }
 
     /// Progresses to the next test case. Returns `true` if there is a new test

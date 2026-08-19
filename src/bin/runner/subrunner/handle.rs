@@ -78,9 +78,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
     ) -> Result<Self, Report> {
         // Convenient for reporting internal errors
         fn internal_error_report() -> Report {
-            Report::Message(ReportMessage {
-                msg: ERRMSG_INTERNAL_ERROR.to_string(),
-            })
+            Report::Message(ReportMessage { msg: ERRMSG_INTERNAL_ERROR.to_string() })
         }
 
         let sub = subinfo.get_submission();
@@ -147,10 +145,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
                     settings.runner.podman_image.clone(),
                     format!("id2202_runner{}", runner_id),
                 );
-                c.network = Some(format!(
-                    "{}{}",
-                    settings.runner.podman_network_prefix, runner_id
-                ));
+                c.network = Some(format!("{}{}", settings.runner.podman_network_prefix, runner_id));
                 c
             },
             internal_build_dir: "/root/graded_solution".to_string(),
@@ -183,10 +178,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
         );
 
         // Step 3: Collect the tags to grade
-        log::debug!(
-            "Collecting grading tag information from {:?}",
-            sub.grading_tags
-        );
+        log::debug!("Collecting grading tag information from {:?}", sub.grading_tags);
         let mut tag_runners: BTreeMap<String, TagRunner> = BTreeMap::new();
         for t in &sub.grading_tags {
             match tests.tag_groups.get(t) {
@@ -241,10 +233,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
         })?;
 
         // A way to check out a specific commit, without the cloning the whole history
-        let gitcmd_settings = SyscommandSettings {
-            expected_code: Some(0),
-            ..Default::default()
-        };
+        let gitcmd_settings = SyscommandSettings { expected_code: Some(0), ..Default::default() };
         let quote = |p: &str| {
             shlex::try_quote(p).map(String::from).map_err(|e| {
                 log::error!("Could not quote {p} for the SSH command: {e}");
@@ -264,22 +253,11 @@ impl<'a> SubmissionRunnerHandle<'a> {
         std::fs::create_dir_all(&source_dir)
             .map_err(Error::from)
             .and_then(|_| {
-                syscommand_timeout(
-                    ["git", "-C", &source_dir, "init"],
-                    gitcmd_settings.to_owned(),
-                )
+                syscommand_timeout(["git", "-C", &source_dir, "init"], gitcmd_settings.to_owned())
             })
             .and_then(|_| {
                 syscommand_timeout(
-                    [
-                        "git",
-                        "-C",
-                        &source_dir,
-                        "remote",
-                        "add",
-                        "origin",
-                        &ssh_url,
-                    ],
+                    ["git", "-C", &source_dir, "remote", "add", "origin", &ssh_url],
                     gitcmd_settings.to_owned(),
                 )
             })
@@ -390,15 +368,9 @@ impl<'a> SubmissionRunnerHandle<'a> {
             self.status_code = SubmissionStatusCode::SubmissionTimedOut;
         }
 
-        let tag_runner = self
-            .tag_runners
-            .get_mut(self.next_tag_index)
-            .ok_or_else(|| {
-                Error::runtime(format!(
-                    "expected a tag runner for index {}",
-                    self.next_tag_index
-                ))
-            })?;
+        let tag_runner = self.tag_runners.get_mut(self.next_tag_index).ok_or_else(|| {
+            Error::runtime(format!("expected a tag runner for index {}", self.next_tag_index))
+        })?;
 
         if !tag_runner.has_built() {
             log::debug!("Building project for tag \"{}\"", tag_runner.tag_name);
@@ -435,11 +407,8 @@ impl<'a> SubmissionRunnerHandle<'a> {
     /// submission if it is still considered as running.
     ///
     pub fn compile_report(&mut self) -> Report {
-        let tag_reports: Vec<ReportTagGrading> = self
-            .tag_runners
-            .iter()
-            .map(|tr| tr.results_report())
-            .collect();
+        let tag_reports: Vec<ReportTagGrading> =
+            self.tag_runners.iter().map(|tr| tr.results_report()).collect();
         if !self.status_code.is_finished() {
             if tag_reports.iter().all(|tr| tr.ok) {
                 self.status_code = SubmissionStatusCode::Success;

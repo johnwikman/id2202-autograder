@@ -138,11 +138,8 @@ pub async fn get_submission(
     let mut status_lists: Vec<SubmissionStatusList> = vec![];
 
     // First submission runtime metadata
-    let mut statlist_general = SubmissionStatusList {
-        title: None,
-        title_href: None,
-        items: vec![],
-    };
+    let mut statlist_general =
+        SubmissionStatusList { title: None, title_href: None, items: vec![] };
 
     if let Some(ssc) = SSC::from_i32(sub.exec_status_code) {
         let (li_class, rhs_symbol) = match ssc {
@@ -196,19 +193,11 @@ pub async fn get_submission(
     status_lists.push(statlist_general);
 
     // Collect submission source information
-    let mut statlist_source = SubmissionStatusList {
-        title: Some("Submission Source"),
-        title_href: None,
-        items: vec![],
-    };
+    let mut statlist_source =
+        SubmissionStatusList { title: Some("Submission Source"), title_href: None, items: vec![] };
 
     match &subinfo {
-        SubmissionInfo::GitHub {
-            sub: _,
-            src: _,
-            gh_src,
-            gh_info,
-        } => {
+        SubmissionInfo::GitHub { sub: _, src: _, gh_src, gh_info } => {
             statlist_source.title_href = Some(format!(
                 "https://{}/{}/{}/commit/{}",
                 gh_src.domain, gh_src.org, gh_src.repo, gh_info.commit
@@ -240,12 +229,7 @@ pub async fn get_submission(
                 ..Default::default()
             });
         }
-        SubmissionInfo::GitLab {
-            sub: _,
-            src: _,
-            gl_src,
-            gl_info,
-        } => {
+        SubmissionInfo::GitLab { sub: _, src: _, gl_src, gl_info } => {
             let protocol = if settings
                 .submission
                 .gitlab
@@ -298,16 +282,12 @@ pub async fn get_submission(
         common: CommonInformation::from_title(settings, &format!("Submission {}", sub.id)),
         submission_id: sub.id,
         status_lists,
-        report: RenderReport {
-            v: opt_report,
-            settings,
-        },
+        report: RenderReport { v: opt_report, settings },
     };
     tpl.common.include_syntax_highlighting = false;
 
-    let body: String = tpl
-        .render_once()
-        .map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
+    let body: String =
+        tpl.render_once().map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
 
     Ok(HttpResponse::Ok().body(body))
 }
@@ -323,7 +303,9 @@ pub async fn get_submission_markdown(
     let settings = data.get_ref();
 
     let md_text = match fetch_submission_and_report(settings, &req, submission_id.as_str()) {
-        Ok((_, Some(report))) => format!("{}", report.formatter_markdown(&settings.reporting)),
+        Ok((_, Some(report))) => {
+            format!("{}", report.formatter_markdown(&settings.reporting))
+        }
         Ok(_) => "No report generated for this submission".to_string(),
         Err(e) => {
             return e;

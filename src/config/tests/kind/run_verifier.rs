@@ -113,9 +113,7 @@ impl PostInit for RunVerifier {
 
         let path = &self.verifier_path;
         if !std::path::Path::new(path).is_file() {
-            return Err(
-                Error::test_config_msg(format!("verifier \"{path}\" is not a file")).into(),
-            );
+            return Err(Error::test_config_msg(format!("verifier \"{path}\" is not a file")).into());
         }
         if !path.ends_with(".py") {
             return Err(Error::test_config_msg(format!(

@@ -45,11 +45,7 @@ pub fn markdown_write_preformatted_with_truncation(
     if let Some(offset) = truncate {
         let half_offset = offset.div_ceil(2);
         match if let Some(half_rev_offset) = s.len().checked_sub(half_offset) {
-            (
-                s.split_at_checked(half_offset),
-                s.split_at_checked(half_rev_offset),
-                offset < l,
-            )
+            (s.split_at_checked(half_offset), s.split_at_checked(half_rev_offset), offset < l)
         } else {
             (None, None, false)
         } {
@@ -164,10 +160,7 @@ impl Report {
         &'a self,
         settings: &'a ReportingSettings,
     ) -> MarkdownFormatterReport<'a> {
-        MarkdownFormatterReport {
-            report: self,
-            settings,
-        }
+        MarkdownFormatterReport { report: self, settings }
     }
 
     pub fn render_html(
@@ -194,9 +187,7 @@ pub struct MarkdownFormatterReport<'a> {
 
 impl<'a> std::fmt::Display for MarkdownFormatterReport<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.report
-            .render_markdown(self.settings, f)
-            .map_err(|_| std::fmt::Error)
+        self.report.render_markdown(self.settings, f).map_err(|_| std::fmt::Error)
     }
 }
 
@@ -328,11 +319,7 @@ impl ReportInvalidTag {
             write!(dst, "<h{header_level}>Known Grading Tags</h{header_level}>")?;
             write!(dst, "<ul>")?;
             for t in &self.known_grading_tags {
-                write!(
-                    dst,
-                    "<li><code>{}</code></li>",
-                    html_formatter_str(t, escape)
-                )?;
+                write!(dst, "<li><code>{}</code></li>", html_formatter_str(t, escape))?;
             }
             write!(dst, "</ul>")?;
         }
@@ -347,20 +334,14 @@ impl ReportInvalidTag {
             write!(dst, "<tbody>")?;
             for (groupname, contained_tags) in &self.known_tag_groups {
                 write!(dst, "<tr>")?;
-                write!(
-                    dst,
-                    "<td><code>{}</code></td>",
-                    html_formatter_str(groupname, escape)
-                )?;
+                write!(dst, "<td><code>{}</code></td>", html_formatter_str(groupname, escape))?;
                 write!(
                     dst,
                     "<td>{}</td>",
-                    contained_tags
-                        .iter()
-                        .format_with(", ", |tag, f| f(&format_args!(
-                            "<code>{}</code>",
-                            html_formatter_str(tag, escape)
-                        )))
+                    contained_tags.iter().format_with(", ", |tag, f| f(&format_args!(
+                        "<code>{}</code>",
+                        html_formatter_str(tag, escape)
+                    )))
                 )?;
                 write!(dst, "</tr>")?;
             }
@@ -517,15 +498,9 @@ impl ReportSubmission {
                 ("bg-danger-subtle", "", "text-danger")
             };
             // Only show results if something failed
-            let (show_class, collapse_class) = if grading_report.ok {
-                ("", "collapsed")
-            } else {
-                ("show", "")
-            };
-            write!(
-                dst,
-                "<div class=\"accordion-item {accordion_border_class}\">"
-            )?;
+            let (show_class, collapse_class) =
+                if grading_report.ok { ("", "collapsed") } else { ("show", "") };
+            write!(dst, "<div class=\"accordion-item {accordion_border_class}\">")?;
             dst.write_str("<h2 class=\"accordion-header\">")?;
             write!(dst, "<button class=\"accordion-button {button_bg_class} {collapse_class}\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#{accordion_id}\" aria-expanded=\"true\" aria-controls=\"{accordion_id}\">")?;
             dst.write_str("<h4 class=\"my-0\">")?;
@@ -581,10 +556,7 @@ impl ReportTagGrading {
     /// Tags that this tag is derived from. Will return an empty vec if it is
     /// just itself.
     fn derivs(&self) -> Vec<&String> {
-        self.derived_from
-            .iter()
-            .filter(|d| **d != self.tag_name)
-            .collect()
+        self.derived_from.iter().filter(|d| **d != self.tag_name).collect()
     }
 
     /// Generate a JSON blob
@@ -634,9 +606,7 @@ impl ReportTagGrading {
             write!(
                 dst,
                 "\n\n_(Derived from {})_",
-                derivs
-                    .iter()
-                    .format_with(", ", |s, f| f(&format_args!("`{s}`")))
+                derivs.iter().format_with(", ", |s, f| f(&format_args!("`{s}`")))
             )?;
         }
 
@@ -731,10 +701,7 @@ impl ReportTagGrading {
                 dst.write_str("</button>")?;
                 dst.write_str("</h2>")?;
 
-                write!(
-                    dst,
-                    "<div id=\"{accordion_id}\" class=\"accordion-collapse collapse\">"
-                )?;
+                write!(dst, "<div id=\"{accordion_id}\" class=\"accordion-collapse collapse\">")?;
                 dst.write_str("<div class=\"accordion-body\">")?;
                 detail.render_html(settings, dst, escape, header_level + 1)?;
                 dst.write_str("</div></div></div>")?;
@@ -827,12 +794,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
         details: &mut Vec<DetailsTestFailure>,
         indent: usize,
     ) -> Result<(), Error> {
-        write!(
-            dst,
-            "{:>indent$} * {} ",
-            "",
-            self.get_status_symbol(settings)
-        )?;
+        write!(dst, "{:>indent$} * {} ", "", self.get_status_symbol(settings))?;
 
         // Bold face title if we are on top-level
         if indent == 0 {
@@ -845,11 +807,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
             if self.tests_run < self.local_tests {
                 write!(dst, " ({}/{} tests run)", self.tests_run, self.local_tests)?;
             } else {
-                write!(
-                    dst,
-                    " ({}/{} tests passed)",
-                    self.tests_passed, self.local_tests
-                )?;
+                write!(dst, " ({}/{} tests passed)", self.tests_passed, self.local_tests)?;
             }
         }
         if !self.test_details.is_empty() {
@@ -900,11 +858,7 @@ impl<'a> AnnotatedDetailsTagGradingGroup<'a> {
             if self.tests_run < self.local_tests {
                 write!(dst, " ({}/{} tests run)", self.tests_run, self.local_tests)?;
             } else {
-                write!(
-                    dst,
-                    " ({}/{} tests passed)",
-                    self.tests_passed, self.local_tests
-                )?;
+                write!(dst, " ({}/{} tests passed)", self.tests_passed, self.local_tests)?;
             }
         }
         dst.write_str("</span>")?;
@@ -1049,10 +1003,7 @@ impl DetailsBuildFailure {
         }
 
         if let Some(code) = &self.exit_code {
-            write!(
-                dst,
-                "<p><strong>Exit code: </strong><code>{code}</code></p>"
-            )?;
+            write!(dst, "<p><strong>Exit code: </strong><code>{code}</code></p>")?;
         }
 
         if !self.prohibited_mimetype_files.is_empty() {
@@ -1136,11 +1087,8 @@ pub struct DetailsTestFailure {
 impl DetailsTestFailure {
     /// Collect the failure causes, in addition to the explicitly provided ones.
     fn summarize_fail_causes(&self) -> Vec<&str> {
-        let mut fail_causes: Vec<&str> = self
-            .additional_failure_causes
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
+        let mut fail_causes: Vec<&str> =
+            self.additional_failure_causes.iter().map(|s| s.as_str()).collect();
         if self.code_mismatch.is_some() {
             fail_causes.push("Return code mismatch.");
         }
@@ -1325,10 +1273,7 @@ impl DetailsTestFailure {
         }
 
         if let Some(code) = &self.code_captured {
-            write!(
-                dst,
-                "<p><span><strong>Return code:</strong> <code>{code}</code></span></p>"
-            )?;
+            write!(dst, "<p><span><strong>Return code:</strong> <code>{code}</code></span></p>")?;
         }
 
         if let Some(stdin) = &self.stdin_contents {
@@ -1337,33 +1282,15 @@ impl DetailsTestFailure {
         }
 
         if let Some(mm) = &self.code_mismatch {
-            mm.render_html(
-                settings,
-                dst,
-                escape,
-                header_level + 1,
-                "Return Code Mismatch",
-            )?;
+            mm.render_html(settings, dst, escape, header_level + 1, "Return Code Mismatch")?;
         }
 
         if let Some(mm) = &self.stdout_mismatch {
-            mm.render_html(
-                settings,
-                dst,
-                escape,
-                header_level + 1,
-                "Standard Output Mismatch",
-            )?;
+            mm.render_html(settings, dst, escape, header_level + 1, "Standard Output Mismatch")?;
         }
 
         if let Some(mm) = &self.stderr_mismatch {
-            mm.render_html(
-                settings,
-                dst,
-                escape,
-                header_level + 1,
-                "Standard Error Mismatch",
-            )?;
+            mm.render_html(settings, dst, escape, header_level + 1, "Standard Error Mismatch")?;
         }
 
         for (title, file_info) in &self.additional_files {
@@ -1423,11 +1350,7 @@ impl<A> MismatchInfo<A> {
         )?;
         dst.write_str("<div class=\"card-body\">")?;
         for msg in &self.msgs {
-            write!(
-                dst,
-                "<p><mark>{}</mark></p>",
-                html_formatter_str(msg, escape)
-            )?;
+            write!(dst, "<p><mark>{}</mark></p>", html_formatter_str(msg, escape))?;
         }
 
         Ok(())
@@ -1534,9 +1457,7 @@ impl MismatchInfo<i32> {
                 write!(
                     dst,
                     "one of {}.",
-                    many_expected
-                        .iter()
-                        .format_with(", ", |ex, f| f(&format_args!("`{ex}`")))
+                    many_expected.iter().format_with(", ", |ex, f| f(&format_args!("`{ex}`")))
                 )?;
             }
         }
@@ -1554,11 +1475,7 @@ impl MismatchInfo<i32> {
     ) -> Result<(), Error> {
         self.render_html_begin(dst, escape, title)?;
 
-        write!(
-            dst,
-            "<span>Received return code <code>{}</code>. Expected ",
-            self.received
-        )?;
+        write!(dst, "<span>Received return code <code>{}</code>. Expected ", self.received)?;
         match self.allowed_alternatives.as_slice() {
             &[expected] => {
                 write!(dst, "<code>{expected}</code>.")?;
@@ -1641,11 +1558,7 @@ impl MIMETypeInfo {
         _settings: &ReportingSettings,
         dst: &mut impl Write,
     ) -> Result<(), Error> {
-        write!(
-            dst,
-            "`{}` (Identified as MIME-type `{}`",
-            self.path, self.mime_identified
-        )?;
+        write!(dst, "`{}` (Identified as MIME-type `{}`", self.path, self.mime_identified)?;
         if let Some(expected) = &self.mime_expected {
             write!(dst, ", `{}`", expected)?;
         }
@@ -1690,11 +1603,7 @@ mod tests {
         assert_that!(dst).is_equal_to("<pre>\nfoo\n</pre>");
 
         let mut dst = String::new();
-        assert_that!(markdown_write_preformatted(
-            &mut dst,
-            "int foo() {return 1 < 2;}"
-        ))
-        .is_ok();
+        assert_that!(markdown_write_preformatted(&mut dst, "int foo() {return 1 < 2;}")).is_ok();
         assert_that!(dst).is_equal_to("<pre>\nint foo() {return 1 &lt; 2;}\n</pre>");
 
         let mut dst = String::new();
@@ -1711,12 +1620,7 @@ mod tests {
     #[test]
     fn test_md_preformatted_truncated() {
         let mut dst = String::new();
-        assert_that!(markdown_write_preformatted_with_truncation(
-            &mut dst,
-            "foo",
-            Some(3)
-        ))
-        .is_ok();
+        assert_that!(markdown_write_preformatted_with_truncation(&mut dst, "foo", Some(3))).is_ok();
         assert_that!(dst).is_equal_to("<pre>\nfoo\n</pre>");
 
         let mut dst = String::new();
@@ -1741,12 +1645,7 @@ mod tests {
 
         // Actual splits
         let mut dst = String::new();
-        assert_that!(markdown_write_preformatted_with_truncation(
-            &mut dst,
-            "foo",
-            Some(2)
-        ))
-        .is_ok();
+        assert_that!(markdown_write_preformatted_with_truncation(&mut dst, "foo", Some(2))).is_ok();
         assert_that!(dst).is_equal_to("<pre>\nf\n...\nTRUNCATED\n...\no\n</pre>");
 
         let mut dst = String::new();
@@ -1779,10 +1678,7 @@ mod tests {
             assert_eq!(t.tag_name, "foo");
             assert_eq!(t.known_grading_tags, ["bar", "babar"]);
             assert_eq!(t.known_tag_groups.len(), 1);
-            assert_eq!(
-                t.known_tag_groups.get("bara-babar"),
-                Some(&vec!["babar".to_string()])
-            );
+            assert_eq!(t.known_tag_groups.get("bara-babar"), Some(&vec!["babar".to_string()]));
         }
 
         let bad_blobs = [

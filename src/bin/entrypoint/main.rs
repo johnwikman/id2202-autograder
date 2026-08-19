@@ -78,10 +78,9 @@ fn start(s: &Settings) -> Result<(), Error> {
     // autograder does not depend on the network.
     log::debug!("Checking that the podman images exist");
     let podimgs = podman::images().unwrap();
-    for (image, how) in [
-        (&s.runner.podman_image, "pull-image"),
-        (&s.runner.podman_verifier_image, "build-image"),
-    ] {
+    for (image, how) in
+        [(&s.runner.podman_image, "pull-image"), (&s.runner.podman_verifier_image, "build-image")]
+    {
         if !podimgs.contains(image) {
             return Err(Error::runtime(format!(
                 "the podman image \"{image}\" does not exist, run `entrypoint {how}` first"

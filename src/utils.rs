@@ -15,25 +15,20 @@ use tempfile;
 /// single newlines converted to spaces.
 pub fn single_linefeed_to_space<S: AsRef<str>>(s: S) -> String {
     let s = s.as_ref().trim();
-    if let (Some(offset_1), Some(offset_2), Some(lst)) = (
-        s.split_at_checked(1),
-        s.split_at_checked(2),
-        s.chars().last(),
-    ) {
+    if let (Some(offset_1), Some(offset_2), Some(lst)) =
+        (s.split_at_checked(1), s.split_at_checked(2), s.chars().last())
+    {
         let mut ret = String::new();
         ret.push_str(offset_1.0);
-        ret.extend(
-            s.chars()
-                .zip(offset_1.1.chars())
-                .zip(offset_2.1.chars())
-                .map(|((c_prev, c_mid), c_next)| {
-                    if c_mid == '\n' && c_prev != '\n' && c_next != '\n' {
-                        ' '
-                    } else {
-                        c_mid
-                    }
-                }),
-        );
+        ret.extend(s.chars().zip(offset_1.1.chars()).zip(offset_2.1.chars()).map(
+            |((c_prev, c_mid), c_next)| {
+                if c_mid == '\n' && c_prev != '\n' && c_next != '\n' {
+                    ' '
+                } else {
+                    c_mid
+                }
+            },
+        ));
         ret.push(lst);
         ret
     } else {
@@ -90,9 +85,7 @@ pub fn write_all_timeout(
 ) -> std::io::Result<()> {
     use std::io::ErrorKind as IoKind;
 
-    let deadline = SystemTime::now()
-        .checked_add(timeout)
-        .unwrap_or_else(SystemTime::now);
+    let deadline = SystemTime::now().checked_add(timeout).unwrap_or_else(SystemTime::now);
     while !data.is_empty() {
         if SystemTime::now() >= deadline {
             return Err(IoKind::TimedOut.into());
@@ -141,20 +134,15 @@ pub fn mimetype<P: AsRef<Path>>(path: P) -> Result<String, Error> {
             "file",
             "-b",
             "--mime",
-            path.as_ref()
-                .to_str()
-                .ok_or_else(|| Error::convert("path to string"))?,
+            path.as_ref().to_str().ok_or_else(|| Error::convert("path to string"))?,
         ],
-        SyscommandSettings {
-            max_stdout_length: Some(10000),
-            ..Default::default()
-        },
+        SyscommandSettings { max_stdout_length: Some(10000), ..Default::default() },
     )?;
     let mime_string = res.stdout.trim_ascii().to_string();
-    let mimetype = mime_string.split(" ").next().ok_or(Error::format(
-        "mimetype output from 'file -b --mime'",
-        &mime_string,
-    ))?;
+    let mimetype = mime_string
+        .split(" ")
+        .next()
+        .ok_or(Error::format("mimetype output from 'file -b --mime'", &mime_string))?;
     let mimetype = if mimetype.ends_with(";") {
         mimetype
             .split_at_checked(mimetype.len() - 1)
@@ -218,12 +206,8 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     cmd_settings: SyscommandSettings,
 ) -> Result<SyscommandOutput, Error> {
     // `syscmd_err` will be used to instantiate all other errors.
-    let mut syscmd_err = Error::syscommand(
-        cmd.as_ref()
-            .iter()
-            .map(|e| e.as_ref().to_string())
-            .collect(),
-    );
+    let mut syscmd_err =
+        Error::syscommand(cmd.as_ref().iter().map(|e| e.as_ref().to_string()).collect());
 
     let (cmd, args) = match cmd.as_ref() {
         [cmd, args @ ..] => (cmd, args),
@@ -283,9 +267,8 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     let mut buf_stdout: Vec<u8> = vec![];
     let mut buf_stderr: Vec<u8> = vec![];
 
-    let end_time = SystemTime::now()
-        .checked_add(cmd_settings.timeout)
-        .unwrap_or_else(SystemTime::now);
+    let end_time =
+        SystemTime::now().checked_add(cmd_settings.timeout).unwrap_or_else(SystemTime::now);
 
     /// A wrapped function that reads stdout and stderr as the process is
     /// running. This is used to ensure that the process is killed even if
@@ -384,8 +367,7 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
     )
     .inspect_err(|e| {
         log::warn!("(Terminating process) Runtime error when waiting for it to finish: {e}");
-        job.kill()
-            .unwrap_or_else(|e| log::error!("Could not kill process: {e}"));
+        job.kill().unwrap_or_else(|e| log::error!("Could not kill process: {e}"));
     })?;
 
     let stdout = String::from_utf8_lossy(buf_stdout.as_slice()).into_owned();
@@ -402,22 +384,15 @@ pub fn syscommand_timeout<S: AsRef<str>, CmdList: AsRef<[S]>>(
                         return Err(syscmd_err.code_mismatch(code, ec).as_error());
                     }
                 }
-                Ok(SyscommandOutput {
-                    code,
-                    stdout,
-                    stderr,
-                })
+                Ok(SyscommandOutput { code, stdout, stderr })
             } else if let Some(sig) = stat.signal() {
-                Err(syscmd_err
-                    .msg(format!("terminated by signal {sig}"))
-                    .as_error())
+                Err(syscmd_err.msg(format!("terminated by signal {sig}")).as_error())
             } else {
                 Err(syscmd_err.msg("undetermined error").as_error())
             }
         }
         None => {
-            job.kill()
-                .unwrap_or_else(|e| log::warn!("Could not killed timed out process: {e}"));
+            job.kill().unwrap_or_else(|e| log::warn!("Could not killed timed out process: {e}"));
             syscmd_err.stdout = cmd_settings.max_stdout_length.map(|_| stdout);
             syscmd_err.stderr = cmd_settings.max_stderr_length.map(|_| stderr);
             Err(syscmd_err.timeout(cmd_settings.timeout).as_error())
@@ -457,14 +432,12 @@ mod tests {
     fn test_mimetype() {
         {
             let mut f = tempfile::NamedTempFile::new().unwrap();
-            f.write_all("{\"foo\": 1, \"bar\": true}".as_bytes())
-                .unwrap();
+            f.write_all("{\"foo\": 1, \"bar\": true}".as_bytes()).unwrap();
             assert_that!(mimetype(f.path()).unwrap()).contains("json");
         }
         {
             let mut f = tempfile::NamedTempFile::new().unwrap();
-            f.write_all("foo bar\nI am a regular text file...".as_bytes())
-                .unwrap();
+            f.write_all("foo bar\nI am a regular text file...".as_bytes()).unwrap();
             assert_that!(mimetype(f.path()).unwrap()).starts_with("text");
         }
     }
@@ -473,30 +446,17 @@ mod tests {
     fn test_syscommand_simple() {
         let ret = syscommand_timeout(
             ["echo", "foo"],
-            SyscommandSettings {
-                max_stdout_length: Some(10),
-                ..Default::default()
-            },
+            SyscommandSettings { max_stdout_length: Some(10), ..Default::default() },
         );
         assert_that!(&ret).is_ok();
-        assert_that!(&ret)
-            .ok()
-            .mapping(|s| &s.stdout)
-            .is_equal_to("foo\n");
+        assert_that!(&ret).ok().mapping(|s| &s.stdout).is_equal_to("foo\n");
     }
 
     #[test]
     fn test_syscommand_lots_of_output() {
         let ret = syscommand_timeout(
-            [
-                "bash",
-                "-c",
-                "for i in $(seq 1 400); do echo 0123456789qwerty; done",
-            ],
-            SyscommandSettings {
-                max_stdout_length: Some(1024 * 1024),
-                ..Default::default()
-            },
+            ["bash", "-c", "for i in $(seq 1 400); do echo 0123456789qwerty; done"],
+            SyscommandSettings { max_stdout_length: Some(1024 * 1024), ..Default::default() },
         );
         assert_that!(&ret).is_ok();
         assert_that!(&ret)
@@ -517,29 +477,19 @@ mod tests {
             },
         );
         assert_that!(&ret).is_ok();
-        assert_that!(&ret)
-            .ok()
-            .mapping(|s| &s.stdout)
-            .is_equal_to(&example_stdin);
+        assert_that!(&ret).ok().mapping(|s| &s.stdout).is_equal_to(&example_stdin);
     }
 
     #[test]
     fn test_syscommand_with_timeout() {
         let ret = syscommand_timeout(
             ["sleep", "2"],
-            SyscommandSettings {
-                timeout: Duration::from_secs(1),
-                ..Default::default()
-            },
+            SyscommandSettings { timeout: Duration::from_secs(1), ..Default::default() },
         );
         assert_that!(&ret).is_err();
-        assert_that!(&ret)
-            .err()
-            .satisfies(|e| match e.kind.as_ref() {
-                ErrorKind::Syscommand(SyscommandError {
-                    timeout: Some(_), ..
-                }) => true,
-                _ => false,
-            });
+        assert_that!(&ret).err().satisfies(|e| match e.kind.as_ref() {
+            ErrorKind::Syscommand(SyscommandError { timeout: Some(_), .. }) => true,
+            _ => false,
+        });
     }
 }

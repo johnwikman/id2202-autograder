@@ -510,10 +510,7 @@ impl Settings {
         // a string, which cannot carry every byte that a path can.
         s.runner.ssh_known_hosts = path_absolute_join(&s.reldir, &s.runner.ssh_known_hosts)?;
         if shlex::try_quote(&s.runner.ssh_known_hosts).is_err() {
-            return Err(Error::fs(
-                "known hosts path cannot be quoted",
-                &s.runner.ssh_known_hosts,
-            ));
+            return Err(Error::fs("known hosts path cannot be quoted", &s.runner.ssh_known_hosts));
         }
         s.runner.ssh_keys = s
             .runner
@@ -559,20 +556,12 @@ impl Settings {
         }
 
         let gh = &mut s.submission.github.known_instances;
-        env_domain_pair_set("AUTOGRADER_GITHUB_AUTH_TOKENS", gh, |gh, v| {
-            gh.auth_token = v
-        });
-        env_domain_pair_set("AUTOGRADER_GITHUB_OUTBOUND_HOSTS", gh, |gh, v| {
-            gh.outbound_host = v
-        });
+        env_domain_pair_set("AUTOGRADER_GITHUB_AUTH_TOKENS", gh, |gh, v| gh.auth_token = v);
+        env_domain_pair_set("AUTOGRADER_GITHUB_OUTBOUND_HOSTS", gh, |gh, v| gh.outbound_host = v);
 
         let gl = &mut s.submission.gitlab.known_instances;
-        env_domain_pair_set("AUTOGRADER_GITLAB_AUTH_TOKENS", gl, |gl, v| {
-            gl.auth_token = v
-        });
-        env_domain_pair_set("AUTOGRADER_GITLAB_OUTBOUND_HOSTS", gl, |gl, v| {
-            gl.outbound_host = v
-        });
+        env_domain_pair_set("AUTOGRADER_GITLAB_AUTH_TOKENS", gl, |gl, v| gl.auth_token = v);
+        env_domain_pair_set("AUTOGRADER_GITLAB_OUTBOUND_HOSTS", gl, |gl, v| gl.outbound_host = v);
 
         Ok(s)
     }
@@ -582,10 +571,7 @@ impl Settings {
         use log::LevelFilter::{Debug, Info};
 
         std::fs::create_dir_all(&self.log.dir).map_err(|e| {
-            eprintln!(
-                "Error creating directory {} for the log file: {}",
-                self.log.dir, e
-            );
+            eprintln!("Error creating directory {} for the log file: {}", self.log.dir, e);
             Error::fs("error creating log file directory", &self.log.dir).with_cause(Box::new(e))
         })?;
 

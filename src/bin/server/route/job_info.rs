@@ -94,9 +94,8 @@ pub async fn get_job_info(
             })
             .collect(),
     };
-    let body: String = tpl
-        .render_once()
-        .map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
+    let body: String =
+        tpl.render_once().map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
 
     Ok(HttpResponse::Ok().body(body))
 }

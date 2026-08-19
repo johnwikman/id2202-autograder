@@ -72,27 +72,18 @@ pub async fn get_submission(
 
     let (swr, subsrc): (SubmissionWithReport, SubmissionSource) = submissions::table
         .inner_join(submission_sources::table)
-        .select((
-            SubmissionWithReport::as_select(),
-            SubmissionSource::as_select(),
-        ))
+        .select((SubmissionWithReport::as_select(), SubmissionSource::as_select()))
         .filter(sub_col::id.eq(parsed_id))
         .first(&mut conn.conn)
         .optional()
         .map_err(|e: diesel::result::Error| {
-            log::error!(
-                "could not get submission {parsed_id} with report from database: {:?}",
-                e
-            );
+            log::error!("could not get submission {parsed_id} with report from database: {:?}", e);
             ErrorResponse::internal_server_error(&req)
         })?
         .ok_or_else(|| ErrorResponse::not_found(&req, "submission not found"))?;
 
     let srckind = SubmissionSourceKind::from_i32(subsrc.kind).ok_or_else(|| {
-        log::error!(
-            "got invalid source kind {} for submission {parsed_id}",
-            subsrc.kind
-        );
+        log::error!("got invalid source kind {} for submission {parsed_id}", subsrc.kind);
         ErrorResponse::internal_server_error(&req)
     })?;
     match srckind {
@@ -218,11 +209,8 @@ pub async fn get_submission_search(
                 dbq = dbq.filter(gh_src_col::repo.eq(repo));
             }
 
-            let found: Vec<(Submission, SubmissionInfoGitHub, SubmissionSourceGitHub)> = dbq
-                .order(sub_col::id.desc())
-                .limit(100)
-                .load(&mut conn.conn)
-                .map_err(|e| {
+            let found: Vec<(Submission, SubmissionInfoGitHub, SubmissionSourceGitHub)> =
+                dbq.order(sub_col::id.desc()).limit(100).load(&mut conn.conn).map_err(|e| {
                     log::error!("Could not fetch results from database: {e}");
                     ErrorResponse::internal_server_error(&req)
                 })?;
@@ -260,11 +248,8 @@ pub async fn get_submission_search(
                 dbq = dbq.filter(gl_src_col::repo.eq(repo));
             }
 
-            let found: Vec<(Submission, SubmissionInfoGitLab, SubmissionSourceGitLab)> = dbq
-                .order(sub_col::id.desc())
-                .limit(100)
-                .load(&mut conn.conn)
-                .map_err(|e| {
+            let found: Vec<(Submission, SubmissionInfoGitLab, SubmissionSourceGitLab)> =
+                dbq.order(sub_col::id.desc()).limit(100).load(&mut conn.conn).map_err(|e| {
                     log::error!("Could not fetch results from database: {e}");
                     ErrorResponse::internal_server_error(&req)
                 })?;

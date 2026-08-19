@@ -124,9 +124,7 @@ pub async fn gitlab_submit_webhook(
 
     log::info!(
         "GitLab submission request from {} (Hook UUID: {})",
-        req.peer_addr()
-            .map(|addr| addr.to_string())
-            .unwrap_or("unknown".to_string()),
+        req.peer_addr().map(|addr| addr.to_string()).unwrap_or("unknown".to_string()),
         req.headers()
             .get("X-Gitlab-Webhook-UUID")
             .and_then(|hv| hv.to_str().ok())
@@ -200,23 +198,20 @@ pub async fn gitlab_submit_webhook(
             ErrorResponse::bad_request(&req, "Invalid repository URL")
         })?;
 
-    let (namespace, repo_name) = match sub
-        .project
-        .path_with_namespace
-        .split('/')
-        .collect::<Vec<&str>>()
-        .as_slice()
-    {
-        &[ns, repo] => (ns, repo),
-        _ => {
-            return Err(
-                ErrorResponse::bad_request(&req, "wrong format on path_with_namespace").into(),
-            );
-        }
-    };
+    let (namespace, repo_name) =
+        match sub.project.path_with_namespace.split('/').collect::<Vec<&str>>().as_slice() {
+            &[ns, repo] => (ns, repo),
+            _ => {
+                return Err(ErrorResponse::bad_request(
+                    &req,
+                    "wrong format on path_with_namespace",
+                )
+                .into());
+            }
+        };
     if repo_name != sub.project.name {
         return Err(
-            ErrorResponse::bad_request(&req, "inconsistent repository name in submission").into(),
+            ErrorResponse::bad_request(&req, "inconsistent repository name in submission").into()
         );
     }
 
@@ -243,12 +238,8 @@ pub async fn gitlab_submit_webhook(
         }
     };
 
-    let commitinfo = CommitMessageInfo {
-        settings,
-        instance: instance_settings,
-        namespace,
-        sub: &sub,
-    };
+    let commitinfo =
+        CommitMessageInfo { settings, instance: instance_settings, namespace, sub: &sub };
 
     if let Err(rejection) = validate_repo_prefix_suffix(
         namespace,
@@ -327,10 +318,7 @@ pub async fn gitlab_submit_webhook(
 
     // Notifying the other runners (TODO: make this name configurable)
     dbconn.notify("submission").unwrap_or_else(|e| {
-        log::warn!(
-            "Could not notify the runners about the new submission: {}",
-            e
-        )
+        log::warn!("Could not notify the runners about the new submission: {}", e)
     });
 
     log::info!("Submission {sub:?} successfully inserted with id {submission_id}");

@@ -24,10 +24,7 @@ use crate::schema::{self, Defs};
 
 /// The repository's example settings file, embedded at build time and shown on
 /// the page so the reference below has a complete file to be read against.
-const EXAMPLE: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/example/settings.toml"
-));
+const EXAMPLE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/example/settings.toml"));
 
 /// Where a doc comment's `[TypeName]` link resolves to, by type name: the
 /// markdown the link shows, and the id of the section it points at.
@@ -96,10 +93,9 @@ fn collect_links(meta: &Meta, prefix: &str, links: &mut Links) {
 /// cannot be broken, so it decides the width of its column on its own.
 fn setting(name: &str, env: Option<&str>, badge: &str, desc: &str) -> String {
     let env = match env {
-        Some(env) => format!(
-            "<span class=\"setting-env ms-auto\"><code>{}</code></span>",
-            escape(env)
-        ),
+        Some(env) => {
+            format!("<span class=\"setting-env ms-auto\"><code>{}</code></span>", escape(env))
+        }
         None => String::new(),
     };
     format!(
@@ -167,14 +163,7 @@ fn section<'a>(
 
     for f in meta.fields {
         if let FieldKind::Nested { meta: submeta } = f.kind {
-            section(
-                body,
-                submeta,
-                &format!("{prefix}{}.", f.name),
-                root,
-                defs,
-                links,
-            );
+            section(body, submeta, &format!("{prefix}{}.", f.name), root, defs, links);
         }
     }
 }
@@ -190,10 +179,7 @@ fn object_types(root: &Value) -> Vec<(&str, &str, &Value)> {
     defs.iter()
         .filter(|(name, _)| referenced.contains(name.as_str()))
         .map(|(name, def)| {
-            let title = def
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or(name.as_str());
+            let title = def.get("title").and_then(Value::as_str).unwrap_or(name.as_str());
             (name.as_str(), title, def)
         })
         .collect()
@@ -254,10 +240,7 @@ pub fn render(name: &str) -> String {
     // Page intro (TOML file, required values, relative paths, env precedence)
     // lives on the `Settings` type.
     body.markdown(&resolve(&Settings::META.doc.join("\n"), &links));
-    body.raw(&details(
-        "Example settings.toml",
-        &code_block(EXAMPLE, "toml"),
-    ));
+    body.raw(&details("Example settings.toml", &code_block(EXAMPLE, "toml")));
 
     body.heading(2, "Values");
     section(&mut body, &Settings::META, "", root, &defs, &links);

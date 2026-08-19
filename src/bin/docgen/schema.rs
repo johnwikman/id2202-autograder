@@ -13,10 +13,7 @@ pub type Defs<'a, 'b> = &'b dyn Fn(&str) -> Option<&'a Value>;
 /// The name a `$ref` points at, which is its last path segment. Covers both
 /// `#/$defs/X` (`schemars`) and `#/components/schemas/X` (OpenAPI).
 fn ref_name(schema: &Value) -> Option<&str> {
-    schema
-        .get("$ref")
-        .and_then(Value::as_str)
-        .and_then(|reference| reference.rsplit('/').next())
+    schema.get("$ref").and_then(Value::as_str).and_then(|reference| reference.rsplit('/').next())
 }
 
 /// A schema with any leading `$ref` followed.
@@ -33,11 +30,9 @@ fn resolve<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> &'a Value {
 fn type_of(schema: &Value) -> &str {
     match schema.get("type") {
         Some(Value::String(ty)) => ty.as_str(),
-        Some(Value::Array(types)) => types
-            .iter()
-            .filter_map(Value::as_str)
-            .find(|ty| *ty != "null")
-            .unwrap_or_default(),
+        Some(Value::Array(types)) => {
+            types.iter().filter_map(Value::as_str).find(|ty| *ty != "null").unwrap_or_default()
+        }
         _ => "",
     }
 }
@@ -47,9 +42,7 @@ fn type_of(schema: &Value) -> &str {
 /// or a definition's title is a noun, so it does.
 fn describe<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> (String, bool) {
     if let Some(name) = ref_name(schema) {
-        let title = defs(name)
-            .and_then(|target| target.get("title"))
-            .and_then(Value::as_str);
+        let title = defs(name).and_then(|target| target.get("title")).and_then(Value::as_str);
         return match title {
             Some(title) => (format!("{title} object"), true),
             None => ("object".to_string(), true),
@@ -124,15 +117,10 @@ pub fn properties(schema: &Value) -> Vec<(&str, &Value)> {
         .map(|names| names.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
 
-    let mut fields: Vec<(&str, &Value)> = props
-        .iter()
-        .map(|(name, prop)| (name.as_str(), prop))
-        .collect();
+    let mut fields: Vec<(&str, &Value)> =
+        props.iter().map(|(name, prop)| (name.as_str(), prop)).collect();
     fields.sort_by_key(|(name, _)| {
-        required
-            .iter()
-            .position(|declared| declared == name)
-            .unwrap_or(required.len())
+        required.iter().position(|declared| declared == name).unwrap_or(required.len())
     });
     fields
 }

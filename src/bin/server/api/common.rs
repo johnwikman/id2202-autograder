@@ -30,16 +30,11 @@ pub fn extract_grading_tags<'a>(
         }
     }
 
-    let grading_tags: Vec<&'a str> = grading_tag_set
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect();
+    let grading_tags: Vec<&'a str> =
+        grading_tag_set.into_iter().filter(|s| !s.is_empty()).collect();
 
-    let tag_length = grading_tags
-        .iter()
-        .map(|s| s.len())
-        .reduce(|acc, e| acc + e)
-        .unwrap_or(0usize);
+    let tag_length =
+        grading_tags.iter().map(|s| s.len()).reduce(|acc, e| acc + e).unwrap_or(0usize);
 
     if tag_length >= settings.submission.max_tag_length {
         Err(Box::new(Report::Wrapper(ReportWrapper {
@@ -105,25 +100,20 @@ pub fn validate_repo_prefix_suffix<'a>(
     }
 
     if !allowed_repo_prefixes.is_empty() {
-        let allowed_prefix = allowed_repo_prefixes
-            .iter()
-            .any(|pfx| repository.starts_with(pfx));
+        let allowed_prefix = allowed_repo_prefixes.iter().any(|pfx| repository.starts_with(pfx));
         if !allowed_prefix {
             return Err(RejectionReason::InvalidRepoPrefix { repo: repository });
         }
     }
     if !allowed_repo_suffixes.is_empty() {
-        let allowed_suffix = allowed_repo_suffixes
-            .iter()
-            .any(|sfx| repository.ends_with(sfx));
+        let allowed_suffix = allowed_repo_suffixes.iter().any(|sfx| repository.ends_with(sfx));
         if !allowed_suffix {
             return Err(RejectionReason::InvalidRepoSuffix { repo: repository });
         }
     }
 
-    if let Some(prohibited_prefix) = prohibited_repo_prefixes
-        .iter()
-        .find(|pfx| repository.starts_with(pfx.as_str()))
+    if let Some(prohibited_prefix) =
+        prohibited_repo_prefixes.iter().find(|pfx| repository.starts_with(pfx.as_str()))
     {
         return Err(RejectionReason::ProhibitedRepoPrefix {
             repo: repository,
@@ -131,9 +121,8 @@ pub fn validate_repo_prefix_suffix<'a>(
         });
     }
 
-    if let Some(prohibited_suffix) = prohibited_repo_suffixes
-        .iter()
-        .find(|pfx| repository.ends_with(pfx.as_str()))
+    if let Some(prohibited_suffix) =
+        prohibited_repo_suffixes.iter().find(|pfx| repository.ends_with(pfx.as_str()))
     {
         return Err(RejectionReason::ProhibitedRepoSuffix {
             repo: repository,

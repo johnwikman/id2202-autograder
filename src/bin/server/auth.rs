@@ -45,10 +45,7 @@ pub async fn authenticate(
 ) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
     let settings = data.get_ref();
 
-    let mut auth_info = AuthorizationInfo {
-        api_auth_ok: false,
-        auth_key: None,
-    };
+    let mut auth_info = AuthorizationInfo { api_auth_ok: false, auth_key: None };
 
     // Check provided auth_key from the request query
     #[derive(Deserialize)]
@@ -60,19 +57,10 @@ pub async fn authenticate(
     }
 
     // First check if this is provided as a header
-    if let Some(auth_header) = req
-        .headers()
-        .get("Authorization")
-        .and_then(|hv| hv.to_str().ok())
-    {
+    if let Some(auth_header) = req.headers().get("Authorization").and_then(|hv| hv.to_str().ok()) {
         if let &[method, key] = auth_header.split_whitespace().collect_vec().as_slice() {
             if method.eq_ignore_ascii_case("bearer")
-                && settings
-                    .server
-                    .secrets
-                    .api_auth_tokens
-                    .iter()
-                    .any(|s| s == key)
+                && settings.server.secrets.api_auth_tokens.iter().any(|s| s == key)
             {
                 auth_info.api_auth_ok = true;
             }
@@ -82,13 +70,7 @@ pub async fn authenticate(
     // If not provided as a header, check if it is provided as a cookie
     if !auth_info.api_auth_ok {
         if let Some(cookie) = req.cookie(COOKIE_NAME_API_AUTH_KEY) {
-            if settings
-                .server
-                .secrets
-                .api_auth_tokens
-                .iter()
-                .any(|s| s == cookie.value())
-            {
+            if settings.server.secrets.api_auth_tokens.iter().any(|s| s == cookie.value()) {
                 auth_info.api_auth_ok = true;
             }
         }

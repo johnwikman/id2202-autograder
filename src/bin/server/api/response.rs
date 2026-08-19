@@ -49,9 +49,7 @@ pub struct ErrorResponse {
 
 impl actix_web::error::ResponseError for ErrorResponse {
     fn error_response(&self) -> HttpResponse {
-        HttpResponse::build(self.status_code())
-            .content_type("application/problem+json")
-            .json(self)
+        HttpResponse::build(self.status_code()).content_type("application/problem+json").json(self)
     }
     fn status_code(&self) -> actix_web::http::StatusCode {
         StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
@@ -78,11 +76,7 @@ impl ErrorResponse {
         Self::new(req, StatusCode::NOT_FOUND, msg)
     }
     pub fn internal_server_error(req: &HttpRequest) -> ErrorResponse {
-        Self::new(
-            req,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "contact autograder responsible",
-        )
+        Self::new(req, StatusCode::INTERNAL_SERVER_ERROR, "contact autograder responsible")
     }
 }
 
@@ -119,11 +113,8 @@ impl SubmitResponse {
             // The submission is served from the same scope this webhook is
             // mounted under: `/api/submit/github` -> `/api/submission/{id}`.
             Some(id) => {
-                let scope = self
-                    .path
-                    .rsplit_once("/submit/")
-                    .map(|(scope, _)| scope)
-                    .unwrap_or_default();
+                let scope =
+                    self.path.rsplit_once("/submit/").map(|(scope, _)| scope).unwrap_or_default();
                 HttpResponse::Created()
                     .insert_header((header::LOCATION, format!("{scope}/submission/{id}")))
                     .json(self)
@@ -176,10 +167,7 @@ impl<'a> SubmissionResponse<'a> {
             date_submitted: &sub.date_submitted,
             date_exec_started: sub.exec_date_started.as_ref(),
             date_exec_finished: sub.exec_date_finished.as_ref(),
-            report: sub
-                .exec_report
-                .as_ref()
-                .and_then(|v| Report::deserialize(v).ok()),
+            report: sub.exec_report.as_ref().and_then(|v| Report::deserialize(v).ok()),
             source,
         }
     }
@@ -324,15 +312,12 @@ impl TagListResponse {
                     if group_name == &t.name {
                         r.tags.insert(t.name.clone(), TagListDetails::from_tag(t));
                     } else {
-                        r.tag_groups
-                            .insert(group_name.clone(), vec![t.name.clone()]);
+                        r.tag_groups.insert(group_name.clone(), vec![t.name.clone()]);
                     }
                 }
                 _ => {
-                    r.tag_groups.insert(
-                        group_name.clone(),
-                        tags.iter().map(|t| t.name.clone()).collect(),
-                    );
+                    r.tag_groups
+                        .insert(group_name.clone(), tags.iter().map(|t| t.name.clone()).collect());
                 }
             }
         }

@@ -57,11 +57,9 @@ impl DatabaseConnection {
             return Error::err_format("notify channel", ch.as_ref());
         }
 
-        diesel::sql_query(format!("NOTIFY {};", ch.as_ref()))
-            .execute(&mut self.conn)
-            .map_err(|e| {
-                Error::auto_msg(format!("could not notify channel \"{}\"", ch.as_ref()), e)
-            })?;
+        diesel::sql_query(format!("NOTIFY {};", ch.as_ref())).execute(&mut self.conn).map_err(
+            |e| Error::auto_msg(format!("could not notify channel \"{}\"", ch.as_ref()), e),
+        )?;
         Ok(())
     }
 
@@ -317,10 +315,7 @@ impl DatabaseConnection {
             .filter(sub_col::id.eq(sub_id))
             .first(&mut self.conn)
             .map_err(|e: diesel::result::Error| {
-                Error::auto_msg(
-                    format!("could not get submission {sub_id} from database"),
-                    e,
-                )
+                Error::auto_msg(format!("could not get submission {sub_id} from database"), e)
             })?;
 
         let src: SubmissionSource = submission_sources::table
@@ -341,12 +336,7 @@ impl DatabaseConnection {
                     .filter(ghinfo_col::github_source_id.eq(gh_src.id))
                     .first(&mut self.conn)?;
 
-                Ok(SubmissionInfo::GitHub {
-                    sub,
-                    src,
-                    gh_src,
-                    gh_info,
-                })
+                Ok(SubmissionInfo::GitHub { sub, src, gh_src, gh_info })
             }
             Some(SubmissionSourceKind::GitLab) => {
                 let gl_src = submission_source_gitlab::table
@@ -360,12 +350,7 @@ impl DatabaseConnection {
                     .filter(glinfo_col::gitlab_source_id.eq(gl_src.id))
                     .first(&mut self.conn)?;
 
-                Ok(SubmissionInfo::GitLab {
-                    sub,
-                    src,
-                    gl_src,
-                    gl_info,
-                })
+                Ok(SubmissionInfo::GitLab { sub, src, gl_src, gl_info })
             }
             None => Error::err_runtime(format!(
                 "Invalid source kind {} for submission source with id {}",
@@ -395,10 +380,7 @@ impl DatabaseConnection {
 
         match swr.exec_report {
             Some(v) => Report::deserialize(v).map(Some).map_err(|e| {
-                Error::auto_msg(
-                    format!("Could not deserialize report for submission {sub_id}"),
-                    e,
-                )
+                Error::auto_msg(format!("Could not deserialize report for submission {sub_id}"), e)
             }),
             None => Ok(None),
         }
@@ -471,10 +453,7 @@ impl DatabaseConnection {
         ))
         .get_results(&mut self.conn)
         .map_err(|e: diesel::result::Error| {
-            Error::auto_msg(
-                format!("error assigning a submission to runner {runner_id}"),
-                e,
-            )
+            Error::auto_msg(format!("error assigning a submission to runner {runner_id}"), e)
         })?;
 
         // This should always return some by this stage...
@@ -561,12 +540,7 @@ impl DatabaseConnection {
             .map_err(|e| Error::auto_msg("could not unwrap tokio runtime", e))?;
 
         match info {
-            SubmissionInfo::GitHub {
-                sub,
-                src: _,
-                gh_src,
-                gh_info,
-            } => {
+            SubmissionInfo::GitHub { sub, src: _, gh_src, gh_info } => {
                 use crate::github::CommitState as GHCS;
 
                 log::debug!("Setting commit information for submission {}", sub.id);
@@ -618,21 +592,12 @@ impl DatabaseConnection {
                     log::warn!("Could not set statis for commit {commit}: No GitHub instance configured for domain {domain}.");
                 }
             }
-            SubmissionInfo::GitLab {
-                sub,
-                src: _,
-                gl_src,
-                gl_info,
-            } => {
+            SubmissionInfo::GitLab { sub, src: _, gl_src, gl_info } => {
                 use crate::gitlab::CommitState as GLCS;
 
                 log::debug!("Setting commit information for submission {}", sub.id);
-                let (domain, namespace, repo, commit) = (
-                    &gl_src.domain,
-                    &gl_src.namespace,
-                    &gl_src.repo,
-                    &gl_info.commit,
-                );
+                let (domain, namespace, repo, commit) =
+                    (&gl_src.domain, &gl_src.namespace, &gl_src.repo, &gl_info.commit);
 
                 if let Some(instance) = settings
                     .submission
@@ -684,11 +649,7 @@ impl DatabaseConnection {
 
         let sub = info.get_submission();
 
-        log::debug!(
-            "Setting submission status to {:?} for submission {}",
-            status,
-            sub.id
-        );
+        log::debug!("Setting submission status to {:?} for submission {}", status, sub.id);
 
         diesel::update(submissions::table)
             .filter(submissions::id.eq(sub.id))
@@ -701,10 +662,7 @@ impl DatabaseConnection {
             .map(|_| ())
             .map_err(|e| {
                 Error::auto_msg(
-                    format!(
-                        "could not set status to {:?} for submission {}",
-                        status, sub.id
-                    ),
+                    format!("could not set status to {:?} for submission {}", status, sub.id),
                     e,
                 )
             })
@@ -730,10 +688,7 @@ impl DatabaseConnection {
             .map(|_| ())
             .map_err(|e| {
                 Error::auto_msg(
-                    format!(
-                        "could not set status to {:?} for submission {}",
-                        status, sub.id
-                    ),
+                    format!("could not set status to {:?} for submission {}", status, sub.id),
                     e,
                 )
             })

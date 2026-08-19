@@ -80,7 +80,9 @@ pub fn doc_table<'a, D: Into<FieldDoc>>(
                     escape(name),
                     inline(note)
                 ),
-                None => format!("<code class=\"doc-field\">{}</code>", escape(name)),
+                None => {
+                    format!("<code class=\"doc-field\">{}</code>", escape(name))
+                }
             };
             // Block markdown, so a field's doc keeps the paragraphs and lists
             // its author wrote. A heading has no place in a table cell, so it

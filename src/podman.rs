@@ -317,10 +317,7 @@ impl PodmanContainer {
     /// [`Self::exec`].
     pub fn start(&mut self) -> Result<(), Error> {
         if self.is_started {
-            return Err(Error::runtime(format!(
-                "container \"{}\" is already started",
-                self.name
-            )));
+            return Err(Error::runtime(format!("container \"{}\" is already started", self.name)));
         }
         let flags = self.flags();
         let mut cmd: Vec<&str> = vec!["podman", "run", "--detach", "--rm"];
@@ -374,10 +371,7 @@ impl PodmanContainer {
         settings: SyscommandSettings,
     ) -> Result<SyscommandOutput, Error> {
         if !self.is_started {
-            return Err(Error::runtime(format!(
-                "container \"{}\" is not started",
-                self.name
-            )));
+            return Err(Error::runtime(format!("container \"{}\" is not started", self.name)));
         }
         let mut cmd: Vec<&str> = vec!["podman", "exec"];
         if let Some(workdir) = workdir {

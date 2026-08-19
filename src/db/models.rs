@@ -270,9 +270,7 @@ impl SubmissionInfo {
     /// Returns a tuple containing `(Git clone URL, Commit)`
     pub fn git_clone_url_and_commit(&self, settings: &Settings) -> Result<(String, &str), Error> {
         let (user, host, port, path, commit) = match self {
-            Self::GitHub {
-                gh_src, gh_info, ..
-            } => {
+            Self::GitHub { gh_src, gh_info, .. } => {
                 let instance = settings
                     .submission
                     .github
@@ -290,9 +288,7 @@ impl SubmissionInfo {
                     gh_info.commit.as_str(),
                 )
             }
-            Self::GitLab {
-                gl_src, gl_info, ..
-            } => {
+            Self::GitLab { gl_src, gl_info, .. } => {
                 let instance = settings
                     .submission
                     .gitlab

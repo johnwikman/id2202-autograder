@@ -88,11 +88,10 @@ impl<'a> Render for RenderReport<'a> {
     fn render(&self, b: &mut sailfish::runtime::Buffer) -> Result<(), sailfish::RenderError> {
         match &self.v {
             Some(r) => {
-                r.render_html(&self.settings.reporting, b, false, 3)
-                    .map_err(|e| {
-                        log::error!("could not render report as HTML: {e:?}");
-                        sailfish::RenderError::new("error rendering report as HTML")
-                    })?;
+                r.render_html(&self.settings.reporting, b, false, 3).map_err(|e| {
+                    log::error!("could not render report as HTML: {e:?}");
+                    sailfish::RenderError::new("error rendering report as HTML")
+                })?;
             }
             None => {
                 b.push_str("<p>No report generated.</p>");
@@ -107,11 +106,10 @@ impl<'a> Render for RenderReport<'a> {
     ) -> Result<(), sailfish::RenderError> {
         match &self.v {
             Some(r) => {
-                r.render_html(&self.settings.reporting, b, true, 3)
-                    .map_err(|e| {
-                        log::error!("could not render report as HTML: {e:?}");
-                        sailfish::RenderError::new("error rendering report as HTML")
-                    })?;
+                r.render_html(&self.settings.reporting, b, true, 3).map_err(|e| {
+                    log::error!("could not render report as HTML: {e:?}");
+                    sailfish::RenderError::new("error rendering report as HTML")
+                })?;
             }
             None => {
                 b.push_str("<p>No report generated.</p>");

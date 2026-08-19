@@ -131,22 +131,14 @@ impl Tests {
         let tags = Tag::from_toml(ut.tags, &ut.default, &root_dir, path, options)?;
 
         log::debug!("Instantiating the tag groups");
-        let mut tag_groups: BTreeMap<String, Vec<Tag>> = tags
-            .iter()
-            .map(|(k, t)| (k.to_owned(), vec![t.to_owned()]))
-            .collect();
+        let mut tag_groups: BTreeMap<String, Vec<Tag>> =
+            tags.iter().map(|(k, t)| (k.to_owned(), vec![t.to_owned()])).collect();
         for (k, lst) in ut.tag_groups.iter() {
             if tag_groups.contains_key(k) {
-                return Err(Error::test_config_msg("duplicate tag name")
-                    .tag(k)
-                    .path(path)
-                    .into());
+                return Err(Error::test_config_msg("duplicate tag name").tag(k).path(path).into());
             }
             if lst.is_empty() {
-                return Err(Error::test_config_msg("empty tag group")
-                    .tag(k)
-                    .path(path)
-                    .into());
+                return Err(Error::test_config_msg("empty tag group").tag(k).path(path).into());
             }
             let mut gtags: Vec<Tag> = Vec::new();
             for tname in lst {
@@ -162,10 +154,7 @@ impl Tests {
             tag_groups.insert(k.to_owned(), gtags);
         }
 
-        Ok(Tests {
-            default: ut.default,
-            tag_groups,
-        })
+        Ok(Tests { default: ut.default, tag_groups })
     }
 }
 
@@ -211,10 +200,7 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify hello-all tag group contains all expected tags
-        let hello_all = tests
-            .tag_groups
-            .get("hello-all")
-            .expect("hello-all tag group not found");
+        let hello_all = tests.tag_groups.get("hello-all").expect("hello-all tag group not found");
         assert_that!(hello_all.len()).is_equal_to(4);
 
         let tag_names: Vec<&str> = hello_all.iter().map(|t| t.name.as_str()).collect();
@@ -254,10 +240,7 @@ mod tests {
         assert_eq!(hello_tag.build.cmd, vec!["make"]);
 
         // Test the hello-extra tag
-        let hello_extra = tests
-            .tag_groups
-            .get("hello-extra")
-            .expect("hello-extra tag not found");
+        let hello_extra = tests.tag_groups.get("hello-extra").expect("hello-extra tag not found");
         let hetg = &hello_extra[0].test_groups[0];
         assert_eq!(hetg.title, "Hello (Extra tests)");
         assert_eq!(hetg.tests.len(), 0);

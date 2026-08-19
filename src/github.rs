@@ -26,26 +26,18 @@ fn common_headers(
     instance: &GitHubServerSettings,
 ) -> Result<HeaderMap, Error> {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "Accept",
-        HeaderValue::from_static("application/vnd.github+json"),
-    );
-    headers.insert(
-        "X-GitHub-Api-Version",
-        HeaderValue::from_static("2022-11-28"),
-    );
+    headers.insert("Accept", HeaderValue::from_static("application/vnd.github+json"));
+    headers.insert("X-GitHub-Api-Version", HeaderValue::from_static("2022-11-28"));
     headers.insert(
         "Authorization",
-        format!("Bearer {}", instance.auth_token)
-            .parse()
-            .map_err(|e| {
-                log::error!("Could not convert github auth token to header value");
-                Error::parse_type(
-                    "GitHub auth token header value".to_string(),
-                    instance.auth_token.clone(),
-                )
-                .with_cause(Box::new(e))
-            })?,
+        format!("Bearer {}", instance.auth_token).parse().map_err(|e| {
+            log::error!("Could not convert github auth token to header value");
+            Error::parse_type(
+                "GitHub auth token header value".to_string(),
+                instance.auth_token.clone(),
+            )
+            .with_cause(Box::new(e))
+        })?,
     );
     Ok(headers)
 }
@@ -87,10 +79,7 @@ pub async fn create_commit_message(
         Error::err_http_response(
             "when submitting commit comment".to_string(),
             response.status().as_u16(),
-            response
-                .text()
-                .await
-                .unwrap_or("no text received".to_string()),
+            response.text().await.unwrap_or("no text received".to_string()),
         )
     }
 }
@@ -151,19 +140,13 @@ pub async fn create_commit_status(
         })?;
 
     if 200 <= response.status().as_u16() && response.status().as_u16() < 300 {
-        log::debug!(
-            "Successfully created commit status on commit {}",
-            commit_hash
-        );
+        log::debug!("Successfully created commit status on commit {}", commit_hash);
         Ok(())
     } else {
         Error::err_http_response(
             "when creating commit status".to_string(),
             response.status().as_u16(),
-            response
-                .text()
-                .await
-                .unwrap_or("no text received".to_string()),
+            response.text().await.unwrap_or("no text received".to_string()),
         )
     }
 }
@@ -227,10 +210,7 @@ pub async fn create_repo(
             organization_name
         ))
         .headers(common_headers(settings, instance)?)
-        .json(&GhCreateRepo {
-            name: repo_name.to_owned(),
-            private,
-        })
+        .json(&GhCreateRepo { name: repo_name.to_owned(), private })
         .send()
         .await
         .map_err(|e| {
@@ -244,10 +224,7 @@ pub async fn create_repo(
         Error::err_http_response(
             "when creating GitHub repository".to_string(),
             response.status().as_u16(),
-            response
-                .text()
-                .await
-                .unwrap_or("no text received".to_string()),
+            response.text().await.unwrap_or("no text received".to_string()),
         )
     }
 }

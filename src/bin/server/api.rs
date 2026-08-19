@@ -35,10 +35,7 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     cfg.service(tag::get_tag_task);
 
     // JSON schemas for responses
-    cfg.route(
-        "/schema/error",
-        web::get().to(response::schema_callback!(response::ErrorResponse)),
-    );
+    cfg.route("/schema/error", web::get().to(response::schema_callback!(response::ErrorResponse)));
 
     cfg.route(
         "/schema/submit",
@@ -54,10 +51,7 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
         "/schema/tag-list",
         web::get().to(response::schema_callback!(response::TagListResponse)),
     );
-    cfg.route(
-        "/schema/tag",
-        web::get().to(response::schema_callback!(response::TagResponse)),
-    );
+    cfg.route("/schema/tag", web::get().to(response::schema_callback!(response::TagResponse)));
 }
 
 /// "404: Not found" response for API requests.
@@ -79,9 +73,7 @@ pub async fn auth_hook(
     if !BYPASS_PREFIXES.iter().any(|pfx| {
         // We check the part that comes after the scope prefix, assuming that
         // the path starts with that.
-        req.path()
-            .split_at_checked(scope_prefix.len())
-            .is_some_and(|(_, p)| p.starts_with(pfx))
+        req.path().split_at_checked(scope_prefix.len()).is_some_and(|(_, p)| p.starts_with(pfx))
     }) {
         let auth_info = req
             .extensions()

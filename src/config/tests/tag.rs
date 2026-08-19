@@ -135,12 +135,10 @@ impl Tag {
             };
             let abs_path = path_absolute_join(root_dir, &p)?;
             if !std::fs::exists(&abs_path)? {
-                return Err(
-                    Error::test_config_msg(format!("task file \"{abs_path}\" not found"))
-                        .tag(tag)
-                        .path(config_path)
-                        .into(),
-                );
+                return Err(Error::test_config_msg(format!("task file \"{abs_path}\" not found"))
+                    .tag(tag)
+                    .path(config_path)
+                    .into());
             }
             Ok(Some(abs_path))
         };
@@ -259,8 +257,7 @@ impl Tag {
                 for dir in dirs {
                     log::debug!("Scanning directory {dir}");
                     let absdir = path_absolute_join(root_dir, &dir)?;
-                    t.test_groups
-                        .push(TestGroup::new(&absdir, &defaults.test, vec![])?);
+                    t.test_groups.push(TestGroup::new(&absdir, &defaults.test, vec![])?);
                 }
                 Ok((name, t))
             })
@@ -366,11 +363,7 @@ mod tests {
         assert_eq!(tag_match(""), ("", ""));
 
         for &(input, expected_tag, expected_rest) in TAG_TEST_CASES {
-            assert_eq!(
-                tag_match(input),
-                (expected_tag, expected_rest),
-                "tag_match({input:?})"
-            );
+            assert_eq!(tag_match(input), (expected_tag, expected_rest), "tag_match({input:?})");
         }
     }
 
@@ -381,11 +374,7 @@ mod tests {
 
         for &(input, _, expected_rest) in TAG_TEST_CASES {
             let expected_valid = expected_rest.is_empty();
-            assert_eq!(
-                tag_is_valid(input),
-                expected_valid,
-                "tag_is_valid({input:?})"
-            );
+            assert_eq!(tag_is_valid(input), expected_valid, "tag_is_valid({input:?})");
         }
     }
 }

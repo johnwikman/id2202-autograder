@@ -35,14 +35,9 @@ pub fn listen<S: AsRef<str>>(s: &Settings, ch: S) -> Result<bool, Error> {
     let mut client = Client::connect(&conn_string, NoTls)
         .map_err(|e| Error::auto_msg("could not connect to database for listen()", e))?;
 
-    client
-        .execute(&format!("LISTEN {};", ch.as_ref()), &[])
-        .map_err(|e| {
-            Error::auto_msg(
-                format!("could not LISTEN on channel \"{}\"", ch.as_ref()),
-                e,
-            )
-        })?;
+    client.execute(&format!("LISTEN {};", ch.as_ref()), &[]).map_err(|e| {
+        Error::auto_msg(format!("could not LISTEN on channel \"{}\"", ch.as_ref()), e)
+    })?;
 
     // https://docs.rs/postgres/0.19.12/postgres/struct.Notifications.html
     // https://docs.rs/postgres/0.19.12/postgres/notifications/struct.TimeoutIter.html

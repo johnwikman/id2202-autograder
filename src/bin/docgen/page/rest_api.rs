@@ -108,9 +108,7 @@ struct Operation {
 
 impl Operation {
     fn security_names(&self) -> impl Iterator<Item = &str> {
-        self.security
-            .iter()
-            .flat_map(|req| req.keys().map(String::as_str))
+        self.security.iter().flat_map(|req| req.keys().map(String::as_str))
     }
 }
 
@@ -210,10 +208,7 @@ const ACCORDION_ID: &str = "apiAccordion";
 fn security_badges(op: &Operation) -> String {
     op.security_names()
         .map(|name| {
-            format!(
-                "<span class=\"badge bg-secondary ms-2\">{LOCK_ICON} {}</span>",
-                escape(name)
-            )
+            format!("<span class=\"badge bg-secondary ms-2\">{LOCK_ICON} {}</span>", escape(name))
         })
         .collect()
 }
@@ -238,10 +233,7 @@ fn scheme_box(name: &str, scheme: &SecurityScheme, lead: &str) -> String {
             ));
         }
     } else {
-        inner.push_str(&format!(
-            "<p class=\"mb-0 mt-2\">{}</p>\n",
-            inline(&scheme.description)
-        ));
+        inner.push_str(&format!("<p class=\"mb-0 mt-2\">{}</p>\n", inline(&scheme.description)));
     }
     notched_box(&format!("{LOCK_ICON} {}", escape(name)), &inner)
 }
@@ -267,11 +259,7 @@ fn endpoint_auth(op: &Operation, spec: &Spec) -> String {
         .filter(|name| *name != GLOBAL_SCHEME)
         .filter_map(|name| {
             let scheme = spec.components.security_schemes.get(name)?;
-            Some(scheme_box(
-                name,
-                scheme,
-                "This endpoint is not authenticated with an API token.",
-            ))
+            Some(scheme_box(name, scheme, "This endpoint is not authenticated with an API token."))
         })
         .collect()
 }
@@ -319,21 +307,20 @@ fn example_value(schema: &Value, schemas: &BTreeMap<String, Value>, depth: u8) -
     // utoipa emits `allOf`/`anyOf`/`oneOf` for `$ref` + metadata and for
     // optionals; take the first meaningful (non-null) subschema.
     for key in ["allOf", "anyOf", "oneOf"] {
-        if let Some(sub) = schema.get(key).and_then(Value::as_array).and_then(|a| {
-            a.iter()
-                .find(|s| s.get("type").and_then(Value::as_str) != Some("null"))
-        }) {
+        if let Some(sub) = schema
+            .get(key)
+            .and_then(Value::as_array)
+            .and_then(|a| a.iter().find(|s| s.get("type").and_then(Value::as_str) != Some("null")))
+        {
             return example_value(sub, schemas, depth);
         }
     }
     // `type` may be a string or, for nullable fields (OpenAPI 3.1), an array.
     let ty = match schema.get("type") {
         Some(Value::String(s)) => s.as_str(),
-        Some(Value::Array(a)) => a
-            .iter()
-            .filter_map(Value::as_str)
-            .find(|t| *t != "null")
-            .unwrap_or("object"),
+        Some(Value::Array(a)) => {
+            a.iter().filter_map(Value::as_str).find(|t| *t != "null").unwrap_or("object")
+        }
         _ => "object",
     };
     match ty {
@@ -376,10 +363,7 @@ const KEY_ORDER: &[&str] = &["description", "type", "properties", "required"];
 
 /// The component name a `$ref` points at, for refs into `components/schemas`.
 fn ref_name(schema: &Value) -> Option<&str> {
-    schema
-        .get("$ref")
-        .and_then(Value::as_str)
-        .and_then(|r| r.strip_prefix(COMPONENT_PREFIX))
+    schema.get("$ref").and_then(Value::as_str).and_then(|r| r.strip_prefix(COMPONENT_PREFIX))
 }
 
 /// Collects every component schema reachable from `schema` into `found`. Names
@@ -455,33 +439,22 @@ fn schema_document(schema: &Value, schemas: &BTreeMap<String, Value>) -> String 
         return serde_json::to_string_pretty(root).unwrap_or_default();
     };
 
-    let mut doc = vec![(
-        "$schema",
-        json!("https://json-schema.org/draft/2020-12/schema"),
-    )];
+    let mut doc = vec![("$schema", json!("https://json-schema.org/draft/2020-12/schema"))];
     if let Some(title) = title {
         doc.push(("title", json!(title)));
     }
 
     let mut keys: Vec<&String> = fields.keys().collect();
     keys.sort_by_key(|k| {
-        KEY_ORDER
-            .iter()
-            .position(|known| *known == k.as_str())
-            .unwrap_or(KEY_ORDER.len())
+        KEY_ORDER.iter().position(|known| *known == k.as_str()).unwrap_or(KEY_ORDER.len())
     });
-    doc.extend(
-        keys.into_iter()
-            .map(|k| (k.as_str(), rewrite_refs(&fields[k]))),
-    );
+    doc.extend(keys.into_iter().map(|k| (k.as_str(), rewrite_refs(&fields[k]))));
 
     let mut defs = BTreeSet::new();
     collect_refs(root, schemas, &mut defs);
     if !defs.is_empty() {
-        let defs: Map<String, Value> = defs
-            .into_iter()
-            .map(|name| (name.to_string(), rewrite_refs(&schemas[name])))
-            .collect();
+        let defs: Map<String, Value> =
+            defs.into_iter().map(|name| (name.to_string(), rewrite_refs(&schemas[name]))).collect();
         doc.push(("$defs", Value::Object(defs)));
     }
 
@@ -572,9 +545,7 @@ pub fn render(name: &str, spec: &Spec) -> String {
     }
     body.raw(&auth_intro(spec));
 
-    body.raw(&format!(
-        "<div class=\"accordion\" id=\"{ACCORDION_ID}\">\n"
-    ));
+    body.raw(&format!("<div class=\"accordion\" id=\"{ACCORDION_ID}\">\n"));
     for (path, item) in &spec.paths {
         for (method, op) in item.operations() {
             let id = endpoint_id(method, path);

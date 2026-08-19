@@ -28,9 +28,8 @@ pub async fn get_index(
         common: CommonInformation::from_title_route(settings, "Home", current_route),
     };
 
-    let body: String = tpl
-        .render_once()
-        .map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
+    let body: String =
+        tpl.render_once().map_err(|e| InternalError::new(e, StatusCode::INTERNAL_SERVER_ERROR))?;
 
     Ok(HttpResponse::Ok().body(body))
 }

@@ -70,11 +70,7 @@ pub fn inline(s: &str) -> String {
             let intraword = plain.chars().last().is_some_and(char::is_alphanumeric);
             let end = inner.find(delim).filter(|&end| end > 0);
             if let (false, Some(end)) = (intraword, end) {
-                if !inner[end + 1..]
-                    .chars()
-                    .next()
-                    .is_some_and(char::is_alphanumeric)
-                {
+                if !inner[end + 1..].chars().next().is_some_and(char::is_alphanumeric) {
                     flush!();
                     out.push_str("<em>");
                     out.push_str(&inline(&inner[..end]));

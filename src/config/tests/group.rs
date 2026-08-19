@@ -80,11 +80,9 @@ impl _UntreatedTest {
         let by_kind = self.default.clone().unwrap_or_default();
         for ident in by_kind.keys() {
             if !Kind::idents().iter().any(|i| i == ident) {
-                return Err(
-                    Error::test_config_msg("unknown test kind in [test.default]")
-                        .as_error()
-                        .with_cause(Box::new(Error::identifier(ident.as_str(), Kind::idents()))),
-                );
+                return Err(Error::test_config_msg("unknown test kind in [test.default]")
+                    .as_error()
+                    .with_cause(Box::new(Error::identifier(ident.as_str(), Kind::idents()))));
             }
         }
         Ok(by_kind)
@@ -167,39 +165,22 @@ impl TestGroup {
         let mut tc_err = Error::test_config().path(&config_path);
 
         let contents: String = std::fs::read_to_string(&config_path).map_err(|e| {
-            tc_err
-                .to_owned()
-                .msg("could not read into string")
-                .as_error()
-                .with_cause(Box::new(e))
+            tc_err.to_owned().msg("could not read into string").as_error().with_cause(Box::new(e))
         })?;
         let utg: _UntreatedTestGroup = toml::from_str(&contents).map_err(|e| {
-            tc_err
-                .to_owned()
-                .msg("could not deserialize toml")
-                .as_error()
-                .with_cause(Box::new(e))
+            tc_err.to_owned().msg("could not deserialize toml").as_error().with_cause(Box::new(e))
         })?;
 
         // Setting up the defaults for this test group
         let group_config = inherited.extend(&utg.test, dir).map_err(|e| {
-            tc_err
-                .to_owned()
-                .msg("invalid test configuration")
-                .as_error()
-                .with_cause(Box::new(e))
+            tc_err.to_owned().msg("invalid test configuration").as_error().with_cause(Box::new(e))
         })?;
 
         // Build title with numbering prefix (e.g., "1.2.3. Title")
-        let title = utg
-            .title
-            .ok_or_else(|| tc_err.to_owned().msg("missing title for test group"))?;
+        let title =
+            utg.title.ok_or_else(|| tc_err.to_owned().msg("missing title for test group"))?;
         let prefix: String = numbering.iter().map(|i| format!("{i}.")).collect();
-        let tg_title = if prefix.is_empty() {
-            title
-        } else {
-            format!("{prefix} {title}")
-        };
+        let tg_title = if prefix.is_empty() { title } else { format!("{prefix} {title}") };
 
         // Associate the title with any potential errors.
         tc_err.title = Some(tg_title.to_owned());
@@ -248,8 +229,7 @@ impl TestGroup {
                 new_numbering.push(group_number);
                 let subdir = path_absolute_join(dir, &filename)?;
                 //log::debug!("Scanning test subgroup from {subdir}");
-                tg.subgroups
-                    .push(TestGroup::new(&subdir, &group_config, new_numbering)?);
+                tg.subgroups.push(TestGroup::new(&subdir, &group_config, new_numbering)?);
             } else if let Some((prefix, "")) = filename.rsplit_once(".test.toml") {
                 let testfile_path = path_absolute_join(dir, &filename)?;
                 //log::debug!("Found test file {testfile_path}");

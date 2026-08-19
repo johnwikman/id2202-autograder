@@ -53,10 +53,8 @@ fn scoped(css: &str, scope: &str) -> String {
         let selectors = line.trim().strip_suffix('{').filter(|s| s.contains('.'));
         match selectors {
             Some(selectors) => {
-                let scoped: Vec<String> = selectors
-                    .split(',')
-                    .map(|s| format!("{scope} {}", s.trim()))
-                    .collect();
+                let scoped: Vec<String> =
+                    selectors.split(',').map(|s| format!("{scope} {}", s.trim())).collect();
                 out.push_str(&format!("{} {{\n", scoped.join(", ")));
             }
             None => {
@@ -86,9 +84,7 @@ pub fn stylesheet() -> String {
 /// plain, escaped text, so this is always safe to call.
 pub fn highlight(code: &str, lang: &str) -> String {
     let ss = syntaxes();
-    let syntax = ss
-        .find_syntax_by_token(lang)
-        .unwrap_or_else(|| ss.find_syntax_plain_text());
+    let syntax = ss.find_syntax_by_token(lang).unwrap_or_else(|| ss.find_syntax_plain_text());
     let mut generator = ClassedHTMLGenerator::new_with_class_style(syntax, ss, CLASS_STYLE);
     for line in LinesWithEndings::from(code) {
         // Only fails on malformed syntax definitions, which the bundled ones are

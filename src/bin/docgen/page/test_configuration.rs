@@ -30,10 +30,7 @@ fn behavior(f: &FieldAttrs) -> String {
     }
     if !f.clears.is_empty() {
         let cleared: Vec<String> = f.clears.iter().map(|c| format!("`{c}`")).collect();
-        out.push_str(&format!(
-            " Setting this key resets {} to the default.",
-            cleared.join(", ")
-        ));
+        out.push_str(&format!(" Setting this key resets {} to the default.", cleared.join(", ")));
     }
     if f.deep_merge {
         out.push_str(" Inherited entries are merged key by key, not replaced wholesale.");

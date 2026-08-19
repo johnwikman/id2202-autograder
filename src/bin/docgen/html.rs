@@ -28,10 +28,8 @@ const DOC_CSS: &str = include_str!("docs.css");
 /// The colour-mode toggler the web UI uses (see `web/templates/header.stpl`),
 /// inlined into `<head>` so the stored theme is applied before the first paint.
 /// It reads `<button data-bs-theme-value>` and the `#bd-theme` dropdown below.
-const COLOR_SCHEME_JS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/web/static/script/color-scheme.js"
-));
+const COLOR_SCHEME_JS: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/web/static/script/color-scheme.js"));
 
 /// The icons the theme dropdown is built from, as an inline sprite (the web UI
 /// inlines the same four symbols). Referenced by `<use href="#...">`.
@@ -161,10 +159,7 @@ pub struct Body {
 
 impl Body {
     pub fn new(html: &str) -> Self {
-        Body {
-            html: html.to_string(),
-            toc: Vec::new(),
-        }
+        Body { html: html.to_string(), toc: Vec::new() }
     }
 
     /// HTML inserted verbatim. Any heading in it stays out of the submenu.
@@ -187,11 +182,7 @@ impl Body {
     /// A submenu entry for something that is not a heading — the REST API
     /// endpoints, which are accordion headers. `id` has to exist in the body.
     pub fn entry(&mut self, level: usize, id: &str, label: &str) {
-        self.toc.push(Heading {
-            level,
-            id: id.to_string(),
-            label: label.to_string(),
-        });
+        self.toc.push(Heading { level, id: id.to_string(), label: label.to_string() });
     }
 
     /// The heading markup, with a unique id and the anchor link revealed on
@@ -209,11 +200,7 @@ impl Body {
              <a class=\"doc-anchor\" href=\"#{id}\" aria-label=\"Link to this section\">#</a>\
              </h{level}>\n"
         );
-        self.toc.push(Heading {
-            level,
-            id,
-            label: inner_html.to_string(),
-        });
+        self.toc.push(Heading { level, id, label: inner_html.to_string() });
         out
     }
 }
@@ -246,11 +233,7 @@ pub fn html_page(name: &str, title: &str, active_href: &str, body: Body) -> Stri
     let mut nav = String::new();
     for (href, label) in NAV {
         let active = *href == active_href;
-        let class = if active {
-            "nav-link active"
-        } else {
-            "nav-link"
-        };
+        let class = if active { "nav-link active" } else { "nav-link" };
         nav.push_str(&format!(
             "<li class=\"nav-item\"><a class=\"{class}\" href=\"{}\">{}</a>",
             escape(href),
@@ -259,11 +242,7 @@ pub fn html_page(name: &str, title: &str, active_href: &str, body: Body) -> Stri
         if active && !toc.is_empty() {
             nav.push_str("\n<ul class=\"nav flex-column doc-toc ms-3\">\n");
             for h in &toc {
-                let indent = if h.level > 2 {
-                    format!(" lvl-{}", h.level)
-                } else {
-                    String::new()
-                };
+                let indent = if h.level > 2 { format!(" lvl-{}", h.level) } else { String::new() };
                 nav.push_str(&format!(
                     "<li class=\"nav-item\"><a class=\"nav-link py-1{indent}\" href=\"#{}\">{}</a></li>\n",
                     h.id, h.label

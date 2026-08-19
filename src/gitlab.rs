@@ -47,10 +47,7 @@ pub async fn create_commit_message(
     let c = ReqwestClient::new();
 
     let mut form_params = BTreeMap::new();
-    form_params.insert(
-        "note",
-        format!("{}\n\n{}", message, settings.submission.comment_signature),
-    );
+    form_params.insert("note", format!("{}\n\n{}", message, settings.submission.comment_signature));
 
     let response = c
         .post(format!(
@@ -76,10 +73,7 @@ pub async fn create_commit_message(
         Error::err_http_response(
             "when submitting commit comment".to_string(),
             response.status().as_u16(),
-            response
-                .text()
-                .await
-                .unwrap_or("no text received".to_string()),
+            response.text().await.unwrap_or("no text received".to_string()),
         )
     }
 }
@@ -149,10 +143,7 @@ pub async fn set_commit_status(
         Error::err_http_response(
             "when submitting commit status".to_string(),
             response.status().as_u16(),
-            response
-                .text()
-                .await
-                .unwrap_or("no text received".to_string()),
+            response.text().await.unwrap_or("no text received".to_string()),
         )
     }
 }

@@ -74,16 +74,11 @@ async fn serve(settings: &str) -> Result<(), Error> {
 }
 
 fn emit_openapi(path: &str) -> Result<(), Error> {
-    if let Some(parent) = std::path::Path::new(path)
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
+    if let Some(parent) = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent).map_err(|e| {
-            Error::fs(
-                "creating openapi output directory",
-                parent.to_string_lossy(),
-            )
-            .with_cause(Box::new(e))
+            Error::fs("creating openapi output directory", parent.to_string_lossy())
+                .with_cause(Box::new(e))
         })?;
     }
     std::fs::write(path, openapi::spec_json()?)
