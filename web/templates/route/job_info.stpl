@@ -13,7 +13,15 @@
   <tbody>
 <% for j in &job_info_vec { %>
     <tr>
-        <td scope="row"><%= j.id.to_string() %></td>
+        <td scope="row"><%
+          match &j.href {
+            Some(href) => {
+              %><a href="<%= href %>"><%= j.id.to_string() %></a><%
+          },
+            None => {
+              %><%= j.id.to_string() %><%
+          }
+          } %></td>
         <td><%= j.date_submitted %></td>
         <td><%
         for (i, t) in j.grading_tags.iter().enumerate() {

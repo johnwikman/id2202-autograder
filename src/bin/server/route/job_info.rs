@@ -2,14 +2,17 @@ use actix_web::{
     error::InternalError,
     http::StatusCode,
     web::{self},
-    HttpRequest, HttpResponse,
+    HttpMessage, HttpRequest, HttpResponse,
 };
 use num_traits::FromPrimitive;
 use sailfish::TemplateSimple;
 
 use id2202_autograder::{config::Settings, utils::systemtime_to_utc_string};
 
-use crate::route::{common::CommonInformation, error_msg};
+use crate::{
+    auth::AuthorizationInfo,
+    route::{common::CommonInformation, error_msg},
+};
 
 /// Template for showing job information
 #[derive(TemplateSimple)]
@@ -27,19 +30,26 @@ struct JobInfo<'a> {
     status: String,
     /// ("symbol", "span class")
     status_symbol_and_class: Option<(String, String)>,
+    /// Link to the submission page (link is hidden if None)
+    href: Option<String>,
 }
 
 /// Page that shows information about current jobs.
 pub async fn get_job_info(
     current_route: &str,
     data: web::Data<Settings>,
-    _req: HttpRequest,
+    req: HttpRequest,
 ) -> Result<HttpResponse, actix_web::Error> {
     use id2202_autograder::db::{
         conn::DatabaseConnection, models::Submission, models::SubmissionStatusCode as SSC,
     };
 
     let settings = data.get_ref();
+
+    // this has no security implication, only that we hide links if we know for
+    // certain that the user is not authenticated
+    let show_submission_links =
+        req.extensions().get::<AuthorizationInfo>().is_some_and(|a| a.api_auth_ok);
 
     let mut conn = match DatabaseConnection::connect(settings) {
         Ok(conn) => conn,
@@ -91,6 +101,7 @@ pub async fn get_job_info(
                         )),
                     },
                 ),
+                href: show_submission_links.then(|| format!("/submission/{}", sub.id)),
             })
             .collect(),
     };
