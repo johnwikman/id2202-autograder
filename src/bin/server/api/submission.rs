@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use actix_web::{
     get,
     web::{self},
@@ -6,7 +8,7 @@ use actix_web::{
 use num_traits::FromPrimitive;
 use serde::Deserialize;
 
-use diesel::OptionalExtension;
+use diesel::{OptionalExtension, PgArrayExpressionMethods};
 use id2202_autograder::{
     config::Settings,
     db::{
@@ -17,6 +19,7 @@ use id2202_autograder::{
             SubmissionWithReport,
         },
     },
+    utils::deserialize_iso8601,
 };
 use utoipa::IntoParams;
 
@@ -133,13 +136,25 @@ pub async fn get_submission(
 #[into_params(parameter_in = Query)]
 struct SubmissionSearchFilterQuery {
     /// Kind of submission source: `github` or `gitlab`
-    source_kind: String,
+    source_kind: Option<String>,
     /// The git commit hash associated with the submission.
     commit_hash: Option<String>,
     /// The username associated with the submission.
     user: Option<String>,
     /// The repository associated with the submission.
     repo: Option<String>,
+    /// Only include submissions that has submitted with this tag.
+    tag: Option<String>,
+    /// Only include submissions that has submitted after this date (inclusive).
+    #[serde(default, deserialize_with = "deserialize_iso8601")]
+    #[param(value_type = String, format = DateTime)]
+    after: Option<SystemTime>,
+    /// Only include submissions that has submitted before this date (inclusive).
+    #[serde(default, deserialize_with = "deserialize_iso8601")]
+    #[param(value_type = String, format = DateTime)]
+    before: Option<SystemTime>,
+    /// Maximum number of returned results. Defaults to 100 if not specified.
+    limit: Option<u32>,
 }
 
 /// Searches for submissions in the database, using one or more specified
@@ -150,7 +165,7 @@ struct SubmissionSearchFilterQuery {
     security(("api_token" = [])),
     responses(
         (status = 200, description = "Submission info, including the grading report once finished", body = SubmissionSearchResponse),
-        (status = 400, description = "Missing required query keys, or invalid source kind.", body = ErrorResponse),
+        (status = 400, description = "Incorrect formatting of query keys, or invalid source kind.", body = ErrorResponse),
     ),
 )]
 #[get("/submission")]
@@ -174,9 +189,11 @@ pub async fn get_submission_search(
     ) {
         Ok(q) => q.into_inner(),
         Err(_) => {
-            return Err(ErrorResponse::bad_request(&req, "missing required parameters").into());
+            return Err(ErrorResponse::bad_request(&req, "bad parameters").into());
         }
     };
+
+    let limit = q.limit.unwrap_or(100);
 
     let mut conn = match DatabaseConnection::connect(settings) {
         Ok(conn) => conn,
@@ -186,89 +203,125 @@ pub async fn get_submission_search(
         }
     };
 
-    match q.source_kind.to_lowercase().as_str() {
-        "github" => {
-            let mut dbq = submissions::table
-                .inner_join(
-                    submission_info_github::table.inner_join(submission_source_github::table),
-                )
-                .select((
-                    Submission::as_select(),
-                    SubmissionInfoGitHub::as_select(),
-                    SubmissionSourceGitHub::as_select(),
-                ))
-                .into_boxed();
-
-            if let Some(commit_hash) = &q.commit_hash {
-                dbq = dbq.filter(gh_info_col::commit.eq(commit_hash));
-            }
-            if let Some(user) = &q.user {
-                dbq = dbq.filter(gh_info_col::user.eq(user));
-            }
-            if let Some(repo) = &q.repo {
-                dbq = dbq.filter(gh_src_col::repo.eq(repo));
-            }
-
-            let found: Vec<(Submission, SubmissionInfoGitHub, SubmissionSourceGitHub)> =
-                dbq.order(sub_col::id.desc()).limit(100).load(&mut conn.conn).map_err(|e| {
-                    log::error!("Could not fetch results from database: {e}");
-                    ErrorResponse::internal_server_error(&req)
-                })?;
-
-            Ok(SubmissionSearchResponse {
-                path: req.path().to_string(),
-                items: found
-                    .iter()
-                    .map(|(sub, info, src)| {
-                        SubmissionSearchResponseItem::github_from_db(sub, info, src)
-                    })
-                    .collect(),
-            }
-            .to_http())
-        }
-        "gitlab" => {
-            let mut dbq = submissions::table
-                .inner_join(
-                    submission_info_gitlab::table.inner_join(submission_source_gitlab::table),
-                )
-                .select((
-                    Submission::as_select(),
-                    SubmissionInfoGitLab::as_select(),
-                    SubmissionSourceGitLab::as_select(),
-                ))
-                .into_boxed();
-
-            if let Some(commit_hash) = &q.commit_hash {
-                dbq = dbq.filter(gl_info_col::commit.eq(commit_hash));
-            }
-            if let Some(user) = &q.user {
-                dbq = dbq.filter(gl_info_col::user.eq(user));
-            }
-            if let Some(repo) = &q.repo {
-                dbq = dbq.filter(gl_src_col::repo.eq(repo));
-            }
-
-            let found: Vec<(Submission, SubmissionInfoGitLab, SubmissionSourceGitLab)> =
-                dbq.order(sub_col::id.desc()).limit(100).load(&mut conn.conn).map_err(|e| {
-                    log::error!("Could not fetch results from database: {e}");
-                    ErrorResponse::internal_server_error(&req)
-                })?;
-
-            Ok(SubmissionSearchResponse {
-                path: req.path().to_string(),
-                items: found
-                    .iter()
-                    .map(|(sub, info, src)| {
-                        SubmissionSearchResponseItem::gitlab_from_db(sub, info, src)
-                    })
-                    .collect(),
-            }
-            .to_http())
-        }
-        _ => Err(ErrorResponse::bad_request(
-            &req,
-            &format!("invalid source kind \"{}\"", q.source_kind),
-        )
-        .into()),
+    struct SearchSources {
+        github: bool,
+        gitlab: bool,
     }
+    let search_sources = match q.source_kind.map(|s| s.to_lowercase()).as_deref() {
+        Some("github") => SearchSources { github: true, gitlab: false },
+        Some("gitlab") => SearchSources { github: false, gitlab: true },
+        Some(kind) => {
+            return Err(ErrorResponse::bad_request(
+                &req,
+                &format!("invalid source kind \"{}\"", kind),
+            )
+            .into());
+        }
+        None => SearchSources { github: true, gitlab: true },
+    };
+
+    macro_rules! apply_common_filters {
+        ($dbq:ident, $q:ident) => {
+            if let Some(tag) = &$q.tag {
+                $dbq = $dbq.filter(sub_col::grading_tags.contains(vec![tag.as_str()]));
+            }
+            if let Some(after) = &$q.after {
+                $dbq = $dbq.filter(sub_col::date_submitted.ge(after));
+            }
+            if let Some(before) = &$q.before {
+                $dbq = $dbq.filter(sub_col::date_submitted.le(before));
+            }
+        };
+    }
+
+    let gh_results = if search_sources.github {
+        let mut dbq = submissions::table
+            .inner_join(submission_info_github::table.inner_join(submission_source_github::table))
+            .select((
+                Submission::as_select(),
+                SubmissionInfoGitHub::as_select(),
+                SubmissionSourceGitHub::as_select(),
+            ))
+            .into_boxed();
+
+        apply_common_filters!(dbq, q);
+
+        if let Some(commit_hash) = &q.commit_hash {
+            dbq = dbq.filter(gh_info_col::commit.eq(commit_hash));
+        }
+        if let Some(user) = &q.user {
+            dbq = dbq.filter(gh_info_col::user.eq(user));
+        }
+        if let Some(repo) = &q.repo {
+            dbq = dbq.filter(gh_src_col::repo.eq(repo));
+        }
+
+        let found: Vec<(Submission, SubmissionInfoGitHub, SubmissionSourceGitHub)> =
+            dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
+                |e| {
+                    log::error!("Could not fetch results from database: {e}");
+                    ErrorResponse::internal_server_error(&req)
+                },
+            )?;
+
+        found
+    } else {
+        Vec::new()
+    };
+
+    let gl_results = if search_sources.gitlab {
+        let mut dbq = submissions::table
+            .inner_join(submission_info_gitlab::table.inner_join(submission_source_gitlab::table))
+            .select((
+                Submission::as_select(),
+                SubmissionInfoGitLab::as_select(),
+                SubmissionSourceGitLab::as_select(),
+            ))
+            .into_boxed();
+
+        apply_common_filters!(dbq, q);
+
+        if let Some(commit_hash) = &q.commit_hash {
+            dbq = dbq.filter(gl_info_col::commit.eq(commit_hash));
+        }
+        if let Some(user) = &q.user {
+            dbq = dbq.filter(gl_info_col::user.eq(user));
+        }
+        if let Some(repo) = &q.repo {
+            dbq = dbq.filter(gl_src_col::repo.eq(repo));
+        }
+
+        let found: Vec<(Submission, SubmissionInfoGitLab, SubmissionSourceGitLab)> =
+            dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
+                |e| {
+                    log::error!("Could not fetch results from database: {e}");
+                    ErrorResponse::internal_server_error(&req)
+                },
+            )?;
+
+        found
+    } else {
+        Vec::new()
+    };
+
+    let mut results = Vec::from_iter(
+        gh_results
+            .iter()
+            .map(|(sub, info, src)| SubmissionSearchResponseItem::github_from_db(sub, info, src))
+            .chain(gl_results.iter().map(|(sub, info, src)| {
+                SubmissionSearchResponseItem::gitlab_from_db(sub, info, src)
+            })),
+    );
+
+    // NOTE: `l` and `r` are intentionally reversed such that results are
+    // sorted in a descending order.
+    results.sort_by(|l, r| r.submission_id.cmp(&l.submission_id));
+
+    Ok(SubmissionSearchResponse {
+        path: req.path().to_string(),
+        items: results
+            .split_at_checked(limit as usize)
+            .map_or_else(|| results.as_slice(), |(v1, _)| v1),
+    }
+    .to_http())
 }

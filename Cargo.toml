@@ -63,6 +63,7 @@ smart-default = "0.7.1"
 static-files = "0.3.1"
 subprocess = "1.1.0"
 tempfile = "3.27.0"
+time = { version = "0.3.55", features = ["parsing"] }
 tokio = "1.52.3"
 toml = { version = "1.1.2", features = ["parse", "serde"] }
 url = "2.5.8"

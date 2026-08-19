@@ -216,7 +216,7 @@ cargo build
 cargo install diesel_cli --no-default-features --features "postgres"
 ```
 
-### Development and Testing Workflow
+### Development Workflow
 
 Development is best done by running the rust code on the host environment. The
 steps below will set up the development environment. Furthermore, here we also
@@ -237,6 +237,7 @@ touch .env
 dotenv set DATABASE_URL "postgres://autograder:ChangeMe@localhost/autograder"
 dotenv set AUTOGRADER_GITHUB_AUTH_TOKENS "<domain>=<github_token>"
 dotenv set AUTOGRADER_RUNNER_SSH_KEYS "$(pwd)/data/ssh/id_ed25519"
+dotenv set AUTOGRADER_RUNNER_SSH_KNOWN_HOSTS "$(pwd)/data/ssh/known_hosts"
 
 # Also, if using the GitLab test framework, it's necessary to add the following
 # variables to the .env file (randomly generated tokens and passwords)
@@ -248,6 +249,11 @@ dotenv set AUTOGRADER_GITLAB_AUTH_TOKENS "localhost:8929=$(dotenv get GITLAB_AUT
 # Also make sure that we have an API token to use for testing purposes
 # (In practice this should be randomly generated)
 dotenv set AUTOGRADER_SERVER_API_AUTH_TOKENS "example-api-token"
+
+# These paths are optional to set, but recommended such that everything goes
+# under the data/ directory.
+dotenv set AUTOGRADER_LOG_DIR "$(pwd)/data/log"
+dotenv set AUTOGRADER_RUNNER_SHADOW_DIR "$(pwd)/data/shadow"
 
 # Start the database
 sudo docker compose up -d --remove-orphans postgres
@@ -285,7 +291,7 @@ dotenv run ./target/debug/entrypoint -s example/settings.toml start
 ```
 
 
-### Notes on Setting Up The GitLab Instance
+### Notes on Manually Setting Up The GitLab Instance
 
 **IMPORTANT: These notes are for development/testing only, and are not
 suitable for a production environment.** 

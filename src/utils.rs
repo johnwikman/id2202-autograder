@@ -8,6 +8,7 @@ use std::{
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use serde::Deserialize;
 use subprocess::{Exec, ExitStatus, Job, Redirection};
 use tempfile;
 
@@ -124,6 +125,21 @@ pub fn systemtime_to_fsfriendly_utc_string(systime: &SystemTime) -> Option<Strin
             DateTime::from_timestamp(secs, d.subsec_nanos())
         })
         .map(|dt| dt.format("%Y-%m-%d_%H%M%S.%6f").to_string())
+}
+
+/// Deserializes an ISO8601 timestamp into a SystemTime. A value without an
+/// offset is taken as UTC, and a bare date as midnight.
+pub fn deserialize_iso8601<'de, D: serde::Deserializer<'de>, T: From<SystemTime>>(
+    d: D,
+) -> Result<T, D::Error> {
+    use time::{format_description::well_known::Iso8601, Date, OffsetDateTime, PrimitiveDateTime};
+
+    let s = String::deserialize(d)?;
+    let dt = OffsetDateTime::parse(&s, &Iso8601::PARSING)
+        .or_else(|_| PrimitiveDateTime::parse(&s, &Iso8601::PARSING).map(|dt| dt.assume_utc()))
+        .or_else(|_| Date::parse(&s, &Iso8601::PARSING).map(|d| d.midnight().assume_utc()))
+        .map_err(serde::de::Error::custom)?;
+    Ok(T::from(SystemTime::from(dt)))
 }
 
 /// Returns a string containing the mimetype for the file located at the

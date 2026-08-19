@@ -231,7 +231,7 @@ impl<'a> SubmissionResponseSource<'a> {
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct SubmissionSearchResponse<'a> {
     pub path: String,
-    pub items: Vec<SubmissionSearchResponseItem<'a>>,
+    pub items: &'a [SubmissionSearchResponseItem<'a>],
 }
 
 impl<'a> SubmissionSearchResponse<'a> {
@@ -244,7 +244,7 @@ impl<'a> SubmissionSearchResponse<'a> {
 /// report, which can only be retrieved when querying a submission directly.
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct SubmissionSearchResponseItem<'a> {
-    submission_id: i64,
+    pub submission_id: i64,
     grading_tags: &'a [String],
     finished: bool,
     #[schema(value_type = String, format = DateTime)]
