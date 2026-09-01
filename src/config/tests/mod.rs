@@ -72,7 +72,21 @@ use tag::{BuildConfig, Tag, TagDefaults};
 #[documented(trim = false)]
 pub struct Tests {
     pub default: Defaults,
-    pub tag_groups: BTreeMap<String, Vec<Tag>>,
+
+    /// All grading tags that can be graded by a submission job.
+    pub tags: BTreeMap<String, Tag>,
+
+    /// Lookup of _requested grading tag_ to actual grading tags. This includes
+    /// tag groups (one to many), tag aliases (one to one), but also the
+    /// identity lookup of each entry within `tags`.
+    ///
+    /// ```rust
+    /// // If something is contained in tags, it must also be
+    /// // contained in the tag_resolution.
+    /// assert!(tags.contains_key("hello"))
+    /// assert_eq!(tag_resolution.get("hello"), vec!["hello"])
+    /// ```
+    pub tag_resolution: BTreeMap<String, Vec<String>>,
 }
 
 /// Global defaults inherited by all tags and test cases unless overridden.
@@ -105,7 +119,7 @@ impl AsRef<TestsLoadingOptions> for TestsLoadingOptions {
 }
 
 impl Tests {
-    /// Load test configuration from path
+    /// Load test configuration from `path`.
     pub fn load(path: &str, options: impl AsRef<TestsLoadingOptions>) -> Result<Self, Error> {
         // "Hidden" structs that are only used for deserialization
         #[derive(Deserialize, Debug, Clone)]
@@ -130,35 +144,35 @@ impl Tests {
         let root_dir = path_absolute_parent(path)?;
         let tags = Tag::from_toml(ut.tags, &ut.default, &root_dir, path, options)?;
 
-        log::debug!("Instantiating the tag groups");
-        let mut tag_groups: BTreeMap<String, Vec<Tag>> =
-            tags.iter().map(|(k, t)| (k.to_owned(), vec![t.to_owned()])).collect();
+        log::debug!("Building the tag resolution table");
+        let mut tag_resolution: BTreeMap<String, Vec<String>> =
+            tags.keys().map(|k| (k.to_owned(), vec![k.to_owned()])).collect();
         for (k, lst) in ut.tag_groups.iter() {
-            if tag_groups.contains_key(k) {
+            if tag_resolution.contains_key(k) {
                 return Err(Error::test_config_msg("duplicate tag name").tag(k).path(path).into());
             }
             if lst.is_empty() {
                 return Err(Error::test_config_msg("empty tag group").tag(k).path(path).into());
             }
-            let mut gtags: Vec<Tag> = Vec::new();
             for tname in lst {
-                let t = tags.get(tname).ok_or_else(|| {
-                    Error::from(
-                        Error::test_config_msg(format!("unknown tag {tname} in tag group"))
-                            .tag(k)
-                            .path(path),
-                    )
-                })?;
-                gtags.push(t.to_owned());
+                if !tags.contains_key(tname) {
+                    return Err(Error::test_config_msg(format!(
+                        "unknown tag {tname} in tag group"
+                    ))
+                    .tag(k)
+                    .path(path)
+                    .into());
+                }
             }
-            tag_groups.insert(k.to_owned(), gtags);
+            tag_resolution.insert(k.to_owned(), lst.to_owned());
         }
 
-        Ok(Tests { default: ut.default, tag_groups })
+        Ok(Tests { default: ut.default, tags, tag_resolution })
     }
 }
 
 #[cfg(test)]
+#[expect(clippy::module_inception)]
 mod tests {
     use super::*;
     use asserting::prelude::*;
@@ -187,11 +201,15 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify all expected tags exist
-        assert_that!(&tests.tag_groups).contains_key("hello");
-        assert_that!(&tests.tag_groups).contains_key("hello-extra");
-        assert_that!(&tests.tag_groups).contains_key("hello-asm");
-        assert_that!(&tests.tag_groups).contains_key("hello-file");
-        assert_that!(&tests.tag_groups).contains_key("hello-all");
+        assert_that!(&tests.tags).contains_key("hello");
+        assert_that!(&tests.tags).contains_key("hello-extra");
+        assert_that!(&tests.tags).contains_key("hello-asm");
+        assert_that!(&tests.tags).contains_key("hello-file");
+        assert_that!(&tests.tags).does_not_contain_key("hello-all");
+
+        // The group is resolvable, but is not a tag of its own
+        assert_that!(&tests.tag_resolution).contains_key("hello-all");
+        assert_eq!(tests.tag_resolution.get("hello"), Some(&vec!["hello".to_string()]));
     }
 
     #[test]
@@ -200,14 +218,14 @@ mod tests {
             .expect("Failed to load example tests.toml");
 
         // Verify hello-all tag group contains all expected tags
-        let hello_all = tests.tag_groups.get("hello-all").expect("hello-all tag group not found");
+        let hello_all =
+            tests.tag_resolution.get("hello-all").expect("hello-all tag group not found");
         assert_that!(hello_all.len()).is_equal_to(4);
 
-        let tag_names: Vec<&str> = hello_all.iter().map(|t| t.name.as_str()).collect();
-        assert_that!(&tag_names).contains(&"hello");
-        assert_that!(&tag_names).contains(&"hello-extra");
-        assert_that!(&tag_names).contains(&"hello-asm");
-        assert_that!(&tag_names).contains(&"hello-file");
+        assert_that!(hello_all).contains(&"hello".to_string());
+        assert_that!(hello_all).contains(&"hello-extra".to_string());
+        assert_that!(hello_all).contains(&"hello-asm".to_string());
+        assert_that!(hello_all).contains(&"hello-file".to_string());
     }
 
     #[test]
@@ -215,10 +233,7 @@ mod tests {
         let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
-        let hello_tags = tests.tag_groups.get("hello").expect("hello tag not found");
-        assert_that!(hello_tags.len()).is_equal_to(1);
-
-        let hello_tag = &hello_tags[0];
+        let hello_tag = tests.tags.get("hello").expect("hello tag not found");
         assert_that!(hello_tag.name.as_str()).is_equal_to("hello");
         assert_that!(&hello_tag.test_groups).is_not_empty();
 
@@ -232,16 +247,15 @@ mod tests {
         let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
-        let hello_tags = tests.tag_groups.get("hello").expect("hello tag not found");
-        let hello_tag = &hello_tags[0];
+        let hello_tag = tests.tags.get("hello").expect("hello tag not found");
 
         // Verify build configuration
         assert_that!(hello_tag.build.srcdir.as_str()).is_equal_to("solutions/hello");
         assert_eq!(hello_tag.build.cmd, vec!["make"]);
 
         // Test the hello-extra tag
-        let hello_extra = tests.tag_groups.get("hello-extra").expect("hello-extra tag not found");
-        let hetg = &hello_extra[0].test_groups[0];
+        let hello_extra = tests.tags.get("hello-extra").expect("hello-extra tag not found");
+        let hetg = &hello_extra.test_groups[0];
         assert_eq!(hetg.title, "Hello (Extra tests)");
         assert_eq!(hetg.tests.len(), 0);
         assert_eq!(hetg.subgroups.len(), 4);

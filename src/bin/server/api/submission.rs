@@ -1,30 +1,24 @@
-use std::time::SystemTime;
-
 use actix_web::{
     get,
     web::{self},
     HttpRequest, Responder,
 };
-use num_traits::FromPrimitive;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use diesel::{OptionalExtension, PgArrayExpressionMethods};
 use id2202_autograder::{
     config::Settings,
     db::{
         conn::DatabaseConnection,
-        models::{
-            Submission, SubmissionInfoGitHub, SubmissionInfoGitLab, SubmissionSource,
-            SubmissionSourceGitHub, SubmissionSourceGitLab, SubmissionSourceKind,
-            SubmissionWithReport,
-        },
+        models::raw::SubmissionRow,
+        models::{Submission, SubmissionWithReports},
     },
     utils::deserialize_iso8601,
 };
 use utoipa::IntoParams;
 
 use crate::api::response::{
-    ErrorResponse, SubmissionResponse, SubmissionResponseSource, SubmissionSearchResponse,
+    ErrorResponse, SubmissionJobWithReportResponse, SubmissionResponse, SubmissionSearchResponse,
     SubmissionSearchResponseItem,
 };
 
@@ -46,14 +40,6 @@ pub async fn get_submission(
     req: HttpRequest,
     submission_id: web::Path<String>,
 ) -> Result<impl Responder, actix_web::Error> {
-    use diesel::{self, ExpressionMethods, QueryDsl, RunQueryDsl, SelectableHelper};
-    use id2202_autograder::db::schema::{
-        submission_info_github::{self, columns as gh_info_col},
-        submission_info_gitlab::{self, columns as gl_info_col},
-        submission_source_github, submission_source_gitlab, submission_sources,
-        submissions::{self, columns as sub_col},
-    };
-
     let settings = data.get_ref();
 
     // Request is Authorized
@@ -73,62 +59,72 @@ pub async fn get_submission(
         }
     };
 
-    let (swr, subsrc): (SubmissionWithReport, SubmissionSource) = submissions::table
-        .inner_join(submission_sources::table)
-        .select((SubmissionWithReport::as_select(), SubmissionSource::as_select()))
-        .filter(sub_col::id.eq(parsed_id))
-        .first(&mut conn.conn)
-        .optional()
-        .map_err(|e: diesel::result::Error| {
-            log::error!("could not get submission {parsed_id} with report from database: {:?}", e);
+    let sub = SubmissionWithReports::by_id_opt(&mut conn, parsed_id)
+        .map_err(|e| {
+            log::error!("could not get submission {parsed_id} from database: {e}");
             ErrorResponse::internal_server_error(&req)
         })?
         .ok_or_else(|| ErrorResponse::not_found(&req, "submission not found"))?;
 
-    let srckind = SubmissionSourceKind::from_i32(subsrc.kind).ok_or_else(|| {
-        log::error!("got invalid source kind {} for submission {parsed_id}", subsrc.kind);
-        ErrorResponse::internal_server_error(&req)
-    })?;
-    match srckind {
-        SubmissionSourceKind::GitHub => {
-            let (gh_src, gh_info) = submission_source_github::table.inner_join(submission_info_github::table)
-                .select((SubmissionSourceGitHub::as_select(), SubmissionInfoGitHub::as_select()))
-                .filter(gh_info_col::submission_id.eq(swr.id))
-                .first(&mut conn.conn)
-                .map_err(|e: diesel::result::Error| {
-                    log::error!(
-                        "could not get GitHub source information for submission {parsed_id} from database: {:?}",
-                        e
-                    );
-                    ErrorResponse::internal_server_error(&req)
-                })?;
-            Ok(SubmissionResponse::new(
-                &req,
-                &swr,
-                SubmissionResponseSource::new_github(&gh_src, &gh_info),
-            )
-            .to_http())
+    Ok(SubmissionResponse::new(&req, &sub).to_http())
+}
+
+/// Fetches a single graded tag of a submission, so that one tag's report can be
+/// read without pulling every report the submission produced.
+#[utoipa::path(
+    tag = "Submissions",
+    params(
+        ("id" = i64, Path, description = "ID of the submission the job belongs to."),
+        ("tag" = String, Path, description = "The grading tag that the job graded."),
+    ),
+    security(("api_token" = [])),
+    responses(
+        (status = 200, description = "The job, including its grading report once finished", body = SubmissionJobWithReportResponse),
+        (status = 400, description = "Malformed submission ID", body = ErrorResponse),
+        (status = 404, description = "No submission with that ID, or it has no job for that tag", body = ErrorResponse),
+    ),
+)]
+#[get("/submission/{id}/job/{tag}")]
+pub async fn get_submission_job(
+    data: web::Data<Settings>,
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
+) -> Result<impl Responder, actix_web::Error> {
+    let settings = data.get_ref();
+    let (submission_id, tag) = path.into_inner();
+
+    let parsed_id: i64 = match submission_id.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            log::error!("Bad submission id: {submission_id}");
+            return Err(ErrorResponse::bad_request(&req, "bad submission id format").into());
         }
-        SubmissionSourceKind::GitLab => {
-            let (gl_src, gl_info) = submission_source_gitlab::table.inner_join(submission_info_gitlab::table)
-                .select((SubmissionSourceGitLab::as_select(), SubmissionInfoGitLab::as_select()))
-                .filter(gl_info_col::submission_id.eq(swr.id))
-                .first(&mut conn.conn)
-                .map_err(|e: diesel::result::Error| {
-                    log::error!(
-                        "could not get GitLab source information for submission {parsed_id} from database: {:?}",
-                        e
-                    );
-                    ErrorResponse::internal_server_error(&req)
-                })?;
-            Ok(SubmissionResponse::new(
-                &req,
-                &swr,
-                SubmissionResponseSource::new_gitlab(&gl_src, &gl_info),
-            )
-            .to_http())
+    };
+
+    let mut conn = match DatabaseConnection::connect(settings) {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::error!("Could not open database connection: {e}");
+            return Err(ErrorResponse::internal_server_error(&req).into());
         }
-    }
+    };
+
+    let sub = SubmissionWithReports::by_id_opt(&mut conn, parsed_id)
+        .map_err(|e| {
+            log::error!("could not get submission {parsed_id} from database: {e}");
+            ErrorResponse::internal_server_error(&req)
+        })?
+        .ok_or_else(|| ErrorResponse::not_found(&req, "submission not found"))?;
+
+    // A tag the submission never had a job for is a 404 rather than an empty
+    // result, so that a typo is distinguishable from a tag that has not run.
+    let job = sub
+        .jobs
+        .iter()
+        .find(|entry| entry.job.tag == tag)
+        .ok_or_else(|| ErrorResponse::not_found(&req, "no job for that tag"))?;
+
+    Ok(SubmissionJobWithReportResponse::new(job).to_http())
 }
 
 /// Query parameters for get_submission_search.
@@ -143,16 +139,18 @@ struct SubmissionSearchFilterQuery {
     user: Option<String>,
     /// The repository associated with the submission.
     repo: Option<String>,
-    /// Only include submissions that has submitted with this tag.
+    /// Only include submissions that has been graded with this tag. This does
+    /// not capture tags which are aliases (that resolve to one or more grading
+    /// tags).
     tag: Option<String>,
     /// Only include submissions that has submitted after this date (inclusive).
     #[serde(default, deserialize_with = "deserialize_iso8601")]
     #[param(value_type = String, format = DateTime)]
-    after: Option<SystemTime>,
+    after: Option<DateTime<Utc>>,
     /// Only include submissions that has submitted before this date (inclusive).
     #[serde(default, deserialize_with = "deserialize_iso8601")]
     #[param(value_type = String, format = DateTime)]
-    before: Option<SystemTime>,
+    before: Option<DateTime<Utc>>,
     /// Maximum number of returned results. Defaults to 100 if not specified.
     limit: Option<u32>,
 }
@@ -177,8 +175,9 @@ pub async fn get_submission_search(
     use id2202_autograder::db::schema::{
         submission_info_github::{self, columns as gh_info_col},
         submission_info_gitlab::{self, columns as gl_info_col},
-        submission_source_github::{self, columns as gh_src_col},
-        submission_source_gitlab::{self, columns as gl_src_col},
+        submission_jobs::{self, columns as job_col},
+        submission_origin_github::{self, columns as gh_src_col},
+        submission_origin_gitlab::{self, columns as gl_src_col},
         submissions::{self, columns as sub_col},
     };
 
@@ -223,25 +222,27 @@ pub async fn get_submission_search(
     macro_rules! apply_common_filters {
         ($dbq:ident, $q:ident) => {
             if let Some(tag) = &$q.tag {
-                $dbq = $dbq.filter(sub_col::grading_tags.contains(vec![tag.as_str()]));
+                $dbq = $dbq.filter(
+                    sub_col::id.eq_any(
+                        submission_jobs::table
+                            .select(job_col::submission_id)
+                            .filter(job_col::tag.eq(tag)),
+                    ),
+                );
             }
             if let Some(after) = &$q.after {
-                $dbq = $dbq.filter(sub_col::date_submitted.ge(after));
+                $dbq = $dbq.filter(sub_col::submitted_at.ge(after));
             }
             if let Some(before) = &$q.before {
-                $dbq = $dbq.filter(sub_col::date_submitted.le(before));
+                $dbq = $dbq.filter(sub_col::submitted_at.le(before));
             }
         };
     }
 
     let gh_results = if search_sources.github {
         let mut dbq = submissions::table
-            .inner_join(submission_info_github::table.inner_join(submission_source_github::table))
-            .select((
-                Submission::as_select(),
-                SubmissionInfoGitHub::as_select(),
-                SubmissionSourceGitHub::as_select(),
-            ))
+            .inner_join(submission_info_github::table.inner_join(submission_origin_github::table))
+            .select(SubmissionRow::as_select())
             .into_boxed();
 
         apply_common_filters!(dbq, q);
@@ -256,7 +257,7 @@ pub async fn get_submission_search(
             dbq = dbq.filter(gh_src_col::repo.eq(repo));
         }
 
-        let found: Vec<(Submission, SubmissionInfoGitHub, SubmissionSourceGitHub)> =
+        let found: Vec<SubmissionRow> =
             dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
                 |e| {
                     log::error!("Could not fetch results from database: {e}");
@@ -271,12 +272,8 @@ pub async fn get_submission_search(
 
     let gl_results = if search_sources.gitlab {
         let mut dbq = submissions::table
-            .inner_join(submission_info_gitlab::table.inner_join(submission_source_gitlab::table))
-            .select((
-                Submission::as_select(),
-                SubmissionInfoGitLab::as_select(),
-                SubmissionSourceGitLab::as_select(),
-            ))
+            .inner_join(submission_info_gitlab::table.inner_join(submission_origin_gitlab::table))
+            .select(SubmissionRow::as_select())
             .into_boxed();
 
         apply_common_filters!(dbq, q);
@@ -291,7 +288,7 @@ pub async fn get_submission_search(
             dbq = dbq.filter(gl_src_col::repo.eq(repo));
         }
 
-        let found: Vec<(Submission, SubmissionInfoGitLab, SubmissionSourceGitLab)> =
+        let found: Vec<SubmissionRow> =
             dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
                 |e| {
                     log::error!("Could not fetch results from database: {e}");
@@ -304,24 +301,18 @@ pub async fn get_submission_search(
         Vec::new()
     };
 
-    let mut results = Vec::from_iter(
-        gh_results
-            .iter()
-            .map(|(sub, info, src)| SubmissionSearchResponseItem::github_from_db(sub, info, src))
-            .chain(gl_results.iter().map(|(sub, info, src)| {
-                SubmissionSearchResponseItem::gitlab_from_db(sub, info, src)
-            })),
-    );
+    let mut rows = gh_results;
+    rows.extend(gl_results);
+    rows.sort_by_key(|r| std::cmp::Reverse(r.id));
+    rows.truncate(limit as usize);
 
-    // NOTE: `l` and `r` are intentionally reversed such that results are
-    // sorted in a descending order.
-    results.sort_by(|l, r| r.submission_id.cmp(&l.submission_id));
+    let subs = Submission::from_rows(&mut conn, rows).map_err(|e| {
+        log::error!("Could not instantiate the submissions: {e}");
+        ErrorResponse::internal_server_error(&req)
+    })?;
 
-    Ok(SubmissionSearchResponse {
-        path: req.path().to_string(),
-        items: results
-            .split_at_checked(limit as usize)
-            .map_or_else(|| results.as_slice(), |(v1, _)| v1),
-    }
-    .to_http())
+    let results: Vec<SubmissionSearchResponseItem> =
+        subs.iter().map(SubmissionSearchResponseItem::new).collect();
+
+    Ok(SubmissionSearchResponse { path: req.path().to_string(), items: &results }.to_http())
 }

@@ -1,17 +1,21 @@
-use std::fmt::Display;
-
 use actix_web::{
     post,
     web::{self, Buf},
     HttpRequest, Responder,
 };
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use id2202_autograder::{
-    config::{settings::GitHubServerSettings, Settings},
-    db::{conn::DatabaseConnection, models::NewSubmissionSourceGitHub},
-    github,
+    config::{Settings, Tests, TestsLoadingOptions},
+    db::{
+        conn::DatabaseConnection,
+        models::{NewSubmissionOriginGitHubRow, SubmissionStatus},
+    },
+    origin::{
+        github::{self, GitHub, GitHubInfo},
+        Origin,
+    },
+    reporting::MetaReport,
 };
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -20,7 +24,10 @@ use sha2::Sha256;
 type HmacSha256 = Hmac<Sha256>;
 
 use crate::api::{
-    common::{extract_grading_tags, validate_repo_prefix_suffix},
+    common::{
+        acceptance_message, extract_grading_tags, internal_error_report, report_superseded,
+        resolve_jobs, validate_repo_prefix_suffix,
+    },
     response::{ErrorResponse, SubmitResponse},
 };
 
@@ -63,49 +70,6 @@ struct GhsHeadCommit {
 struct GhsPusher {
     name: String,
     email: String,
-}
-
-/// Convenient struct with the information necessary to create a commit message
-/// and a commit status.
-#[derive(Debug)]
-struct CommitMessageInfo<'a> {
-    settings: &'a Settings,
-    instance: &'a GitHubServerSettings,
-    sub: &'a GitHubSubmission,
-}
-
-impl<'a> CommitMessageInfo<'a> {
-    async fn post_msg_status(
-        &self,
-        msg: &impl Display,
-        status: github::CommitState,
-        status_msg: Option<&str>,
-    ) -> Result<(), id2202_autograder::error::Error> {
-        github::create_commit_message(
-            self.settings,
-            self.instance,
-            &self.sub.repository.organization,
-            &self.sub.repository.name,
-            &self.sub.head_commit.id,
-            msg,
-        )
-        .await
-        .inspect_err(|e| log::error!("Error creating commit message: {e}"))?;
-
-        github::create_commit_status(
-            self.settings,
-            self.instance,
-            &self.sub.repository.organization,
-            &self.sub.repository.name,
-            &self.sub.head_commit.id,
-            status,
-            status_msg,
-        )
-        .await
-        .inspect_err(|e| log::error!("Error creating commit status: {e}"))?;
-
-        Ok(())
-    }
 }
 
 /// Submission from GitHub. Received a webhook
@@ -236,7 +200,14 @@ pub async fn github_submission(
             ErrorResponse::unauthorized(&req, "Unknown GitHub instance")
         })?;
 
-    let commitinfo = CommitMessageInfo { settings, instance: instance_settings, sub: &sub };
+    let origin = Origin::<GitHub> {
+        info: GitHubInfo {
+            instance: instance_settings.clone(),
+            organization_name: sub.repository.organization.clone(),
+            repo_name: sub.repository.name.clone(),
+            commit_hash: sub.head_commit.id.clone(),
+        },
+    };
 
     if let Err(rejection) = validate_repo_prefix_suffix(
         &sub.repository.organization,
@@ -259,10 +230,11 @@ pub async fn github_submission(
         match extract_grading_tags(settings, sub.head_commit.message.as_ref()) {
             Ok(tags) => tags,
             Err(rep) => {
-                commitinfo
-                    .post_msg_status(
-                        &rep.formatter_markdown(&settings.reporting),
-                        github::CommitState::Failure,
+                origin
+                    .set_state_and_report(
+                        settings,
+                        &MetaReport::Transient(rep.as_ref()),
+                        &github::CommitState::Failure,
                         Some("Invalid Grading Tags"),
                     )
                     .await
@@ -280,21 +252,73 @@ pub async fn github_submission(
         return Ok(SubmitResponse::without_id(&req, "no grading tags provided").to_http());
     }
 
+    // Resolve the tags before inserting anything to the database. An unknown
+    // tag will result in an immediate error here.
+    let tests =
+        match Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
+        {
+            Ok(tests) => Some(tests),
+            Err(e) => {
+                log::error!("FATAL: could not load test configuration: {e}");
+                None
+            }
+        };
+    let jobs = match &tests {
+        Some(tests) => resolve_jobs(tests, &grading_tags),
+        None => Err(Box::new(internal_error_report())),
+    };
+
+    let source = NewSubmissionOriginGitHubRow {
+        domain: domain.clone(),
+        org: sub.repository.organization.clone(),
+        repo: sub.repository.name.clone(),
+        ssh_url: sub.repository.ssh_url.clone(),
+    };
+
     // Connect to database and insert the submission request
     let mut dbconn = DatabaseConnection::connect(settings).map_err(|err| {
         log::error!("Could not connect to database: {err}");
         ErrorResponse::internal_server_error(&req)
     })?;
 
-    let submission_id = dbconn
-        .register_github_submission(
+    let jobs = match jobs {
+        Ok(jobs) => jobs,
+        Err(report) => {
+            let submission = dbconn
+                .register_ungradable_submission::<GitHub>(
+                    &grading_tags,
+                    &report,
+                    &source,
+                    &sub.pusher.name,
+                    &sub.head_commit.id,
+                )
+                .map_err(|e| {
+                    log::error!("Could not register submission with database: {e}");
+                    ErrorResponse::internal_server_error(&req)
+                })?;
+
+            origin
+                .set_state_and_report(
+                    settings,
+                    &MetaReport::Transient(&report),
+                    &github::CommitState::Failure,
+                    Some("Submission Error"),
+                )
+                .await
+                .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}"));
+
+            log::info!("Submission {} recorded, but nothing can be graded", submission.id);
+            return Ok(
+                SubmitResponse::new(&req, "submission cannot be graded", submission.id).to_http()
+            );
+        }
+    };
+
+    let registered = dbconn
+        .register_submission::<GitHub>(
             &grading_tags,
-            &NewSubmissionSourceGitHub {
-                domain: domain.clone(),
-                org: sub.repository.organization.clone(),
-                repo: sub.repository.name.clone(),
-                ssh_url: sub.repository.ssh_url.clone(),
-            },
+            jobs,
+            &source,
             &sub.pusher.name,
             &sub.head_commit.id,
         )
@@ -302,17 +326,23 @@ pub async fn github_submission(
             log::error!("Could not register submission with database: {e}");
             ErrorResponse::internal_server_error(&req)
         })?;
+    let submission_id = registered.submission.id;
+
+    report_superseded(settings, &registered)
+        .await
+        .unwrap_or_else(|e| log::warn!("Could not report superseded jobs: {e}"));
+
+    // A submission whose every tag was rejected has no job left for a runner
+    // to pick up, so nothing else would ever move its commit off pending.
+    let (state, label) = match registered.submission.status() {
+        SubmissionStatus::Aborted => (github::CommitState::Error, "Nothing To Grade"),
+        _ => (github::CommitState::Pending, "Waiting In Queue"),
+    };
 
     // Respond to the commit message and set the commit status
-    commitinfo.post_msg_status(&format!(
-        "**[Submission ID: {} | {}]**\n\n{} {}",
-        submission_id,
-        grading_tags.iter().format_with(", ", |t, f| f(&format_args!("`{t}`"))),
-        "The autograder has successfully received your submission and will start grading as soon as a runner is available.",
-        "Additional information and results of your submission will be provided as comments here."
-    ), github::CommitState::Pending, Some("Waiting In Queue"))
-    .await
-    .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}. Will not reject this submission since it is already created."));
+    origin.set_state_and_report(settings, &MetaReport::Structured(acceptance_message(&registered.submission)), &state, Some(label))
+        .await
+        .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}. Will not reject this submission since it is already created."));
 
     // Notifying the other runners (TODO: make this name configurable)
     dbconn.notify("submission").unwrap_or_else(|e| {

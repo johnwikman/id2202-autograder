@@ -1,6 +1,6 @@
 use sailfish::runtime::Render;
 
-use id2202_autograder::{config::Settings, reporting::Report};
+use id2202_autograder::{config::Settings, reporting::MetaReport};
 
 static SAILFISH_HEADER_BAR_ROUTES: [(&str, &str); 2] = [("/", "Home"), ("/job_info", "Job Info")];
 
@@ -80,41 +80,32 @@ impl From<Option<String>> for RenderOptionString {
 /// Wrapper for rendering a report on the submission page. This will format the
 /// report assuming that the page is running Bootstrap JS.
 pub struct RenderReport<'a> {
-    pub v: Option<Report>,
+    pub v: MetaReport<'a>,
     pub settings: &'a Settings,
+}
+
+impl<'a> RenderReport<'a> {
+    fn render_with(
+        &self,
+        b: &mut sailfish::runtime::Buffer,
+        escape: bool,
+    ) -> Result<(), sailfish::RenderError> {
+        self.v.render_html(&self.settings.reporting, b, escape, 3).map_err(|e| {
+            log::error!("could not render report as HTML: {e:?}");
+            sailfish::RenderError::new("error rendering report as HTML")
+        })
+    }
 }
 
 impl<'a> Render for RenderReport<'a> {
     fn render(&self, b: &mut sailfish::runtime::Buffer) -> Result<(), sailfish::RenderError> {
-        match &self.v {
-            Some(r) => {
-                r.render_html(&self.settings.reporting, b, false, 3).map_err(|e| {
-                    log::error!("could not render report as HTML: {e:?}");
-                    sailfish::RenderError::new("error rendering report as HTML")
-                })?;
-            }
-            None => {
-                b.push_str("<p>No report generated.</p>");
-            }
-        }
-        Ok(())
+        self.render_with(b, false)
     }
 
     fn render_escaped(
         &self,
         b: &mut sailfish::runtime::Buffer,
     ) -> Result<(), sailfish::RenderError> {
-        match &self.v {
-            Some(r) => {
-                r.render_html(&self.settings.reporting, b, true, 3).map_err(|e| {
-                    log::error!("could not render report as HTML: {e:?}");
-                    sailfish::RenderError::new("error rendering report as HTML")
-                })?;
-            }
-            None => {
-                b.push_str("<p>No report generated.</p>");
-            }
-        }
-        Ok(())
+        self.render_with(b, true)
     }
 }

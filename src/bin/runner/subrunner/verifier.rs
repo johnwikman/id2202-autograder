@@ -6,7 +6,10 @@
 //! test case.
 
 use base64::{prelude::BASE64_STANDARD, Engine};
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use id2202_autograder::{
     config::{
@@ -60,17 +63,6 @@ pub struct Verdict {
     pub reason: Option<String>,
 }
 
-fn collect_group(group: &TestGroup, out: &mut Vec<String>) {
-    for test in &group.tests {
-        if let Kind::RunVerifier(conf) = &test.kind {
-            out.push(conf.verifier_path.to_owned());
-        }
-    }
-    for sub in &group.subgroups {
-        collect_group(sub, out);
-    }
-}
-
 /// The verifier programs, and the container they are run in.
 #[derive(Debug)]
 pub struct Verifier {
@@ -102,16 +94,24 @@ impl Verifier {
         let mut container =
             PodmanContainer::new(&settings.runner.podman_verifier_image, container_name);
 
-        let mut sources: Vec<String> = vec![];
-        for tags in tests.tag_groups.values() {
-            for tag in tags {
-                for group in &tag.test_groups {
-                    collect_group(group, &mut sources);
+        /// Recursively collect verifiers from all defined test cases.
+        fn collect_from_group(group: &TestGroup, out: &mut BTreeSet<String>) {
+            for test in &group.tests {
+                if let Kind::RunVerifier(conf) = &test.kind {
+                    out.insert(conf.verifier_path.to_owned());
                 }
             }
+            for sub in &group.subgroups {
+                collect_from_group(sub, out);
+            }
         }
-        sources.sort();
-        sources.dedup();
+
+        let mut sources: BTreeSet<String> = BTreeSet::new();
+        for tag in tests.tags.values() {
+            for group in &tag.test_groups {
+                collect_from_group(group, &mut sources);
+            }
+        }
 
         let mut paths = BTreeMap::new();
         for source in sources {

@@ -469,6 +469,15 @@ pub struct ReportingMarkdownSettings {
     #[config(env = "AUTOGRADER_REPORTING_MD_SYMBOL_BUILD")]
     pub symbol_build: String,
 
+    /// Symbol used to indicate that a tag/job is waiting to be graded.
+    #[config(env = "AUTOGRADER_REPORTING_MD_SYMBOL_WAITING")]
+    pub symbol_waiting: String,
+
+    /// Symbol used to indicate that a tag was voided. I.e. it will not be
+    /// graded.
+    #[config(env = "AUTOGRADER_REPORTING_MD_SYMBOL_VOIDED")]
+    pub symbol_voided: String,
+
     /// Whether to show an indicator on the top header of the
     /// submission results comment on GitHub, indicating whether all tags were
     /// successful or not.

@@ -7,7 +7,7 @@ use id2202_autograder::{
     config::{Settings, TestGroup, Tests, TestsLoadingOptions},
     error::Error,
     podman,
-    utils::systemtime_to_utc_string,
+    utils::utc_string,
 };
 
 #[derive(Args, Debug)]
@@ -42,12 +42,10 @@ pub fn validate_settings(s: Settings, args: ValidateSettingsArgs) -> Result<(), 
                 recursively_print(sg, indent + 4);
             }
         }
-        for (tagname, groups) in tc.tag_groups.iter() {
+        for (tagname, tag) in tc.tags.iter() {
             println!("#{}", tagname);
-            for tag in groups.iter() {
-                for tg in tag.test_groups.iter() {
-                    recursively_print(tg, 0);
-                }
+            for tg in tag.test_groups.iter() {
+                recursively_print(tg, 0);
             }
         }
     };
@@ -78,20 +76,20 @@ pub fn check_database(s: Settings, args: CheckDatabaseArgs) -> Result<(), Error>
     if args.all_submissions {
         log::debug!("Fetching all submissions");
         use id2202_autograder::db::{
-            models::Submission,
+            models::{raw::SubmissionRow, Submission},
             schema::submissions::{self, id},
         };
-        match submissions::table
-            .select(Submission::as_select())
+        let rows: Result<Vec<SubmissionRow>, _> = submissions::table
+            .select(SubmissionRow::as_select())
             .order(id.desc())
             .limit(100)
-            .load(&mut dbconn.conn)
-        {
+            .load(&mut dbconn.conn);
+        let subs: Result<Vec<Submission>, Error> =
+            rows.map_err(Error::from).and_then(|rows| Submission::from_rows(&mut dbconn, rows));
+        match subs {
             Ok(sub_vec) => {
                 for sub in sub_vec.iter() {
-                    let d = systemtime_to_utc_string(&sub.date_submitted)
-                        .unwrap_or("NO_TIME".to_string());
-                    println!("Date Submitted: {}\n{sub:#?}", d);
+                    println!("Date Submitted: {}\n{sub:#?}", utc_string(&sub.submitted_at));
                 }
             }
             Err(e) => {
@@ -100,12 +98,15 @@ pub fn check_database(s: Settings, args: CheckDatabaseArgs) -> Result<(), Error>
         }
     }
     if let Some(runner_id) = args.assign_runner {
-        match dbconn.try_assign_submission(runner_id) {
-            Ok(Some(sub)) => {
-                println!("Assigned submission: {sub:#?}");
+        match dbconn.try_claim_submission(runner_id) {
+            Ok(Some(claim)) => {
+                println!("Claimed submission: {:#?}", claim.claimed);
+                if !claim.deferred.is_empty() {
+                    println!("Jobs left unclaimed: {:#?}", claim.deferred);
+                }
             }
             Ok(None) => {
-                println!("No submission to assign");
+                println!("No submission to claim");
             }
             Err(e) => {
                 println!("Database error: {e}");

@@ -1,20 +1,24 @@
-/// Handle for running and grading all tags that are part of a submission.
-use std::{
-    collections::BTreeMap,
-    rc::Rc,
-    time::{Duration, SystemTime},
-};
+//! Handle for running and grading all tags that are part of a submission.
+use std::{collections::BTreeMap, rc::Rc, time::Duration};
 
 use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
-    db::models::{SubmissionInfo, SubmissionStatusCode},
+    db::{
+        conn::DatabaseConnection,
+        models::{
+            JobStatus, Submission, SubmissionJobPlain, SubmissionJobWithReport, SubmissionOrigin,
+        },
+    },
     error::Error,
     podman::{Mount, PodmanContainer},
-    reporting::{Report, ReportInvalidTag, ReportMessage, ReportSubmission, ReportTagGrading},
-    utils::{path_absolute_join, syscommand_timeout, SyscommandSettings},
+    reporting::{Report, ReportMessage},
+    utils::path_absolute_join,
 };
 
-use crate::subrunner::{container::ContainerInfo, tag_runner::TagRunner, verifier};
+use crate::{
+    shadow::ShadowRepo,
+    subrunner::{container::ContainerInfo, tag_runner::TagRunner, verifier},
+};
 
 static ERRMSG_INTERNAL_ERROR: &str = "Internal error when starting job. Contact course staff.";
 
@@ -25,21 +29,23 @@ pub struct SubmissionRunnerHandle<'a> {
     /// should be removed by calling the `cleanup` function.
     pub workspace: String,
 
-    /// ID of the current submission.
-    pub submission_id: i64,
+    /// Program settings, used to open a connection when a tag finishes.
+    settings: &'a Settings,
 
-    /// The path to the repository containing the submitted source code that
-    /// should be graded. The runner will not modify this directory, and will
-    /// instead copy the parts necessary to grade a specfific tag before
-    /// proceeding to build the project.
-    pub source_dir: String,
+    /// The submission being graded. Its jobs live in the tag runners, one
+    /// each, so only what identifies the submission is kept here.
+    submission_id: i64,
+    origin: SubmissionOrigin,
+
+    /// The shadow repository that each graded tag is archived to.
+    shadow: ShadowRepo<'a>,
 
     // Internal state variables below
     /// The next tag to run
     next_tag_index: usize,
 
-    /// Test configuration and iterators over tags and their test groups. Using
-    /// this for storing test information and progress together.
+    /// Runners for each of the tags that are being graded. Any deferred tags
+    /// will not be part of this vector.
     tag_runners: Vec<TagRunner<'a>>,
 
     /// Number collected test details
@@ -49,39 +55,21 @@ pub struct SubmissionRunnerHandle<'a> {
     /// tests are hidden.
     tests_max_details: usize,
 
-    /// Deadline time. If we have reached or exceeded this timestamp, then we
-    /// the total grading procedure has timed out.
-    deadline_time: SystemTime,
-
     /// A flag indicating whether we have cleaned up the test procedure or not.
     /// Attempting to run a test case if this is set to true should result in a
     /// fatal error.
     cleaned_up: bool,
-
-    /// Causes of overall test failures that should be reported back to the
-    /// student.
-    status_code: SubmissionStatusCode,
 }
 
 impl<'a> SubmissionRunnerHandle<'a> {
     /// Creates a new handle, or returns an error message to be shown to the
     /// user. Internal error messages should be presented as log messages only,
     /// using map_err or inspect_err.
-    #[expect(
-        clippy::result_large_err,
-        reason = "only called once per new submission, Report size is fine"
-    )]
-    pub fn new(
-        settings: &'a Settings,
-        subinfo: &SubmissionInfo,
-        runner_id: i32,
-    ) -> Result<Self, Report> {
+    pub fn new(settings: &'a Settings, sub: Submission, runner_id: i32) -> Result<Self, Report> {
         // Convenient for reporting internal errors
         fn internal_error_report() -> Report {
             Report::Message(ReportMessage { msg: ERRMSG_INTERNAL_ERROR.to_string() })
         }
-
-        let sub = subinfo.get_submission();
 
         let tests = Tests::load(&settings.runner.test_config, TestsLoadingOptions::default())
             .map_err(|e| {
@@ -178,165 +166,131 @@ impl<'a> SubmissionRunnerHandle<'a> {
         );
 
         // Step 3: Collect the tags to grade
-        log::debug!("Collecting grading tag information from {:?}", sub.grading_tags);
-        let mut tag_runners: BTreeMap<String, TagRunner> = BTreeMap::new();
-        for t in &sub.grading_tags {
-            match tests.tag_groups.get(t) {
-                Some(vec_tag) => {
-                    for tag in vec_tag {
-                        match tag_runners.get_mut(&tag.name) {
-                            Some(runner) => {
-                                runner.derived_from.insert(t.to_owned());
-                            }
-                            None => {
-                                let mut runner = TagRunner::new(
-                                    settings,
-                                    tag,
-                                    container(),
-                                    &source_dir,
-                                    verifier.clone(),
-                                );
-                                runner.derived_from.insert(t.to_owned());
-                                tag_runners.insert(tag.name.clone(), runner);
-                            }
-                        }
-                    }
-                }
-                None => {
-                    log::info!("Received invalid tag {t}");
-                    // Format the error message on a GitHub Markdown friendly format
-                    let mut direct_tags: Vec<String> = vec![];
-                    let mut tag_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-                    for (k, tags) in tests.tag_groups.iter() {
-                        if tags.len() == 1 && tags.first().is_some_and(|tag| tag.name == *k) {
-                            direct_tags.push(k.to_owned());
-                        } else {
-                            tag_groups.insert(
-                                k.to_owned(),
-                                tags.iter().map(|tag| tag.name.to_owned()).collect(),
-                            );
-                        }
-                    }
-
-                    return Err(Report::InvalidTag(ReportInvalidTag {
-                        tag_name: t.to_string(),
-                        known_grading_tags: direct_tags,
-                        known_tag_groups: tag_groups,
-                    }));
-                }
-            }
-        }
-
-        let (ssh_url, commit) = subinfo.git_clone_url_and_commit(settings).map_err(|e| {
-            log::error!("Could not resolve the clone URL of the submission: {e}");
-            internal_error_report()
-        })?;
-
-        // A way to check out a specific commit, without the cloning the whole history
-        let gitcmd_settings = SyscommandSettings { expected_code: Some(0), ..Default::default() };
-        let quote = |p: &str| {
-            shlex::try_quote(p).map(String::from).map_err(|e| {
-                log::error!("Could not quote {p} for the SSH command: {e}");
-                internal_error_report()
+        let timeout_total = Duration::from_secs(tests.default.tag.timeout_total.into());
+        let tag_runners: BTreeMap<String, TagRunner> = sub
+            .jobs
+            .iter()
+            .cloned()
+            .map(|job| {
+                // Tags should have been resolved before being inserted into
+                // the database. Anything unknown here is an internal error (or
+                // that the test definition was updated between being submitted
+                // and being picked up by a runner).
+                let tag = tests.tags.get(&job.tag).ok_or_else(|| {
+                    log::error!("Received unknown grading tag {}", job.tag);
+                    internal_error_report()
+                })?;
+                let tag_name = job.tag.to_owned();
+                let runner = TagRunner::new(
+                    settings,
+                    tag,
+                    job,
+                    container(),
+                    &source_dir,
+                    verifier.clone(),
+                    timeout_total,
+                );
+                Ok((tag_name, runner))
             })
-        };
-        let mut ssh_cmd = format!(
-            "core.sshCommand=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={}",
-            quote(&settings.runner.ssh_known_hosts)?,
-        );
-        if !settings.runner.ssh_keys.is_empty() {
-            ssh_cmd.push_str(" -o IdentitiesOnly=yes");
-            for key in &settings.runner.ssh_keys {
-                ssh_cmd.push_str(&format!(" -i {}", quote(key)?));
-            }
-        }
+            .collect::<Result<_, Report>>()?;
+
+        // Create the source dir and fetch the submission into it
         std::fs::create_dir_all(&source_dir)
             .map_err(Error::from)
-            .and_then(|_| {
-                syscommand_timeout(["git", "-C", &source_dir, "init"], gitcmd_settings.to_owned())
-            })
-            .and_then(|_| {
-                syscommand_timeout(
-                    ["git", "-C", &source_dir, "remote", "add", "origin", &ssh_url],
-                    gitcmd_settings.to_owned(),
-                )
-            })
-            .and_then(|_| {
-                syscommand_timeout(
-                    [
-                        "git",
-                        "-C",
-                        &source_dir,
-                        "-c",
-                        &ssh_cmd,
-                        "fetch",
-                        "--depth",
-                        "1",
-                        "origin",
-                        commit,
-                    ],
-                    gitcmd_settings.to_owned(),
-                )
-            })
-            .and_then(|_| {
-                syscommand_timeout(
-                    ["git", "-C", &source_dir, "checkout", "FETCH_HEAD"],
-                    gitcmd_settings.to_owned(),
-                )
-            })
+            .and_then(|_| sub.origin.fetch_into(settings, &source_dir))
             .map_err(|e| {
-                log::error!("Error cloning repository from {}: {e}", ssh_url);
+                log::error!("Could not fetch the submitted solution from the origin: {e}");
                 internal_error_report()
             })?;
 
-        let deadline_time = SystemTime::now()
-            .checked_add(Duration::from_secs(tests.default.tag.timeout_total.into()))
-            .ok_or_else(|| {
-                log::error!("Internal error setting deadline date.");
-                internal_error_report()
-            })?;
+        let shadow = ShadowRepo::open(settings, &sub, &workspace_dir).map_err(|e| {
+            log::error!("Could not open the shadow repository: {e}");
+            internal_error_report()
+        })?;
 
         // Defuse the guard, ensuring that the workspace remains
         scopeguard::ScopeGuard::into_inner(workspace_guard);
 
         Ok(SubmissionRunnerHandle {
             workspace: workspace_dir,
+            settings,
             submission_id: sub.id,
-            source_dir,
+            origin: sub.origin,
+            shadow,
             next_tag_index: 0,
             tag_runners: tag_runners.into_values().collect(),
             tests_collected_details: 0,
             tests_max_details: settings.reporting.shown_failures,
-            deadline_time,
             cleaned_up: false,
-            status_code: SubmissionStatusCode::Running,
         })
     }
 
-    /// Returns `true` if handle has finished running all the test cases. In
-    /// which case, the results can be collected.
+    /// Returns `true` if every job of this batch has reached a terminal
+    /// status. In which case, the results can be collected.
     pub fn is_finished(&self) -> bool {
-        self.status_code.is_finished() || self.next_tag_index >= self.tag_runners.len()
+        self.tag_runners.iter().all(|tr| tr.status.is_finished())
     }
 
-    /// Sets the handle as erroneous from an external perspective, making sure
-    /// that we will not proceed to run any other test cases. If the existing
-    /// status code is an error, that will be preserved.
-    pub fn set_as_erroneous(&mut self) {
-        if !self.status_code.is_error() {
-            self.status_code = SubmissionStatusCode::AutograderFailure;
+    /// Fails every tag that has not finished, for when the runner itself is
+    /// unhealthy rather than the submission. Tags that already reached a
+    /// terminal status keep the result they earned.
+    pub fn set_as_erroneous(&mut self) -> Result<(), Error> {
+        let mut conn = DatabaseConnection::connect(self.settings)?;
+        let report = Report::Message(ReportMessage {
+            msg: "An internal error occurred while grading your solution. Contact course staff."
+                .to_string(),
+        });
+
+        // From the tag being graded onwards. Everything before it has written
+        // its result already, and the current one is included even when it
+        // reached a status of its own, since the write that would have
+        // recorded it is what failed.
+        let from = self.next_tag_index;
+        self.next_tag_index = self.tag_runners.len();
+
+        let pending = &mut self.tag_runners[from..];
+        for tr in pending.iter_mut() {
+            tr.status = JobStatus::AutograderFailure;
         }
+
+        let (mut started, mut unstarted): (Vec<_>, Vec<_>) =
+            pending.iter_mut().partition(|tr| tr.job.started_at.is_some());
+
+        SubmissionJobPlain::set_all_as_voided(
+            unstarted.iter_mut().map(|tr| &mut tr.job),
+            &mut conn,
+            JobStatus::AutograderFailure,
+            Some(&report),
+        )?;
+
+        SubmissionJobPlain::set_all_as_finished(
+            started.iter_mut().map(|tr| &mut tr.job),
+            &mut conn,
+            JobStatus::AutograderFailure,
+            Some(&report),
+        )
     }
 
-    /// Returns the status code of the handle.
-    pub fn get_status_code(&self) -> SubmissionStatusCode {
-        self.status_code
+    /// The submission being graded.
+    pub fn submission_id(&self) -> i64 {
+        self.submission_id
     }
 
-    /// Returns a slice over the tag runners contained within this handle.
-    /// Useful for read-only access to the data contained within.
-    pub fn get_tag_runners(&self) -> &[TagRunner<'a>] {
-        &self.tag_runners
+    /// Where the submission came from, for reporting back to it.
+    pub fn origin(&self) -> &SubmissionOrigin {
+        &self.origin
+    }
+
+    /// The job within the handle together with the report each tag_runner
+    /// produced (if it has generated one).
+    pub fn job_results(&self) -> Vec<SubmissionJobWithReport> {
+        self.tag_runners
+            .iter()
+            .map(|tr| SubmissionJobWithReport {
+                job: tr.job.clone(),
+                report: tr.get_report().cloned().map(Report::tag_grading),
+            })
+            .collect()
     }
 
     /// Run the next part of the testing runner process.
@@ -363,23 +317,23 @@ impl<'a> SubmissionRunnerHandle<'a> {
             );
         }
 
-        if SystemTime::now() >= self.deadline_time {
-            log::info!("Grading process timed out globally");
-            self.status_code = SubmissionStatusCode::SubmissionTimedOut;
-        }
-
         let tag_runner = self.tag_runners.get_mut(self.next_tag_index).ok_or_else(|| {
             Error::runtime(format!("expected a tag runner for index {}", self.next_tag_index))
         })?;
 
         if !tag_runner.has_built() {
-            log::debug!("Building project for tag \"{}\"", tag_runner.tag_name);
+            log::debug!("Building project for tag \"{}\"", tag_runner.job.tag);
+
+            // A job starts when its build does. The claim only reserved it, and
+            // the jobs of one claim are graded one after another.
+            tag_runner.job.set_as_started(&mut DatabaseConnection::connect(self.settings)?)?;
+
             if !tag_runner.build()? {
                 log::info!(
                     "Build failed for tag \"{}\", proceeding to next tag",
-                    tag_runner.tag_name
+                    tag_runner.job.tag
                 );
-                self.next_tag_index += 1;
+                tag_runner.generate_report()?;
             }
         } else {
             let prev_count = tag_runner.collected_reports;
@@ -387,54 +341,39 @@ impl<'a> SubmissionRunnerHandle<'a> {
             if !tag_runner.run_test(self.tests_collected_details < self.tests_max_details)? {
                 log::info!(
                     "Finished running test cases for tag \"{}\", proceeding to next tag",
-                    tag_runner.tag_name
+                    tag_runner.job.tag
                 );
-                self.next_tag_index += 1;
+                tag_runner.generate_report()?;
             }
 
             if tag_runner.collected_reports > prev_count {
                 self.tests_collected_details += 1;
             }
         }
-        if let Some(ssc) = tag_runner.experienced_bad_behavior() {
-            self.status_code = ssc;
+
+        if tag_runner.status.is_finished() {
+            tag_runner.record_to_shadow(&self.shadow)?;
+
+            let report = Report::tag_grading(
+                tag_runner
+                    .get_report()
+                    .ok_or_else(|| {
+                        Error::runtime(format!(
+                            "expected a report for finished tag \"{}\"",
+                            tag_runner.job.tag
+                        ))
+                    })?
+                    .clone(),
+            );
+            let status = tag_runner.status;
+
+            let mut conn = DatabaseConnection::connect(self.settings)?;
+            tag_runner.job.set_as_finished(&mut conn, status, Some(&report))?;
+
+            self.next_tag_index += 1;
         }
 
         Ok(())
-    }
-
-    /// Compiles the report of submission results, and sets the status of the
-    /// submission if it is still considered as running.
-    ///
-    pub fn compile_report(&mut self) -> Report {
-        let tag_reports: Vec<ReportTagGrading> =
-            self.tag_runners.iter().map(|tr| tr.results_report()).collect();
-        if !self.status_code.is_finished() {
-            if tag_reports.iter().all(|tr| tr.ok) {
-                self.status_code = SubmissionStatusCode::Success;
-            } else if tag_reports.iter().any(|tr| tr.build_failure.is_some()) {
-                self.status_code = SubmissionStatusCode::BuildError;
-            } else {
-                self.status_code = SubmissionStatusCode::TestCasesFailed;
-            }
-        }
-
-        Report::Submission(ReportSubmission {
-            premature_exit_reason: match self.status_code {
-                SubmissionStatusCode::AutograderFailure | SubmissionStatusCode::NotStarted => {
-                    Some("Grading process was interrupted. Contact course staff.".to_string())
-                }
-                SubmissionStatusCode::SubmissionError => {
-                    Some("There was an error with the submission.".to_string())
-                }
-                SubmissionStatusCode::SubmissionTimedOut => {
-                    Some("The submission timed out.".to_string())
-                }
-                _ => None,
-            },
-            max_shown_details: Some(self.tests_max_details),
-            tag_reports,
-        })
     }
 
     /// Performs a cleanup, removing any lingering files

@@ -1,21 +1,21 @@
-use std::{collections::BTreeMap, time::SystemTime};
+use std::collections::BTreeMap;
 
 use actix_web::{
     http::{header, StatusCode},
     HttpRequest, HttpResponse,
 };
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use utoipa::ToSchema;
 
 use derive_more::derive::{Display, Error};
-use num_traits::FromPrimitive;
 
 use id2202_autograder::{
     config::{BuildConfig, Tag, Tests},
     db::models::{
-        Submission, SubmissionInfoGitHub, SubmissionInfoGitLab, SubmissionSourceGitHub,
-        SubmissionSourceGitLab, SubmissionWithReport,
+        origin::StoredOriginEnum, JobStatus, Submission, SubmissionJobPlain,
+        SubmissionJobWithReport, SubmissionOrigin, SubmissionWithReports,
     },
     reporting::Report,
 };
@@ -124,51 +124,120 @@ impl SubmitResponse {
     }
 }
 
+/// The outcome of grading one tag.
+#[derive(Debug, Serialize, JsonSchema, ToSchema)]
+pub struct JobStatusResponse {
+    code: i32,
+    text: String,
+    finished: bool,
+    /// `true` only for a successful job, `false` for any other terminal
+    /// outcome, and `null` while the job has not finished.
+    successful: Option<bool>,
+}
+
+impl From<JobStatus> for JobStatusResponse {
+    fn from(status: JobStatus) -> Self {
+        JobStatusResponse {
+            code: status as i32,
+            text: status.to_string(),
+            finished: status.is_finished(),
+            successful: status.is_finished().then(|| status == JobStatus::Success),
+        }
+    }
+}
+
+/// One graded tag of a submission.
+#[derive(Debug, Serialize, JsonSchema, ToSchema)]
+pub struct SubmissionJobResponse<'a> {
+    tag: &'a str,
+    /// The names the submitter asked for that resolved to `tag`.
+    requested_as: &'a [String],
+    status: JobStatusResponse,
+    /// When the job becomes claimable, if it is being held back.
+    #[schema(value_type = Option<String>, format = DateTime)]
+    eligible_at: Option<&'a DateTime<Utc>>,
+    /// Set if the job reached its status without ever being graded.
+    #[schema(value_type = Option<String>, format = DateTime)]
+    voided_at: Option<&'a DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    started_at: Option<&'a DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    finished_at: Option<&'a DateTime<Utc>>,
+}
+
+impl<'a> SubmissionJobResponse<'a> {
+    pub fn new(job: &'a SubmissionJobPlain) -> Self {
+        SubmissionJobResponse {
+            tag: &job.tag,
+            requested_as: &job.requested_as,
+            status: job.status.into(),
+            eligible_at: job.eligible_at.as_ref(),
+            voided_at: job.voided_at.as_ref(),
+            started_at: job.started_at.as_ref(),
+            finished_at: job.finished_at.as_ref(),
+        }
+    }
+}
+
+/// A graded tag together with the report it produced.
+///
+/// # Serialization Note
+/// Serialises as one object where the report sits alongside the job's fields
+/// from `SubmissionJobResponse`.
+#[derive(Debug, Serialize, JsonSchema, ToSchema)]
+pub struct SubmissionJobWithReportResponse<'a> {
+    #[serde(flatten)]
+    job: SubmissionJobResponse<'a>,
+    /// Full grading report once available. Its structure is documented
+    /// separately; treated as an opaque object here.
+    #[schema(value_type = Option<Object>)]
+    report: Option<&'a Report>,
+}
+
+impl<'a> SubmissionJobWithReportResponse<'a> {
+    pub fn to_http(&self) -> HttpResponse {
+        HttpResponse::Ok().json(self)
+    }
+
+    pub fn new(entry: &'a SubmissionJobWithReport) -> Self {
+        SubmissionJobWithReportResponse {
+            job: SubmissionJobResponse::new(&entry.job),
+            report: entry.report.as_ref(),
+        }
+    }
+}
+
 /// Information about a submission, to be sent back upon successful request.
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct SubmissionResponse<'a> {
     path: String,
     submission_id: i64,
-    grading_tags: &'a [String],
-    finished: bool,
-    successful: Option<bool>,
+    /// The raw tag names the submitter asked for, before resolution.
+    requested_tags: &'a [String],
     #[schema(value_type = String, format = DateTime)]
-    date_submitted: &'a SystemTime,
-    #[schema(value_type = Option<String>, format = DateTime)]
-    date_exec_started: Option<&'a SystemTime>,
-    #[schema(value_type = Option<String>, format = DateTime)]
-    date_exec_finished: Option<&'a SystemTime>,
-    /// Full grading report once available. Its structure is documented
-    /// separately; treated as an opaque object here.
+    submitted_at: &'a DateTime<Utc>,
+    /// One entry per tag being graded. Empty if nothing about the submission
+    /// could be graded, in which case the `report` field in
+    /// `SubmissionResponse` will state the reason for this.
+    jobs: Vec<SubmissionJobWithReportResponse<'a>>,
+    /// Set only for exceptional circumstances, usually when no jobs could be
+    /// created.
     #[schema(value_type = Option<Object>)]
-    report: Option<Report>,
-    /// Submission source
-    source: SubmissionResponseSource<'a>,
+    report: Option<&'a Report>,
+    /// Submission origin
+    origin: SubmissionResponseOrigin<'a>,
 }
 
 impl<'a> SubmissionResponse<'a> {
-    pub fn new(
-        req: &HttpRequest,
-        sub: &'a SubmissionWithReport,
-        source: SubmissionResponseSource<'a>,
-    ) -> SubmissionResponse<'a> {
-        use id2202_autograder::db::models::SubmissionStatusCode as SSC;
-
+    pub fn new(req: &HttpRequest, sub: &'a SubmissionWithReports) -> SubmissionResponse<'a> {
         SubmissionResponse {
             path: req.path().to_string(),
             submission_id: sub.id,
-            grading_tags: &sub.grading_tags,
-            finished: sub.exec_finished,
-            successful: if sub.exec_finished {
-                SSC::from_i32(sub.exec_status_code).map(|c| c == SSC::Success)
-            } else {
-                None
-            },
-            date_submitted: &sub.date_submitted,
-            date_exec_started: sub.exec_date_started.as_ref(),
-            date_exec_finished: sub.exec_date_finished.as_ref(),
-            report: sub.exec_report.as_ref().and_then(|v| Report::deserialize(v).ok()),
-            source,
+            requested_tags: &sub.requested_tags,
+            submitted_at: &sub.submitted_at,
+            jobs: sub.jobs.iter().map(SubmissionJobWithReportResponse::new).collect(),
+            report: sub.report.as_ref(),
+            origin: SubmissionResponseOrigin::new(&sub.origin),
         }
     }
     pub fn to_http(&self) -> HttpResponse {
@@ -176,9 +245,9 @@ impl<'a> SubmissionResponse<'a> {
     }
 }
 
-/// Information about the source to be included with a response.
+/// Information about the origin to be included with a response.
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
-pub enum SubmissionResponseSource<'a> {
+pub enum SubmissionResponseOrigin<'a> {
     #[serde(rename = "github")]
     GitHub {
         domain: &'a str,
@@ -198,31 +267,25 @@ pub enum SubmissionResponseSource<'a> {
         commit: &'a str,
     },
 }
-impl<'a> SubmissionResponseSource<'a> {
-    pub fn new_github(
-        gh_src: &'a SubmissionSourceGitHub,
-        gh_info: &'a SubmissionInfoGitHub,
-    ) -> Self {
-        Self::GitHub {
-            domain: &gh_src.domain,
-            repo: &gh_src.repo,
-            org: &gh_src.org,
-            ssh_url: &gh_src.ssh_url,
-            user: &gh_info.user,
-            commit: &gh_info.commit,
-        }
-    }
-    pub fn new_gitlab(
-        gl_src: &'a SubmissionSourceGitLab,
-        gl_info: &'a SubmissionInfoGitLab,
-    ) -> Self {
-        Self::GitLab {
-            domain: &gl_src.domain,
-            repo: &gl_src.repo,
-            namespace: &gl_src.namespace,
-            ssh_url: &gl_src.ssh_url,
-            user: &gl_info.user,
-            commit: &gl_info.commit,
+impl<'a> SubmissionResponseOrigin<'a> {
+    pub fn new(origin: &'a SubmissionOrigin) -> Self {
+        match &origin.origin {
+            StoredOriginEnum::GitHub(gh) => Self::GitHub {
+                domain: &gh.src.domain,
+                repo: &gh.src.repo,
+                org: &gh.src.org,
+                ssh_url: &gh.src.ssh_url,
+                user: &gh.info.user,
+                commit: &gh.info.commit,
+            },
+            StoredOriginEnum::GitLab(gl) => Self::GitLab {
+                domain: &gl.src.domain,
+                repo: &gl.src.repo,
+                namespace: &gl.src.namespace,
+                ssh_url: &gl.src.ssh_url,
+                user: &gl.info.user,
+                commit: &gl.info.commit,
+            },
         }
     }
 }
@@ -245,38 +308,21 @@ impl<'a> SubmissionSearchResponse<'a> {
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct SubmissionSearchResponseItem<'a> {
     pub submission_id: i64,
-    grading_tags: &'a [String],
-    finished: bool,
+    requested_tags: &'a [String],
     #[schema(value_type = String, format = DateTime)]
-    date_submitted: &'a SystemTime,
-    source: SubmissionResponseSource<'a>,
+    submitted_at: &'a DateTime<Utc>,
+    jobs: Vec<SubmissionJobResponse<'a>>,
+    origin: SubmissionResponseOrigin<'a>,
 }
 
 impl<'a> SubmissionSearchResponseItem<'a> {
-    pub fn github_from_db(
-        sub: &'a Submission,
-        gh_info: &'a SubmissionInfoGitHub,
-        gh_src: &'a SubmissionSourceGitHub,
-    ) -> Self {
+    pub fn new(sub: &'a Submission) -> Self {
         SubmissionSearchResponseItem {
             submission_id: sub.id,
-            grading_tags: &sub.grading_tags,
-            finished: sub.exec_finished,
-            date_submitted: &sub.date_submitted,
-            source: SubmissionResponseSource::new_github(gh_src, gh_info),
-        }
-    }
-    pub fn gitlab_from_db(
-        sub: &'a Submission,
-        gl_info: &'a SubmissionInfoGitLab,
-        gl_src: &'a SubmissionSourceGitLab,
-    ) -> Self {
-        SubmissionSearchResponseItem {
-            submission_id: sub.id,
-            grading_tags: &sub.grading_tags,
-            finished: sub.exec_finished,
-            date_submitted: &sub.date_submitted,
-            source: SubmissionResponseSource::new_gitlab(gl_src, gl_info),
+            requested_tags: &sub.requested_tags,
+            submitted_at: &sub.submitted_at,
+            jobs: sub.jobs.iter().map(SubmissionJobResponse::new).collect(),
+            origin: SubmissionResponseOrigin::new(&sub.origin),
         }
     }
 }
@@ -286,6 +332,7 @@ impl<'a> SubmissionSearchResponseItem<'a> {
 pub struct TagListResponse {
     path: String,
     tags: BTreeMap<String, TagListDetails>,
+    /// Everything resolvable that is not a tag in its own right.
     tag_groups: BTreeMap<String, Vec<String>>,
 }
 
@@ -300,29 +347,20 @@ pub struct TagListDetails {
 
 impl TagListResponse {
     pub fn new(req: &HttpRequest, tc: &Tests) -> TagListResponse {
-        let mut r = TagListResponse {
+        TagListResponse {
             path: req.path().to_string(),
-            tags: BTreeMap::new(),
-            tag_groups: BTreeMap::new(),
-        };
-
-        for (group_name, tags) in &tc.tag_groups {
-            match tags.as_slice() {
-                [t] => {
-                    if group_name == &t.name {
-                        r.tags.insert(t.name.clone(), TagListDetails::from_tag(t));
-                    } else {
-                        r.tag_groups.insert(group_name.clone(), vec![t.name.clone()]);
-                    }
-                }
-                _ => {
-                    r.tag_groups
-                        .insert(group_name.clone(), tags.iter().map(|t| t.name.clone()).collect());
-                }
-            }
+            tags: tc
+                .tags
+                .iter()
+                .map(|(name, t)| (name.clone(), TagListDetails::from_tag(t)))
+                .collect(),
+            tag_groups: tc
+                .tag_resolution
+                .iter()
+                .filter(|(name, _)| !tc.tags.contains_key(*name))
+                .map(|(name, tagnames)| (name.clone(), tagnames.clone()))
+                .collect(),
         }
-
-        r
     }
     pub fn to_http(&self) -> HttpResponse {
         HttpResponse::Ok().json(self)
@@ -345,7 +383,7 @@ impl TagListDetails {
     }
 }
 
-/// Information the a single grading tag. If this is an alias, this will return
+/// Information about a single grading tag. If this is an alias, this will return
 /// all the tags that it will grade.
 #[derive(Debug, Serialize, JsonSchema, ToSchema)]
 pub struct TagResponse {
@@ -360,10 +398,12 @@ impl TagResponse {
         Some(TagResponse {
             path: req.path().to_string(),
             tags: tc
-                .tag_groups
+                .tag_resolution
                 .get(tag_name)?
                 .iter()
-                .map(|t| (t.name.to_string(), TagListDetails::from_tag(t)))
+                .filter_map(|name| {
+                    Some((name.to_owned(), TagListDetails::from_tag(tc.tags.get(name)?)))
+                })
                 .collect(),
         })
     }

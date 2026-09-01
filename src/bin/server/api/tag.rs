@@ -97,13 +97,15 @@ pub async fn get_tag_task(
             ErrorResponse::internal_server_error(&req)
         })?;
 
-    let tag_group = tc
-        .tag_groups
+    let tagnames = tc
+        .tag_resolution
         .get(&tagname)
         .ok_or_else(|| ErrorResponse::not_found(&req, "tag not found"))?;
 
-    match tag_group.as_slice() {
-        [t] => {
+    match tagnames.as_slice() {
+        [name] => {
+            let t =
+                tc.tags.get(name).ok_or_else(|| ErrorResponse::not_found(&req, "tag not found"))?;
             if let Some(path) = &t.task_file {
                 let data = std::fs::read(path).map_err(|e| {
                     log::error!("Could not read the task file: {e}");

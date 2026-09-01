@@ -1,16 +1,27 @@
-/// Common reporting interface, used for functions to report in a
-/// display-agnostic format, which can then be converted to other formats down
-/// the line.
+//! Common reporting interface, used for functions to report in a
+//! display-agnostic format, which can then be converted to other formats down
+//! the line.
+
 use std::{
     collections::BTreeMap,
     fmt::{Display, Write},
+    format,
 };
 
 use itertools::Itertools;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{config::ReportingSettings, error::Error};
+use crate::{
+    config::ReportingSettings,
+    db::models::{JobStatus, SubmissionJobPlain, SubmissionJobWithReport, SubmissionWithReports},
+    error::Error,
+    utils::utc_string,
+};
+
+pub mod structured_text;
+
+use structured_text::StructuredParagraph;
 
 /// Returns a markdown preformatted block <pre> containing the provided text
 /// `s` as verbatim, making sure to escape parts that could otherwise be
@@ -66,26 +77,6 @@ pub fn markdown_write_preformatted_with_truncation(
     Ok(())
 }
 
-/// Escapes markdown characters within the string `s`.
-///
-/// This escapes the following characters by putting a backslash `\` in front of them:
-///
-/// ```txt
-/// \ ` * _ { } [ ] ( ) # + - . !
-/// ```
-///
-/// See https://www.markdownlang.com/basic/escaping.html
-pub fn markdown_write_escaped(dst: &mut impl Write, s: &str) -> Result<(), Error> {
-    const ESC_CHARS: &str = "\\`*_{}[]()#+-.!";
-    for ch in s.chars() {
-        if ESC_CHARS.contains(ch) {
-            dst.write_char('\\')?;
-        }
-        dst.write_char(ch)?;
-    }
-    Ok(())
-}
-
 /// Helper function for pushing a string `s` to the buffer `dst`, escaping the
 /// contents if `escape = true`. Otherwise the string is pushed directly.
 fn html_write_str(dst: &mut impl Write, s: &str, escape: bool) -> Result<(), Error> {
@@ -133,13 +124,15 @@ pub enum Report {
     InvalidTag(ReportInvalidTag),
     #[serde(rename = "message")]
     Message(ReportMessage),
-    #[serde(rename = "submission")]
-    Submission(ReportSubmission),
     #[serde(rename = "tag_grading")]
-    TagGrading(ReportTagGrading),
+    TagGrading(Box<ReportTagGrading>),
 }
 
 impl Report {
+    pub fn tag_grading(internal: ReportTagGrading) -> Self {
+        Self::TagGrading(Box::new(internal))
+    }
+
     /// Renders the report as markdown, storing the result in the provided
     /// String `dst`.
     pub fn render_markdown(
@@ -151,7 +144,6 @@ impl Report {
             Self::Wrapper(r) => r.render_markdown(settings, dst),
             Self::InvalidTag(r) => r.render_markdown(settings, dst),
             Self::Message(r) => r.render_markdown(settings, dst),
-            Self::Submission(r) => r.render_markdown(settings, dst),
             Self::TagGrading(r) => r.render_markdown(settings, dst),
         }
     }
@@ -159,8 +151,8 @@ impl Report {
     pub fn formatter_markdown<'a>(
         &'a self,
         settings: &'a ReportingSettings,
-    ) -> MarkdownFormatterReport<'a> {
-        MarkdownFormatterReport { report: self, settings }
+    ) -> MarkdownFormatterMetaReport<'a> {
+        MarkdownFormatterMetaReport { meta_report: MetaReport::Transient(self), settings }
     }
 
     pub fn render_html(
@@ -174,20 +166,387 @@ impl Report {
             Self::Wrapper(r) => r.render_html(settings, dst, escape, header_level),
             Self::InvalidTag(r) => r.render_html(settings, dst, escape, header_level),
             Self::Message(r) => r.render_html(settings, dst, escape, header_level),
-            Self::Submission(r) => r.render_html(settings, dst, escape, header_level),
             Self::TagGrading(r) => r.render_html(settings, dst, escape, header_level),
         }
     }
 }
 
-pub struct MarkdownFormatterReport<'a> {
-    report: &'a Report,
+/// A report assembled for display out of things that are stored separately.
+/// This borrows what it renders and has no serialized form, so unlike a
+/// [Report] it cannot be written to the database.
+#[derive(Debug, Clone)]
+pub enum MetaReport<'a> {
+    /// A report that stands on its own, with no job describing it.
+    Transient(&'a Report),
+
+    /// The jobs of a single submission.
+    JobResults(MetaJobResultsReport<'a>),
+
+    /// Several reports, rendered in order and separated from one another.
+    Compound(Vec<MetaReport<'a>>),
+
+    /// Structured text that does not make sense as a report
+    Structured(StructuredParagraph<'a>),
+}
+
+impl<'a> From<&'a Report> for MetaReport<'a> {
+    fn from(value: &'a Report) -> Self {
+        Self::Transient(value)
+    }
+}
+
+impl<'a> MetaReport<'a> {
+    /// Everything there is to show for a submission: anything concerning it as
+    /// a whole, followed by the results of its jobs. Renders nothing if it has
+    /// neither.
+    pub fn of_submission(sub: &'a SubmissionWithReports) -> Self {
+        let mut parts = Vec::new();
+        if let Some(report) = &sub.report {
+            parts.push(Self::Transient(report));
+        }
+        if !sub.jobs.is_empty() {
+            parts.push(Self::JobResults(MetaJobResultsReport { jobs: &sub.jobs }));
+        }
+        Self::Compound(parts)
+    }
+
+    pub fn render_markdown(
+        &self,
+        settings: &ReportingSettings,
+        dst: &mut impl Write,
+    ) -> Result<(), Error> {
+        match self {
+            Self::Transient(r) => r.render_markdown(settings, dst),
+            Self::JobResults(r) => r.render_markdown(settings, dst),
+            Self::Compound(parts) => {
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        dst.write_str("\n\n")?;
+                    }
+                    part.render_markdown(settings, dst)?;
+                }
+                Ok(())
+            }
+            Self::Structured(p) => p.render_markdown(settings, dst).map_err(|e| e.into()),
+        }
+    }
+
+    pub fn formatter_markdown(
+        &self,
+        settings: &'a ReportingSettings,
+    ) -> MarkdownFormatterMetaReport<'a> {
+        MarkdownFormatterMetaReport { meta_report: self.clone(), settings }
+    }
+
+    pub fn render_html(
+        &self,
+        settings: &ReportingSettings,
+        dst: &mut impl Write,
+        escape: bool,
+        header_level: usize,
+    ) -> Result<(), Error> {
+        match self {
+            Self::Transient(r) => r.render_html(settings, dst, escape, header_level),
+            Self::JobResults(r) => r.render_html(settings, dst, escape, header_level),
+            Self::Compound(parts) => {
+                for part in parts {
+                    dst.write_str("<div>")?;
+                    part.render_html(settings, dst, escape, header_level)?;
+                    dst.write_str("</div>")?;
+                }
+                Ok(())
+            }
+            Self::Structured(p) => p.render_html(settings, dst).map_err(|e| e.into()),
+        }
+    }
+}
+
+pub struct MarkdownFormatterMetaReport<'a> {
+    meta_report: MetaReport<'a>,
     settings: &'a ReportingSettings,
 }
 
-impl<'a> std::fmt::Display for MarkdownFormatterReport<'a> {
+impl<'a> std::fmt::Display for MarkdownFormatterMetaReport<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.report.render_markdown(self.settings, f).map_err(|_| std::fmt::Error)
+        self.meta_report.render_markdown(self.settings, f).map_err(|_| std::fmt::Error)
+    }
+}
+
+/// The results of every job on one submission, each rendered together with the
+/// job metadata describing how it was graded.
+#[derive(Debug, Copy, Clone)]
+pub struct MetaJobResultsReport<'a> {
+    pub jobs: &'a [SubmissionJobWithReport],
+}
+
+impl<'a> MetaJobResultsReport<'a> {
+    /// The explanatory text shown above the results.
+    fn prelude(settings: &ReportingSettings) -> Vec<StructuredParagraph<'a>> {
+        vec![
+            StructuredParagraph::plain_str(
+                "Tests are grouped together into categories. Each category contains a set of \
+                 test cases that evaluate a specific aspect of your program.",
+            ),
+            StructuredParagraph::Itemized(vec![
+                format!(
+                    "The symbol {} indicates that all tests in the category passed.",
+                    settings.markdown.symbol_ok
+                )
+                .into(),
+                format!(
+                    "The symbol {} indicates that not all tests were run in this category. This \
+                     is usually due to a previous test timeout.",
+                    settings.markdown.symbol_skipped
+                )
+                .into(),
+                format!(
+                    "The symbol {} indicates that at least one test in the category failed.",
+                    settings.markdown.symbol_failed
+                )
+                .into(),
+            ]),
+            match settings.shown_failures {
+                1 => StructuredParagraph::plain_str(
+                    "Additionally, for the first test that fails, you will also get more \
+                     detailed information after the main overview.",
+                ),
+                n => StructuredParagraph::plain(format!(
+                    "Additionally, for the first {n} tests that fail, you will also get more \
+                     detailed information after the main overview."
+                )),
+            },
+        ]
+    }
+
+    /// Why a job holds no report, phrased for the student.
+    fn without_report(job: &SubmissionJobPlain) -> String {
+        match job.status {
+            JobStatus::NotStarted => match job.eligible_at {
+                Some(t) => format!(
+                    "This tag has not been graded yet. It is rate-limited, and will be \
+                     eligible for grading after {}.",
+                    utc_string(&t)
+                ),
+                None => "This tag has not been graded yet.".to_string(),
+            },
+            JobStatus::Running => "This tag is currently being graded.".to_string(),
+            JobStatus::Superseded => {
+                "This tag was never graded, because a newer submission requested the same tag."
+                    .to_string()
+            }
+            JobStatus::Cancelled => {
+                "This tag was never graded, because the grading was cancelled by the course \
+                 staff."
+                    .to_string()
+            }
+            JobStatus::Rejected => {
+                "This tag was never graded, because the grading budget for this tag has been \
+                 used up."
+                    .to_string()
+            }
+            _ => "No report was generated for this tag.".to_string(),
+        }
+    }
+
+    pub fn render_markdown(
+        &self,
+        settings: &ReportingSettings,
+        dst: &mut impl Write,
+    ) -> Result<(), Error> {
+        dst.write_str("# Submission Results")?;
+
+        for block in Self::prelude(settings) {
+            write!(dst, "\n\n")?;
+            block.render_markdown(settings, dst)?;
+        }
+
+        for jwr in self.jobs {
+            dst.write_str("\n\n")?;
+            match &jwr.report {
+                Some(r) => r.render_markdown(settings, dst)?,
+                None => write!(
+                    dst,
+                    "## Results for tag `{}`\n\n_{}_",
+                    jwr.job.tag,
+                    Self::without_report(&jwr.job)
+                )?,
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn render_html(
+        &self,
+        settings: &ReportingSettings,
+        dst: &mut impl Write,
+        escape: bool,
+        header_level: usize,
+    ) -> Result<(), Error> {
+        /// Writes one row of a job's detail table. `code` wraps each value in a
+        /// `<code>` element.
+        fn detail_row(
+            dst: &mut impl Write,
+            escape: bool,
+            label: &str,
+            values: &[&str],
+            code: bool,
+        ) -> Result<(), Error> {
+            write!(dst, "<tr><th scope=\"row\" class=\"w-25\">{label}</th><td>")?;
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    dst.write_str(", ")?;
+                }
+                if code {
+                    write!(dst, "<code>{}</code>", html_formatter_str(v, escape))?;
+                } else {
+                    html_write_str(dst, v, escape)?;
+                }
+            }
+            dst.write_str("</td></tr>")?;
+            Ok(())
+        }
+
+        let md = &settings.markdown;
+
+        write!(dst, "<div class=\"text-center\"><h{header_level}>Results</h{header_level}></div>")?;
+
+        for par in Self::prelude(settings) {
+            par.render_html(settings, dst)?;
+        }
+
+        dst.write_str("<div class=\"accordion\">")?;
+        for (i, jwr) in self.jobs.iter().enumerate() {
+            let job = &jwr.job;
+
+            // A failing tag is what the student came to read, so it is the only
+            // one that opens by itself.
+            let (symbol, code_class, header_class, expanded, badge_class) = if job.status
+                == JobStatus::Success
+            {
+                (&md.symbol_ok, "text-success", "", false, None)
+            } else if job.status.is_voided() {
+                (
+                    &md.symbol_voided,
+                    "text-warning",
+                    "bg-warning-subtle",
+                    false,
+                    Some("text-bg-warning"),
+                )
+            } else if !job.status.is_finished() {
+                (&md.symbol_waiting, "text-body-secondary", "", false, Some("text-bg-secondary"))
+            } else {
+                (&md.symbol_failed, "text-danger", "bg-danger-subtle", true, None)
+            };
+
+            let item_id = format!("submissionJob{i}");
+            let details_id = format!("submissionJobDetails{i}");
+
+            dst.write_str("<div class=\"accordion-item\">")?;
+            dst.write_str("<h2 class=\"accordion-header\">")?;
+            write!(
+                dst,
+                "<button class=\"accordion-button {header_class}{}\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#{item_id}\" aria-expanded=\"{expanded}\" aria-controls=\"{item_id}\">",
+                if expanded { "" } else { " collapsed" }
+            )?;
+            write!(
+                dst,
+                "<h4 class=\"my-0 flex-grow-1\">{} <code class=\"{code_class}\">{}</code></h4>",
+                html_formatter_str(symbol, escape),
+                html_formatter_str(&job.tag, escape)
+            )?;
+            if let Some(badge_class) = badge_class {
+                let status = job.status.to_string();
+                write!(
+                    dst,
+                    "<span class=\"me-3\"><span class=\"badge {badge_class}\">{}</span></span>",
+                    html_formatter_str(&status, escape)
+                )?;
+            }
+            dst.write_str("</button></h2>")?;
+
+            write!(
+                dst,
+                "<div id=\"{item_id}\" class=\"accordion-collapse collapse{}\">",
+                if expanded { " show" } else { "" }
+            )?;
+            dst.write_str("<div class=\"accordion-body\">")?;
+
+            dst.write_str(
+                "<div class=\"d-flex flex-wrap align-items-center column-gap-3 row-gap-1 mb-3\">",
+            )?;
+            let derived_from: Vec<&String> =
+                job.requested_as.iter().filter(|r| **r != job.tag).collect();
+            if !derived_from.is_empty() {
+                dst.write_str("<span><em class=\"text-body-secondary\">(Derived from ")?;
+                for (k, t) in derived_from.iter().enumerate() {
+                    if k > 0 {
+                        dst.write_str(", ")?;
+                    }
+                    write!(dst, "<code>{}</code>", html_formatter_str(t, escape))?;
+                }
+                dst.write_str(")</em></span>")?;
+            }
+            write!(
+                dst,
+                "<button class=\"btn btn-outline-secondary btn-sm py-0 px-2\" style=\"--bs-btn-font-size: .75rem;\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#{details_id}\" aria-controls=\"{details_id}\">Job details</button>"
+            )?;
+            dst.write_str("</div>")?;
+
+            write!(dst, "<div class=\"collapse\" id=\"{details_id}\">")?;
+            dst.write_str("<div class=\"border rounded overflow-hidden mb-3\">")?;
+            dst.write_str("<table class=\"table table-striped table-hover mb-0\"><tbody>")?;
+
+            detail_row(dst, escape, "Status", &[&job.status.to_string()], false)?;
+            let requested_as: Vec<&str> = job.requested_as.iter().map(String::as_str).collect();
+            detail_row(dst, escape, "Requested As", &requested_as, true)?;
+            if let Some(t) = job.eligible_at {
+                detail_row(dst, escape, "Eligible At", &[&utc_string(&t)], false)?;
+            }
+            if let Some(t) = job.started_at {
+                detail_row(dst, escape, "Started At", &[&utc_string(&t)], false)?;
+            }
+            if let Some(t) = job.finished_at {
+                detail_row(dst, escape, "Finished At", &[&utc_string(&t)], false)?;
+            }
+            if let (Some(from), Some(to)) = (job.started_at, job.finished_at) {
+                let total = (to - from).num_seconds().max(0);
+                let duration = match (
+                    total / 86400,
+                    (total % 86400) / 3600,
+                    (total % 3600) / 60,
+                    total % 60,
+                ) {
+                    (0, 0, 0, s) => format!("{s}s"),
+                    (0, 0, m, s) => format!("{m}m {s}s"),
+                    (0, h, m, s) => format!("{h}h {m}m {s}s"),
+                    (d, h, m, s) => format!("{d}d {h}h {m}m {s}s"),
+                };
+                detail_row(dst, escape, "Duration", &[&duration], false)?;
+            }
+            if let Some(t) = job.voided_at {
+                detail_row(dst, escape, "Voided At", &[&utc_string(&t)], false)?;
+            }
+            if let Some(runner) = job.assigned_runner_id {
+                detail_row(dst, escape, "Assigned Runner", &[&runner.to_string()], false)?;
+            }
+
+            dst.write_str("</tbody></table></div></div>")?;
+
+            match &jwr.report {
+                Some(r) => r.render_html(settings, dst, escape, header_level + 1)?,
+                None => {
+                    dst.write_str("<p class=\"text-body-secondary fst-italic mb-0\">")?;
+                    html_write_str(dst, &Self::without_report(job), escape)?;
+                    dst.write_str("</p>")?;
+                }
+            }
+
+            dst.write_str("</div></div></div>")?;
+        }
+        dst.write_str("</div>")?;
+
+        Ok(())
     }
 }
 
@@ -364,11 +723,12 @@ impl ReportMessage {
     /// that would be formatted as markdown are escaped.
     pub fn render_markdown(
         &self,
-        _settings: &ReportingSettings,
+        settings: &ReportingSettings,
         dst: &mut impl Write,
     ) -> Result<(), Error> {
-        markdown_write_escaped(dst, &self.msg)?;
-        Ok(())
+        StructuredParagraph::plain_str(&self.msg)
+            .render_markdown(settings, dst)
+            .map_err(Error::from)
     }
 
     /// Renders this message as a single HTML paragraph in the provided sailfish buffer.
@@ -387,150 +747,6 @@ impl ReportMessage {
     }
 }
 
-/// A report of a complete submission, constituting of variable number of grading tags.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct ReportSubmission {
-    /// Optional reason for why a grading process ended prematurely
-    pub premature_exit_reason: Option<String>,
-
-    /// Maximum number of shown details on failure
-    pub max_shown_details: Option<usize>,
-
-    /// Reports for each individual tag
-    pub tag_reports: Vec<ReportTagGrading>,
-}
-
-impl ReportSubmission {
-    /// Generate markdown, with details from every subreport being included at
-    /// the end.
-    pub fn render_markdown(
-        &self,
-        settings: &ReportingSettings,
-        dst: &mut impl Write,
-    ) -> Result<(), Error> {
-        dst.write_str("# Submission Results")?;
-
-        if settings.markdown.show_indicator_submission_header {
-            dst.write_str("( ")?;
-            if self.tag_reports.iter().all(|tr| tr.ok) {
-                dst.write_str(&settings.markdown.symbol_ok)?;
-            } else {
-                dst.write_str(&settings.markdown.symbol_failed)?;
-            }
-        }
-
-        if let Some(reason) = &self.premature_exit_reason {
-            write!(dst, "\n\n_({reason})_")?;
-        }
-
-        // Add the information text
-        dst.write_str("\n\nTests are grouped together into categories.")?;
-        dst.write_str(" Each category contains a set of test cases that evaluate a specific aspect of your program.")?;
-
-        dst.write_str("\n\n * The symbol ")?;
-        dst.write_str(&settings.markdown.symbol_ok)?;
-        dst.write_str(" indicates that all tests in the category passed.")?;
-
-        dst.write_str("\n\n * The symbol ")?;
-        dst.write_str(&settings.markdown.symbol_skipped)?;
-        dst.write_str(" indicates that not all tests were run in this category.")?;
-        dst.write_str(" This is usually due to a previous test timeout.")?;
-
-        dst.write_str("\n\n * The symbol ")?;
-        dst.write_str(&settings.markdown.symbol_failed)?;
-        dst.write_str(" indicates that at least one test in the category failed.")?;
-
-        if let Some(max_details) = self.max_shown_details {
-            dst.write_str("\n\nAdditionally, for the first ")?;
-            if max_details == 1 {
-                dst.write_str("test that fail")?;
-            } else {
-                write!(dst, "{} tests that fail", max_details)?;
-            }
-            dst.write_str(
-                ", you will also get more detailed information after the main overview.",
-            )?;
-        }
-
-        let mut details = vec![];
-        for tr in &self.tag_reports {
-            dst.write_str("\n\n")?;
-            tr.render_markdown_with_details(settings, dst, &mut details)?;
-        }
-
-        for (i, detail) in details.iter().enumerate() {
-            dst.write_str("\n\n")?;
-            writeln!(dst, "<details id=\"detail-summary-{}\">", i + 1)?;
-            writeln!(dst, "<summary>Detail {}</summary>\n", i + 1)?;
-            detail.render_markdown(settings, dst)?;
-            dst.write_str("\n\n</details>")?;
-        }
-
-        Ok(())
-    }
-
-    /// Renders this submission report as HTML in the provided sailfish buffer.
-    pub fn render_html(
-        &self,
-        settings: &ReportingSettings,
-        dst: &mut impl Write,
-        escape: bool,
-        header_level: usize,
-    ) -> Result<(), Error> {
-        if let Some(reason) = &self.premature_exit_reason {
-            dst.write_str("<p><em>")?;
-            html_write_str(dst, reason, escape)?;
-            dst.write_str("</em></p>")?;
-        }
-
-        dst.write_str("<div class=\"text-center\">")?;
-        write!(dst, "<h{header_level}>Results</{header_level}>")?;
-        dst.write_str("</div>")?;
-
-        dst.write_str("<div class=\"accordion\">")?;
-        for (i, grading_report) in self.tag_reports.iter().enumerate() {
-            let accordion_id = format!("gradingTagAccordion{i}");
-            let (button_bg_class, accordion_border_class, tag_code_class) = if grading_report.ok {
-                //("bg-success-subtle", "border-success-subtle", "text-success")
-                ("", "", "text-success")
-            } else {
-                //("bg-danger-subtle", "border-danger-subtle", "text-danger")
-                ("bg-danger-subtle", "", "text-danger")
-            };
-            // Only show results if something failed
-            let (show_class, collapse_class) =
-                if grading_report.ok { ("", "collapsed") } else { ("show", "") };
-            write!(dst, "<div class=\"accordion-item {accordion_border_class}\">")?;
-            dst.write_str("<h2 class=\"accordion-header\">")?;
-            write!(dst, "<button class=\"accordion-button {button_bg_class} {collapse_class}\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#{accordion_id}\" aria-expanded=\"true\" aria-controls=\"{accordion_id}\">")?;
-            dst.write_str("<h4 class=\"my-0\">")?;
-            if grading_report.ok {
-                dst.write_str(&settings.markdown.symbol_ok)?;
-            } else {
-                dst.write_str(&settings.markdown.symbol_failed)?;
-            };
-            write!(
-                dst,
-                " <code class=\"{tag_code_class}\">{}</code></h4>",
-                html_formatter_str(&grading_report.tag_name, escape)
-            )?;
-
-            dst.write_str("</button>")?;
-            dst.write_str("</h2>")?;
-            write!(
-                dst,
-                "<div id=\"{accordion_id}\" class=\"accordion-collapse collapse {show_class}\">"
-            )?;
-            dst.write_str("<div class=\"accordion-body\">")?;
-            grading_report.render_html(settings, dst, escape, header_level + 1)?;
-            dst.write_str("</div></div></div>")?;
-        }
-        dst.write_str("</div>")?;
-
-        Ok(())
-    }
-}
-
 /// A report of grading a single tag.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ReportTagGrading {
@@ -544,6 +760,9 @@ pub struct ReportTagGrading {
     /// it is OK to skip it, etc. The one creating the report has to indicate
     /// whether the grading is OK or not.
     pub ok: bool,
+
+    /// Optional reason for why grading of this tag ended prematurely
+    pub premature_exit_reason: Option<String>,
 
     /// Build report
     pub build_failure: Option<DetailsBuildFailure>,
@@ -610,6 +829,10 @@ impl ReportTagGrading {
             )?;
         }
 
+        if let Some(reason) = &self.premature_exit_reason {
+            write!(dst, "\n\n_({reason})_")?;
+        }
+
         dst.write_str("\n\n")?;
 
         if let Some(bs) = &self.build_failure {
@@ -646,17 +869,9 @@ impl ReportTagGrading {
         escape: bool,
         header_level: usize,
     ) -> Result<(), Error> {
-        let derivs = self.derivs();
-        if !derivs.is_empty() {
-            dst.write_str("<p><em>(Derived from ")?;
-            for (i, t) in derivs.iter().enumerate() {
-                if i > 0 {
-                    dst.write_str(", ")?;
-                }
-                dst.write_str("<code>")?;
-                html_write_str(dst, t, escape)?;
-                dst.write_str("</code>")?;
-            }
+        if let Some(reason) = &self.premature_exit_reason {
+            dst.write_str("<p><em>(")?;
+            html_write_str(dst, reason, escape)?;
             dst.write_str(")</em></p>")?;
         }
 
@@ -1127,7 +1342,9 @@ impl DetailsTestFailure {
 
         if let Some(desc) = &self.description {
             component_spacing(dst, &mut spacing_state)?;
-            markdown_write_escaped(dst, desc)?;
+            StructuredParagraph::plain_str(desc)
+                .render_markdown(settings, dst)
+                .map_err(Error::from)?;
         }
 
         if !self.checked_files.is_empty() {

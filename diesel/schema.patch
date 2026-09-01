@@ -1,11 +1,21 @@
 --- a/src/db/schema.rs
 +++ b/src/db/schema.rs
-@@ -54,7 +54,7 @@
+@@ -25,7 +25,7 @@
          id -> Int8,
-         date_submitted -> Timestamp,
+         submission_id -> Int8,
+         tag -> Text,
+-        requested_as -> Array<Nullable<Text>>,
++        requested_as -> Array<Text>,
+         eligible_at -> Nullable<Timestamptz>,
+         voided_at -> Nullable<Timestamptz>,
          assigned_runner_id -> Nullable<Int4>,
--        grading_tags -> Array<Nullable<Text>>,
-+        grading_tags -> Array<Text>,
-         exec_finished -> Bool,
-         exec_status_code -> Int4,
-         exec_status_text -> Nullable<Text>,
+@@ -70,8 +70,8 @@
+     submissions (id) {
+         id -> Int8,
+         submitted_at -> Timestamptz,
+-        requested_tags -> Array<Nullable<Text>>,
++        requested_tags -> Array<Text>,
+         origin_id -> Int8,
+         report -> Nullable<Json>,
+     }
+ }

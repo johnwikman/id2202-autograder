@@ -29,6 +29,7 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     cfg.service(submit_github::github_submission);
     cfg.service(submit_gitlab::gitlab_submit_webhook);
     cfg.service(submission::get_submission);
+    cfg.service(submission::get_submission_job);
     cfg.service(submission::get_submission_search);
     cfg.service(tag::get_taglist);
     cfg.service(tag::get_tag);

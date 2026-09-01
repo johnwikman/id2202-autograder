@@ -1,23 +1,20 @@
 // Connection and schema modification utilities
 
+use chrono::{DateTime, TimeDelta, Utc};
 use diesel::{
     self, Connection, ExpressionMethods, OptionalExtension, PgConnection, QueryDsl, RunQueryDsl,
     SelectableHelper,
 };
-use num_traits::FromPrimitive;
-use rand::Rng;
-use serde::Deserialize;
-use std::time::SystemTime;
+use std::collections::BTreeSet;
 
 use crate::{
     config::Settings,
     db::models::{
-        NewSubmission, NewSubmissionSourceGitHub, NewSubmissionSourceGitLab, Submission,
-        SubmissionInfo, SubmissionInfoGitHub, SubmissionInfoGitLab, SubmissionSource,
-        SubmissionSourceGitHub, SubmissionSourceGitLab, SubmissionSourceKind, SubmissionStatusCode,
+        raw::{NewSubmissionJobRow, NewSubmissionRow, SubmissionRow},
+        ClaimResult, JobSpec, JobStatus, RegisterResult, StoredOriginKind, Submission,
+        SubmissionJobPlain,
     },
     error::Error,
-    github, gitlab,
     reporting::Report,
 };
 
@@ -63,634 +60,339 @@ impl DatabaseConnection {
         Ok(())
     }
 
-    /// Registers an incoming GitHub submission in the database.
+    /// Registers an incoming submission, applying each tag's throttle policy to
+    /// the jobs before they are inserted.
+    ///
+    /// The returned submission carries the jobs as they were recorded, so the
+    /// caller can see which of them were deferred and which were rejected.
     ///
     /// ## Warning about Race Conditions
-    /// This may return an error if two threads attempt to register a
-    /// submission with the same `domain`, `org`, and `repo` values at the same
-    /// time.
-    pub fn register_github_submission(
+    /// This may return an error if two threads at the same time attempt to
+    /// register a submission from the same origin that has not previously been
+    /// registered in the database. This depends on the implementation of
+    /// `K::resolve(conn, origin)` for the specific origin kind.
+    pub fn register_submission<K: StoredOriginKind>(
         &mut self,
-        grading_tags: &[&str],
-        source: &NewSubmissionSourceGitHub,
+        requested_tags: &[&str],
+        mut jobs: Vec<JobSpec<'_>>,
+        origin: &K::NewOriginRow,
         user: &str,
         commit: &str,
-    ) -> Result<i64, Error> {
-        use crate::db::{
-            models::{NewSubmissionInfoGitHub, SubmissionSourceGitHub},
-            schema::{submission_info_github, submissions},
+    ) -> Result<RegisterResult, Error> {
+        use crate::db::schema::{
+            submission_jobs,
+            submission_origins::{self, columns as src_col},
+            submissions,
         };
+        use diesel::sql_types::{Array, BigInt, Integer, Nullable, Text, Timestamptz};
 
-        // Make sure that this happens as a single transaction, unrolling it on
-        // an error.
-        //
-        // TODO:
-        // Fix the race condition where two threads are inserting at the same
-        // time, one inserts and the other gets None back. The one who gets
-        // None back will select, but cannot find the submission source since
-        // that has not yet been created. Somehow needs to do both inserts
-        // atomically or lock the table somehow.
-        //
-        // The consequence of this is that this function will return an error,
-        // but the database will remain in good health. So it is not fatal from
-        // a server perspective, but it is an annoying edge case.
-        let (src, gh_src) = self.conn.transaction(|conn| {
-            use crate::db::{
-                models::NewSubmissionSource,
-                schema::{
-                    submission_source_github::{self, columns as ghsrc_col},
-                    submission_sources::{self, columns as src_col},
+        let (submission_id, superseded_ids) = self.conn.transaction(|conn| {
+            let now = Utc::now();
+
+            let (src, kind_src) = K::resolve(conn, origin)?;
+
+            // Lock the row in submission_origins for this origin using
+            // `.for_update()`.
+            //
+            // We do not care about any returned value from this query and just
+            // want to lock the row so nothing else can work with this origin
+            // during this transation.
+            submission_origins::table
+                .select(src_col::id)
+                .filter(src_col::id.eq(src.id))
+                .for_update()
+                .first::<i64>(conn)
+                .map_err(|e: diesel::result::Error| {
+                    Error::auto_msg(format!("could not lock submission origin {}", src.id), e)
+                })?;
+
+            // Any pending jobs for this origin that shares a tag with those
+            // that this submission also wants to grade is superseded.
+            //
+            // IMPORTANT: The superseding has to be done before checking for
+            // throttled jobs, such that any job that would be superseded does
+            // not count towards the rate_limit/budget.
+            /// A pending job that the submission being registered replaced.
+            #[derive(diesel::QueryableByName)]
+            struct SupersededJob {
+                #[diesel(sql_type = BigInt)]
+                id: i64,
+            }
+
+            // Supersede anything jobs with equal tags that are still waiting
+            // to be run.
+            let tags: Vec<&str> = jobs.iter().map(|job| job.tag.name.as_str()).collect();
+            let superseded: Vec<SupersededJob> = diesel::sql_query(
+                "
+                UPDATE submission_jobs j
+                SET status_code = $3,
+                    status_text = $4,
+                    voided_at   = now()
+                WHERE j.tag = ANY($2)
+                  AND j.id IN (SELECT p.id FROM v_pending_jobs p WHERE p.origin_id = $1)
+                RETURNING j.id
+                ",
+            )
+            .bind::<BigInt, _>(src.id)
+            .bind::<Array<Text>, _>(&tags)
+            .bind::<Integer, _>(JobStatus::Superseded as i32)
+            .bind::<Text, _>(JobStatus::Superseded.to_string())
+            .get_results(conn)
+            .map_err(|e: diesel::result::Error| {
+                Error::auto_msg(format!("could not supersede the jobs of origin {}", src.id), e)
+            })?;
+
+            // Perform throttling checks for each job
+            for job in jobs.iter_mut() {
+                let tag = job.tag;
+                if !tag.rate_limit.enable && !tag.budget.enable {
+                    // For efficiency, don't check job for tags with throttling
+                    // disabled.
+                    continue;
+                }
+
+                #[derive(diesel::QueryableByName)]
+                struct ThrottlingCheck {
+                    /// How much of a tag's budget the origin has spent.
+                    #[diesel(sql_type = BigInt)]
+                    budget_used: i64,
+                    /// When the n'th most recent run of this tag (from this
+                    /// origin) was eligible for grading.
+                    #[diesel(sql_type = Nullable<Timestamptz>)]
+                    nth: Option<DateTime<Utc>>,
+                }
+
+                // The `j.voided_at IS NULL` ensures that any voided jobs
+                // (superseded, cancelled, etc.) do not count toward the
+                // throttling check.
+                let chk: ThrottlingCheck = diesel::sql_query(
+                    "
+                    WITH prior AS (
+                        SELECT COALESCE(j.eligible_at, s.submitted_at) AS eligible_at
+                        FROM submission_jobs j JOIN submissions s ON j.submission_id = s.id
+                        WHERE s.origin_id = $1 AND j.tag = $2 AND j.voided_at IS NULL
+                    )
+                    SELECT (SELECT count(*) FROM prior) AS budget_used,
+                           (SELECT eligible_at FROM prior
+                            ORDER BY eligible_at DESC LIMIT 1 OFFSET $3 - 1) AS nth
+                    ",
+                )
+                .bind::<BigInt, _>(src.id)
+                .bind::<Text, _>(&tag.name)
+                .bind::<BigInt, _>(i64::from(tag.rate_limit.n.max(1)))
+                .get_result(conn)
+                .map_err(|e: diesel::result::Error| {
+                    Error::auto_msg(format!("could not probe the throttle of tag {}", tag.name), e)
+                })?;
+
+                if tag.budget.enable && chk.budget_used >= i64::from(tag.budget.max_runs) {
+                    // Note: This will also set the job in the implementation
+                    // of `JobSpec::to_row`.
+                    job.status = JobStatus::Rejected;
+                    continue;
+                }
+
+                if tag.rate_limit.enable {
+                    let window = TimeDelta::seconds(tag.rate_limit.window_seconds as i64);
+
+                    job.eligible_at = Some(chk.nth.map_or(now, |nth| now.max(nth + window)));
+                }
+            }
+
+            let sub: SubmissionRow = diesel::insert_into(submissions::table)
+                .values(NewSubmissionRow {
+                    submitted_at: now,
+                    requested_tags: requested_tags.iter().map(|s| s.to_string()).collect(),
+                    origin_id: src.id,
+                    report: None,
+                })
+                .returning(SubmissionRow::as_returning())
+                .get_result(conn)
+                .map_err(|e: diesel::result::Error| {
+                    Error::auto_msg("could not insert new submission into database", e)
+                })?;
+
+            K::insert_info(conn, &sub, &kind_src, user, commit)?;
+
+            // Inserted with `eligible_at` already decided, so no runner can
+            // claim a job before its throttle has been applied.
+            let job_rows: Vec<NewSubmissionJobRow> =
+                jobs.iter().map(|spec| spec.to_row(sub.id)).collect();
+            diesel::insert_into(submission_jobs::table).values(&job_rows).execute(conn).map_err(
+                |e: diesel::result::Error| {
+                    Error::auto_msg(
+                        format!("could not insert the jobs of submission {}", sub.id),
+                        e,
+                    )
                 },
-            };
-            let ghsrc_insert_check = diesel::insert_into(submission_source_github::table)
-                .values(source)
-                .on_conflict_do_nothing()
-                .returning(SubmissionSourceGitHub::as_returning())
+            )?;
+
+            let superseded_ids: Vec<i64> = superseded.iter().map(|old| old.id).collect();
+            Ok::<_, Error>((sub.id, superseded_ids))
+        })?;
+
+        Ok(RegisterResult {
+            submission: Submission::by_id(self, submission_id)?,
+            superseded: Submission::by_job_ids(self, &superseded_ids)?,
+        })
+    }
+
+    /// Records a submission that produced no jobs, keeping `report` as the
+    /// explanation of why nothing could be graded.
+    ///
+    /// ## Warning about Race Conditions
+    /// This may return an error if two threads at the same time attempt to
+    /// register a submission from the same origin that has not previously been
+    /// registered in the database. This depends on the implementation of
+    /// `K::resolve(conn, origin)` for the specific origin kind.
+    pub fn register_ungradable_submission<K: StoredOriginKind>(
+        &mut self,
+        requested_tags: &[&str],
+        report: &Report,
+        origin: &K::NewOriginRow,
+        user: &str,
+        commit: &str,
+    ) -> Result<Submission, Error> {
+        use crate::db::schema::submissions;
+
+        let stored_report = serde_json::to_value(report)?;
+
+        let submission_id = self.conn.transaction(|conn| {
+            let (src, kind_src) = K::resolve(conn, origin)?;
+
+            // No lock is taken on the origin: writing no jobs means the
+            // throttle history is neither read nor extended.
+            let sub: SubmissionRow = diesel::insert_into(submissions::table)
+                .values(NewSubmissionRow {
+                    submitted_at: Utc::now(),
+                    requested_tags: requested_tags.iter().map(|s| s.to_string()).collect(),
+                    origin_id: src.id,
+                    report: Some(stored_report),
+                })
+                .returning(SubmissionRow::as_returning())
+                .get_result(conn)
+                .map_err(|e: diesel::result::Error| {
+                    Error::auto_msg("could not insert new submission into database", e)
+                })?;
+
+            K::insert_info(conn, &sub, &kind_src, user, commit)?;
+
+            Ok::<_, Error>(sub.id)
+        })?;
+
+        Submission::by_id(self, submission_id)
+    }
+
+    /// Tries to claim a wave of jobs for the runner with the specified ID,
+    /// returning `None` if there was nothing to claim.
+    pub fn try_claim_submission(&mut self, runner_id: i32) -> Result<Option<ClaimResult>, Error> {
+        use diesel::sql_types::{BigInt, Integer};
+        use diesel::QueryableByName;
+
+        #[derive(QueryableByName)]
+        struct OriginId {
+            #[diesel(sql_type = BigInt)]
+            id: i64,
+        }
+
+        /// Identifies the claimed jobs. The rest of their columns come from
+        /// reading the submission back afterwards.
+        #[derive(QueryableByName)]
+        struct ClaimedJob {
+            #[diesel(sql_type = BigInt)]
+            id: i64,
+            #[diesel(sql_type = BigInt)]
+            submission_id: i64,
+        }
+
+        let claimed: Vec<ClaimedJob> = self
+            .conn
+            .transaction(|conn| {
+                // Step 1: Pick a submission origin that has pending work (that
+                // is eligible to be claimed) and nothing that is currently
+                // being run. We use the two views set up in the diesel
+                // migration to help with this. Then lock that origin for the
+                // rest of this transaction.
+                //
+                // The locking is done with FOR UPDATE.
+                //
+                // We use SKIP LOCKED to handle the case of two concurrent
+                // queries, such that if a submission origin is locked, then we
+                // can simply skip over that origin (without blocking) and see
+                // if there are other origins available.
+                let picked: Option<OriginId> = diesel::sql_query(
+                    "
+                    SELECT src.id
+                    FROM submission_origins src
+                    WHERE EXISTS     (SELECT 1 FROM v_claimable_jobs c WHERE c.origin_id = src.id)
+                      AND NOT EXISTS (SELECT 1 FROM v_active_jobs    a WHERE a.origin_id = src.id)
+                    -- Ensure we get the origin with the lowest available submission id.
+                    ORDER BY (
+                            SELECT min(c.submission_id)
+                            FROM v_claimable_jobs c
+                            WHERE c.origin_id = src.id
+                    )
+                    LIMIT 1
+                    FOR UPDATE OF src SKIP LOCKED
+                ",
+                )
                 .get_result(conn)
                 .optional()?;
 
-            if let Some(new_gh_src) = ghsrc_insert_check {
-                // Inserted a new row into the GitHub submissions, so need to
-                // insert a row into the submission_source table too. Also
-                // generate a random auth_key for this source.
-                let mut key: Vec<u8> = vec![0u8; 32];
-                rand::rng().fill_bytes(key.as_mut_slice());
-
-                let src = diesel::insert_into(submission_sources::table)
-                    .values(NewSubmissionSource {
-                        kind: SubmissionSourceKind::GitHub as i32,
-                        kind_id: new_gh_src.id,
-                        auth_key: bs58::encode(key).into_string(),
-                    })
-                    .returning(SubmissionSource::as_returning())
-                    .get_result(conn)
-                    .inspect_err(|e: &diesel::result::Error| {
-                        log::error!(
-                                "Could not insert a submission source for GitHub source id {}: {}",
-                                new_gh_src.id,
-                            e,
-                        )
-                    })?;
-
-                Ok::<_, diesel::result::Error>((src, new_gh_src))
-            } else {
-                let gh_src = submission_source_github::table
-                    .select(SubmissionSourceGitHub::as_select())
-                    .filter(ghsrc_col::domain.eq(&source.domain))
-                    .filter(ghsrc_col::org.eq(&source.org))
-                    .filter(ghsrc_col::repo.eq(&source.repo))
-                    .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitHub source in the database with {} {} {}: {}", source.domain, source.org, source.repo, e)})?;
-
-                let src = submission_sources::table
-                    .select(SubmissionSource::as_select())
-                    .filter(src_col::kind.eq(SubmissionSourceKind::GitHub as i32))
-                    .filter(src_col::kind_id.eq(gh_src.id))
-                    .first(conn)
-                    .inspect_err(|e: &diesel::result::Error| {
-                        log::error!("Expected to find a submission source referencing GitHub source with id {}: {}", gh_src.id, e)
-                    })?;
-
-                Ok((src, gh_src))
-            }
-        })?;
-
-        // Atomically execute the insert into the database, ensuring that we
-        // roll back both the submission and source info on failure.
-        self.conn.transaction(|conn| {
-            let sub: Submission = diesel::insert_into(submissions::table)
-                .values(NewSubmission {
-                    date_submitted: std::time::SystemTime::now(),
-                    grading_tags: grading_tags.iter().map(|s| s.to_string()).collect(),
-                    exec_finished: false,
-                    exec_status_code: SubmissionStatusCode::NotStarted as i32,
-                    source_id: src.id,
-                })
-                .returning(Submission::as_returning())
-                .get_result(conn)
-                .map_err(|e: diesel::result::Error| {
-                    log::error!("Could not insert new submission into database: {e}");
-                    Error::auto_msg("could not insert new submission into database", e)
-                })?;
-
-            diesel::insert_into(submission_info_github::table)
-                .values(NewSubmissionInfoGitHub {
-                    submission_id: sub.id,
-                    github_source_id: gh_src.id,
-                    commit: commit.to_string(),
-                    user: user.to_string(),
-                })
-                .execute(conn)
-                .map_err(|e: diesel::result::Error| {
-                    log::error!("Could not insert GitHub info into database: {e}");
-                    Error::auto_msg("could not insert new submission into database", e)
-                })?;
-
-            Ok(sub.id)
-        })
-    }
-
-    /// Registers an incoming GitLab submission in the database.
-    ///
-    /// See `register_github_submission` for more details.
-    pub fn register_gitlab_submission(
-        &mut self,
-        grading_tags: &[&str],
-        source: &NewSubmissionSourceGitLab,
-        user: &str,
-        commit: &str,
-    ) -> Result<i64, Error> {
-        use crate::db::{
-            models::{NewSubmissionInfoGitLab, SubmissionSourceGitLab},
-            schema::{submission_info_gitlab, submissions},
-        };
-
-        let (src, gh_src) = self.conn.transaction(|conn| {
-                use crate::db::{
-                    models::NewSubmissionSource,
-                    schema::{
-                        submission_source_gitlab::{self, columns as glsrc_col},
-                        submission_sources::{self, columns as src_col},
-                    },
+                let Some(OriginId { id: origin_id }) = picked else {
+                    // Nothing to claim
+                    return Ok(Vec::new());
                 };
-                let glsrc_insert_check = diesel::insert_into(submission_source_gitlab::table)
-                    .values(source)
-                    .on_conflict_do_nothing()
-                    .returning(SubmissionSourceGitLab::as_returning())
-                    .get_result(conn)
-                    .optional()?;
 
-                if let Some(new_gl_src) = glsrc_insert_check {
-                    // Inserted a new row into the GitHub submissions, so need to
-                    // insert a row into the submission_source table too. Also
-                    // generate a random auth_key for this source.
-                    let mut key: Vec<u8> = vec![0u8; 32];
-                    rand::rng().fill_bytes(key.as_mut_slice());
+                // TODO: The query above may be optimized such as to not have
+                // to rediscover the submission below.
 
-                    let src = diesel::insert_into(submission_sources::table)
-                        .values(NewSubmissionSource {
-                            kind: SubmissionSourceKind::GitLab as i32,
-                            kind_id: new_gl_src.id,
-                            auth_key: bs58::encode(key).into_string(),
-                        })
-                        .returning(SubmissionSource::as_returning())
-                        .get_result(conn)
-                        .inspect_err(|e: &diesel::result::Error| {
-                            log::error!(
-                                    "Could not insert a submission source for GitHub source id {}: {}",
-                                    new_gl_src.id,
-                                e,
+                // Step 2: At this point, the origin with `origin_id` is locked
+                // to this transaction and we have exclusive access to it.
+                //
+                // Now claim all eligible jobs on the first submission (ordered
+                // by submission id) from the locked origin which has eligible
+                // jobs.
+                diesel::sql_query(
+                    "
+                    UPDATE submission_jobs j
+                    SET assigned_runner_id = $2
+                    WHERE j.id IN (
+                            SELECT c.id
+                            FROM v_claimable_jobs c
+                            WHERE c.submission_id = (
+                                SELECT min(c2.submission_id)
+                                FROM v_claimable_jobs c2
+                                WHERE c2.origin_id = $1
                             )
-                        })?;
-
-                    Ok::<_, diesel::result::Error>((src, new_gl_src))
-                } else {
-                    let gl_src = submission_source_gitlab::table
-                        .select(SubmissionSourceGitLab::as_select())
-                        .filter(glsrc_col::domain.eq(&source.domain))
-                        .filter(glsrc_col::namespace.eq(&source.namespace))
-                        .filter(glsrc_col::repo.eq(&source.repo))
-                        .first(conn).inspect_err(|e: &diesel::result::Error| {log::error!("Expected to find an existing GitLab source in the database with {} {} {}: {}", source.domain, source.namespace, source.repo, e)})?;
-
-                    let src = submission_sources::table
-                        .select(SubmissionSource::as_select())
-                        .filter(src_col::kind.eq(SubmissionSourceKind::GitLab as i32))
-                        .filter(src_col::kind_id.eq(gl_src.id))
-                        .first(conn)
-                        .inspect_err(|e: &diesel::result::Error| {
-                            log::error!("Expected to find a submission source referencing GitLab source with id {}: {}", gl_src.id, e)
-                        })?;
-
-                    Ok((src, gl_src))
-                }
+                          )
+                      AND NOT EXISTS (SELECT 1 FROM v_active_jobs a WHERE a.origin_id = $1)
+                    RETURNING j.id, j.submission_id
+                ",
+                )
+                .bind::<BigInt, _>(origin_id)
+                .bind::<Integer, _>(runner_id)
+                .get_results(conn)
+            })
+            .map_err(|e: diesel::result::Error| {
+                Error::auto_msg(format!("error claiming jobs for runner {runner_id}"), e)
             })?;
 
-        self.conn.transaction(|conn| {
-            let sub: Submission = diesel::insert_into(submissions::table)
-                .values(NewSubmission {
-                    date_submitted: std::time::SystemTime::now(),
-                    grading_tags: grading_tags.iter().map(|s| s.to_string()).collect(),
-                    exec_finished: false,
-                    exec_status_code: SubmissionStatusCode::NotStarted as i32,
-                    source_id: src.id,
-                })
-                .returning(Submission::as_returning())
-                .get_result(conn)
-                .map_err(|e: diesel::result::Error| {
-                    log::error!("Could not insert new submission into database: {e}");
-                    Error::auto_msg("could not insert new submission into database", e)
-                })?;
-
-            diesel::insert_into(submission_info_gitlab::table)
-                .values(NewSubmissionInfoGitLab {
-                    submission_id: sub.id,
-                    gitlab_source_id: gh_src.id,
-                    commit: commit.to_string(),
-                    user: user.to_string(),
-                })
-                .execute(conn)
-                .map_err(|e: diesel::result::Error| {
-                    log::error!("Could not insert GitLab info into database: {e}");
-                    Error::auto_msg("could not insert new submission into database", e)
-                })?;
-
-            Ok(sub.id)
-        })
-    }
-
-    /// Returns all information submission with the specified submission id.
-    pub fn get_submission_info(&mut self, sub_id: i64) -> Result<SubmissionInfo, Error> {
-        use crate::db::schema::{
-            submission_info_github::{self, columns as ghinfo_col},
-            submission_info_gitlab::{self, columns as glinfo_col},
-            submission_source_github::{self, columns as ghsrc_col},
-            submission_source_gitlab::{self, columns as glsrc_col},
-            submission_sources::{self, columns as subsrc_col},
-            submissions::{self, columns as sub_col},
+        let Some(first) = claimed.first() else {
+            return Ok(None);
         };
 
-        // TODO: Here we should do a join, instead 4 separate queries...
+        // The jobs have been claimed, now extract the data. Note that an error
+        // at this point will cause the submission to be stale.
 
-        let sub: Submission = submissions::table
-            .select(Submission::as_select())
-            .filter(sub_col::id.eq(sub_id))
-            .first(&mut self.conn)
-            .map_err(|e: diesel::result::Error| {
-                Error::auto_msg(format!("could not get submission {sub_id} from database"), e)
-            })?;
+        let submission: Submission = Submission::by_id(self, first.submission_id)?;
+        let claimed_ids: BTreeSet<i64> = claimed.iter().map(|c| c.id).collect();
+        let (claimed_jobs, rest): (Vec<SubmissionJobPlain>, Vec<SubmissionJobPlain>) =
+            submission.jobs.into_iter().partition(|j| claimed_ids.contains(&j.id));
 
-        let src: SubmissionSource = submission_sources::table
-            .select(SubmissionSource::as_select())
-            .filter(subsrc_col::id.eq(sub.source_id))
-            .first(&mut self.conn)?;
-
-        match SubmissionSourceKind::from_i32(src.kind) {
-            Some(SubmissionSourceKind::GitHub) => {
-                let gh_src = submission_source_github::table
-                    .select(SubmissionSourceGitHub::as_select())
-                    .filter(ghsrc_col::id.eq(src.kind_id))
-                    .first(&mut self.conn)?;
-
-                let gh_info = submission_info_github::table
-                    .select(SubmissionInfoGitHub::as_select())
-                    .filter(ghinfo_col::submission_id.eq(sub.id))
-                    .filter(ghinfo_col::github_source_id.eq(gh_src.id))
-                    .first(&mut self.conn)?;
-
-                Ok(SubmissionInfo::GitHub { sub, src, gh_src, gh_info })
-            }
-            Some(SubmissionSourceKind::GitLab) => {
-                let gl_src = submission_source_gitlab::table
-                    .select(SubmissionSourceGitLab::as_select())
-                    .filter(glsrc_col::id.eq(src.kind_id))
-                    .first(&mut self.conn)?;
-
-                let gl_info = submission_info_gitlab::table
-                    .select(SubmissionInfoGitLab::as_select())
-                    .filter(glinfo_col::submission_id.eq(sub.id))
-                    .filter(glinfo_col::gitlab_source_id.eq(gl_src.id))
-                    .first(&mut self.conn)?;
-
-                Ok(SubmissionInfo::GitLab { sub, src, gl_src, gl_info })
-            }
-            None => Error::err_runtime(format!(
-                "Invalid source kind {} for submission source with id {}",
-                src.kind, src.id
-            )),
-        }
-    }
-
-    /// Returns the report for the submission with the specified ID. Returns
-    /// Ok(None) if no report could be found.
-    pub fn get_submission_report(&mut self, sub_id: i64) -> Result<Option<Report>, Error> {
-        use crate::db::{
-            models::SubmissionWithReport,
-            schema::submissions::{self, columns as sub_col},
-        };
-
-        let swr: SubmissionWithReport = submissions::table
-            .select(SubmissionWithReport::as_select())
-            .filter(sub_col::id.eq(sub_id))
-            .first(&mut self.conn)
-            .map_err(|e: diesel::result::Error| {
-                Error::auto_msg(
-                    format!("could not get submission {sub_id} with report from database"),
-                    e,
-                )
-            })?;
-
-        match swr.exec_report {
-            Some(v) => Report::deserialize(v).map(Some).map_err(|e| {
-                Error::auto_msg(format!("Could not deserialize report for submission {sub_id}"), e)
-            }),
-            None => Ok(None),
-        }
-    }
-
-    /// Return all the queued submissions in the database, oldest first
-    pub fn queued_submissions(&mut self) -> Result<Vec<Submission>, Error> {
-        use crate::db::schema::submissions::{
-            self, assigned_runner_id, date_submitted, exec_finished,
-        };
-
-        let ret: Vec<Submission> = submissions::table
-            .select(Submission::as_select())
-            .filter(exec_finished.eq(false))
-            .filter(assigned_runner_id.is_null())
-            .order(date_submitted.asc())
-            .load(&mut self.conn)
-            .map_err(|e: diesel::result::Error| {
-                Error::auto_msg("could not get queued submissions from database", e)
-            })?;
-
-        Ok(ret)
-    }
-
-    /// Tries to assign a submission to the runner with the specified ID, if
-    /// there are any queued submissions.
-    ///
-    /// Returns None if we could not assign a new submission to this runner.
-    /// If there was a queued submission that was assigned to this specific
-    /// runner ID, then the database is atomically updated and the ID assigned
-    /// to this runner.
-    pub fn try_assign_submission(&mut self, runner_id: i32) -> Result<Option<Submission>, Error> {
-        // Using custom SQL here, don't know how to do this in Diesel directly...
-        // The .bind function for safe queries does not appear to work either...
-        // (Formatting a single int argument should be safe though.)
-        // https://www.postgresql.org/docs/17/sql-update.html
-        // https://www.postgresql.org/docs/17/sql-select.html
-        // https://www.postgresql.org/docs/17/functions-conditional.html
-        let assigned_subs: Vec<Submission> = diesel::sql_query(format!(
-            "
-            WITH queued_entries AS (
-                SELECT s2.id FROM submissions AS s2
-                WHERE
-                    s2.exec_finished = false
-                AND
-                    s2.assigned_runner_id IS NULL
-                AND
-                  -- Make sure that something from this source isn't already being graded.
-                  s2.source_id NOT IN (
-                      SELECT s3.source_id FROM submissions AS s3
-                      WHERE
-                          s3.exec_finished = false
-                      AND
-                          s3.assigned_runner_id IS NOT NULL
-                      FOR UPDATE
-                  )
-                ORDER BY date_submitted ASC
-                LIMIT 1
-                -- This below is important to ensure that is gets executed
-                -- atomically.
-                FOR UPDATE
-            )
-            UPDATE submissions s
-            SET assigned_runner_id = {runner_id}
-              FROM queued_entries AS qe
-              WHERE s.id = qe.id
-
-            RETURNING *;
-            "
-        ))
-        .get_results(&mut self.conn)
-        .map_err(|e: diesel::result::Error| {
-            Error::auto_msg(format!("error assigning a submission to runner {runner_id}"), e)
-        })?;
-
-        // This should always return some by this stage...
-        Ok(assigned_subs.first().map(|s| s.to_owned()))
-    }
-
-    /// Returns the submissions that are currently being handled by the runner
-    /// with the provided runner id.
-    pub fn active_submissions(&mut self, runner_id: i32) -> Result<Vec<Submission>, Error> {
-        use crate::db::schema::submissions::{
-            self, assigned_runner_id, date_submitted, exec_finished,
-        };
-
-        let ret: Vec<Submission> = submissions::table
-            .select(Submission::as_select())
-            .filter(exec_finished.eq(false))
-            .filter(assigned_runner_id.eq(runner_id))
-            .order(date_submitted.asc())
-            .load(&mut self.conn)
-            .map_err(|e: diesel::result::Error| {
-                Error::auto_msg(
-                    format!("could not get active submissions for runner {runner_id}"),
-                    e,
-                )
-            })?;
-
-        Ok(ret)
-    }
-
-    /// Sets the exec_date_started to the current time and date
-    pub fn set_exec_date_started(&mut self, submission_id: i64) -> Result<(), Error> {
-        use crate::db::schema::submissions;
-
-        diesel::update(submissions::table)
-            .filter(submissions::id.eq(submission_id))
-            .set(submissions::exec_date_started.eq(SystemTime::now()))
-            .execute(&mut self.conn)
-            .map(|_| ())
-            .map_err(|e| {
-                Error::auto_msg(
-                    format!("Could not set exec_date_started for submission {submission_id}"),
-                    e,
-                )
-            })
-    }
-
-    /// Sets the exec_date_finished to the current time and date
-    pub fn set_exec_date_finished(&mut self, submission_id: i64) -> Result<(), Error> {
-        use crate::db::schema::submissions;
-
-        diesel::update(submissions::table)
-            .filter(submissions::id.eq(submission_id))
-            .set((
-                submissions::exec_date_finished.eq(SystemTime::now()),
-                submissions::exec_finished.eq(true),
-            ))
-            .execute(&mut self.conn)
-            .map(|_| ())
-            .map_err(|e| {
-                Error::auto_msg(
-                    format!("Could not set exec_date_finished for submission {submission_id}"),
-                    e,
-                )
-            })
-    }
-
-    /// Updates the entry in the database, and also sends a report back to the
-    /// submission source. The format of the sent report depends on the kind of
-    /// source.
-    pub fn report_and_status(
-        &mut self,
-        settings: &Settings,
-        info: &SubmissionInfo,
-        report: &Report,
-        status: SubmissionStatusCode,
-        exec_finished: bool,
-    ) -> Result<(), Error> {
-        use crate::db::{models::SubmissionStatusCode as SSC, schema::submissions};
-
-        // async is annoying when you don't need it...
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| Error::auto_msg("could not unwrap tokio runtime", e))?;
-
-        match info {
-            SubmissionInfo::GitHub { sub, src: _, gh_src, gh_info } => {
-                use crate::github::CommitState as GHCS;
-
-                log::debug!("Setting commit information for submission {}", sub.id);
-                let (domain, org, repo, commit) =
-                    (&gh_src.domain, &gh_src.org, &gh_src.repo, &gh_info.commit);
-
-                if let Some(instance) = settings
-                    .submission
-                    .github
-                    .known_instances
-                    .iter()
-                    .find(|ki| ki.domain == *domain)
-                {
-                    let mut md_output = String::new();
-                    report.render_markdown(&settings.reporting, &mut md_output)?;
-                    rt.block_on(async {
-                        github::create_commit_message(
-                            settings, instance, org, repo, commit, &md_output,
-                        )
-                        .await
-                    })
-                    .unwrap_or_else(|e| {
-                        log::warn!("Could not create message for commit {commit} on {repo}: {e}");
-                    });
-
-                    let gh_state: github::CommitState = match status {
-                        SSC::NotStarted | SSC::Running => GHCS::Pending,
-                        SSC::Success => GHCS::Success,
-                        SSC::SubmissionError
-                        | SSC::BuildError
-                        | SSC::BuildTimedOut
-                        | SSC::TestCasesFailed
-                        | SSC::TestCasesTimedOut
-                        | SSC::OutputLimitExceeded
-                        | SSC::SubmissionTimedOut => GHCS::Failure,
-                        SSC::AutograderFailure => GHCS::Failure,
-                    };
-
-                    rt.block_on(async {
-                        github::create_commit_status(
-                            settings, instance, org, repo, commit, gh_state, None,
-                        )
-                        .await
-                    })
-                    .unwrap_or_else(|e| {
-                        log::warn!("Could not set status for commit {commit} on {repo}: {e}");
-                    });
-                } else {
-                    log::warn!("Could not set statis for commit {commit}: No GitHub instance configured for domain {domain}.");
-                }
-            }
-            SubmissionInfo::GitLab { sub, src: _, gl_src, gl_info } => {
-                use crate::gitlab::CommitState as GLCS;
-
-                log::debug!("Setting commit information for submission {}", sub.id);
-                let (domain, namespace, repo, commit) =
-                    (&gl_src.domain, &gl_src.namespace, &gl_src.repo, &gl_info.commit);
-
-                if let Some(instance) = settings
-                    .submission
-                    .gitlab
-                    .known_instances
-                    .iter()
-                    .find(|ki| ki.domain == *domain)
-                {
-                    let mut md_output = String::new();
-                    report.render_markdown(&settings.reporting, &mut md_output)?;
-                    rt.block_on(async {
-                        gitlab::create_commit_message(
-                            settings, instance, namespace, repo, commit, &md_output,
-                        )
-                        .await
-                    })
-                    .unwrap_or_else(|e| {
-                        log::warn!("Could not create message for commit {commit} on {repo}: {e}");
-                    });
-
-                    let gl_state: gitlab::CommitState = match status {
-                        SSC::NotStarted => GLCS::Pending,
-                        SSC::Running => GLCS::Running,
-                        SSC::Success => GLCS::Success,
-                        SSC::SubmissionError
-                        | SSC::BuildError
-                        | SSC::BuildTimedOut
-                        | SSC::TestCasesFailed
-                        | SSC::TestCasesTimedOut
-                        | SSC::OutputLimitExceeded
-                        | SSC::SubmissionTimedOut => GLCS::Failed,
-                        SSC::AutograderFailure => GLCS::Canceled,
-                    };
-
-                    rt.block_on(async {
-                        gitlab::set_commit_status(
-                            settings, instance, namespace, repo, commit, gl_state, None,
-                        )
-                        .await
-                    })
-                    .unwrap_or_else(|e| {
-                        log::warn!("Could not set status for commit {commit} on {repo}: {e}");
-                    });
-                } else {
-                    log::warn!("Could not set statis for commit {commit}: No GitLab instance configured for domain {domain}.");
-                }
-            }
-        }
-
-        let sub = info.get_submission();
-
-        log::debug!("Setting submission status to {:?} for submission {}", status, sub.id);
-
-        diesel::update(submissions::table)
-            .filter(submissions::id.eq(sub.id))
-            .set((
-                submissions::exec_status_code.eq(status as i32),
-                submissions::exec_finished.eq(exec_finished),
-                submissions::exec_report.eq(serde_json::to_value(report)?),
-            ))
-            .execute(&mut self.conn)
-            .map(|_| ())
-            .map_err(|e| {
-                Error::auto_msg(
-                    format!("could not set status to {:?} for submission {}", status, sub.id),
-                    e,
-                )
-            })
-    }
-
-    /// Just set the status of the submission in the database, without sending
-    /// a report to the submission source.
-    pub fn set_status(
-        &mut self,
-        sub: &Submission,
-        status: SubmissionStatusCode,
-        exec_finished: bool,
-    ) -> Result<(), Error> {
-        use crate::db::schema::submissions;
-
-        diesel::update(submissions::table)
-            .filter(submissions::id.eq(sub.id))
-            .set((
-                submissions::exec_status_code.eq(status as i32),
-                submissions::exec_finished.eq(exec_finished),
-            ))
-            .execute(&mut self.conn)
-            .map(|_| ())
-            .map_err(|e| {
-                Error::auto_msg(
-                    format!("could not set status to {:?} for submission {}", status, sub.id),
-                    e,
-                )
-            })
+        Ok(Some(ClaimResult {
+            claimed: Submission { jobs: claimed_jobs, ..submission },
+            deferred: rest.into_iter().filter(|j| j.terminal_at().is_none()).collect(),
+        }))
     }
 }

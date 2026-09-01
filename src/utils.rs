@@ -1,14 +1,14 @@
 use crate::error::{Error, SyscommandError};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use std::{
     ffi::OsString,
     fs::File,
     io::{Read, Write},
     os::fd::AsRawFd,
     path::Path,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
-use serde::Deserialize;
 use subprocess::{Exec, ExitStatus, Job, Redirection};
 use tempfile;
 
@@ -101,45 +101,54 @@ pub fn write_all_timeout(
     Ok(())
 }
 
-/// Converts the provided system time to a string formatted as
-/// YYYY-mm-dd HH:MM:SS in UTC time.
-pub fn systemtime_to_utc_string(systime: &SystemTime) -> Option<String> {
-    systime
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| {
-            let secs: i64 = d.as_secs().try_into().ok()?;
-            DateTime::from_timestamp(secs, d.subsec_nanos())
-        })
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+/// Checks that the two values are equal. If the check fails, an error is
+/// logged and an error is returned Unlike `assert_eq!`, this never panics
+/// and each expression is evaluated exactly once.
+///
+/// # Note
+/// This will return from the body it is located in with a `return Err(...)` if
+/// the two values are not equal.
+#[macro_export]
+macro_rules! error_if_not_eq {
+    ($left:expr, $right:expr $(,)?) => {{
+        use $crate::error::Error;
+        let (left, right) = (&$left, &$right);
+        if left != right {
+            let msg: String =
+                format!("{} != {} ({left:?} != {right:?})", stringify!($left), stringify!($right),);
+            log::error!("{}", &msg);
+            return Error::err_runtime(msg);
+        }
+    }};
 }
 
-/// Converts the provided system time to a string that is suitable for use in
-/// file system entries, formatted as YYYY-mm-dd_HHMMSS.micros in UTC time.
-pub fn systemtime_to_fsfriendly_utc_string(systime: &SystemTime) -> Option<String> {
-    systime
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| {
-            let secs: i64 = d.as_secs().try_into().ok()?;
-            DateTime::from_timestamp(secs, d.subsec_nanos())
-        })
-        .map(|dt| dt.format("%Y-%m-%d_%H%M%S.%6f").to_string())
+/// Formats the UTC timestamp as `YYYY-mm-dd HH:MM:SS UTC`.
+pub fn utc_string(t: &DateTime<Utc>) -> String {
+    t.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }
 
-/// Deserializes an ISO8601 timestamp into a SystemTime. A value without an
-/// offset is taken as UTC, and a bare date as midnight.
-pub fn deserialize_iso8601<'de, D: serde::Deserializer<'de>, T: From<SystemTime>>(
+/// Formats the UTC timestamp as `YYYY-mm-dd_HHMMSS.micros`. Suitable for use
+/// as file system entries.
+pub fn fsfriendly_utc_string(t: &DateTime<Utc>) -> String {
+    t.format("%Y-%m-%d_%H%M%S.%6f").to_string()
+}
+
+/// Deserializes an ISO8601 timestamp. A value without an offset is taken as
+/// UTC, and a bare date as midnight on that day.
+pub fn deserialize_iso8601<'de, D: serde::Deserializer<'de>, T: From<DateTime<Utc>>>(
     d: D,
 ) -> Result<T, D::Error> {
-    use time::{format_description::well_known::Iso8601, Date, OffsetDateTime, PrimitiveDateTime};
+    use time::{format_description::well_known::Iso8601, Date, OffsetDateTime, PlainDateTime};
 
     let s = String::deserialize(d)?;
     let dt = OffsetDateTime::parse(&s, &Iso8601::PARSING)
-        .or_else(|_| PrimitiveDateTime::parse(&s, &Iso8601::PARSING).map(|dt| dt.assume_utc()))
+        .or_else(|_| PlainDateTime::parse(&s, &Iso8601::PARSING).map(|dt| dt.assume_utc()))
         .or_else(|_| Date::parse(&s, &Iso8601::PARSING).map(|d| d.midnight().assume_utc()))
         .map_err(serde::de::Error::custom)?;
-    Ok(T::from(SystemTime::from(dt)))
+
+    DateTime::from_timestamp(dt.unix_timestamp(), dt.nanosecond())
+        .map(T::from)
+        .ok_or_else(|| serde::de::Error::custom(format!("timestamp out of range: {s}")))
 }
 
 /// Returns a string containing the mimetype for the file located at the
@@ -503,9 +512,11 @@ mod tests {
             SyscommandSettings { timeout: Duration::from_secs(1), ..Default::default() },
         );
         assert_that!(&ret).is_err();
-        assert_that!(&ret).err().satisfies(|e| match e.kind.as_ref() {
-            ErrorKind::Syscommand(SyscommandError { timeout: Some(_), .. }) => true,
-            _ => false,
+        assert_that!(&ret).err().satisfies(|e| {
+            matches!(
+                e.kind.as_ref(),
+                ErrorKind::Syscommand(SyscommandError { timeout: Some(_), .. })
+            )
         });
     }
 }

@@ -13,10 +13,20 @@ def run(ctx):
 
     submission_id = ctx.wait_for_submission(sha)
     status = ctx.wait_for_status(project, sha, timeout=900)
-    assert status != "canceled", "the autograder reported an internal failure, not a verdict"
+    assert status != "canceled", "nothing was graded at all: rejected tags, or every job voided"
     assert status == "success", f"expected success, got {status}"
 
     submission = ctx.api(f"/submission/{submission_id}")
-    assert submission["finished"], "not marked finished"
-    assert submission["successful"], "not marked successful"
-    assert set(submission["grading_tags"]) == {"hello-asm", "hello-extra-more"}, submission["grading_tags"]
+    requested = set(submission["requested_tags"])
+    assert requested == {"hello-asm", "hello-extra-more"}, requested
+    assert submission["report"] is None, f"unexpected submission report: {submission['report']}"
+
+    # Two tags named directly, so each job is requested as itself rather than
+    # through a group.
+    jobs = {job["tag"]: job for job in submission["jobs"]}
+    assert set(jobs) == {"hello-asm", "hello-extra-more"}, sorted(jobs)
+    for tag, job in jobs.items():
+        assert job["requested_as"] == [tag], (tag, job["requested_as"])
+        assert job["status"]["successful"], (tag, job["status"])
+        assert job["eligible_at"] is None, f"{tag} was throttled unexpectedly"
+        assert job["voided_at"] is None, f"{tag} was voided unexpectedly"

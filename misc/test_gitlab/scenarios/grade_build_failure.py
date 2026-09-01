@@ -13,11 +13,19 @@ def run(ctx):
     assert status == "failed", f"expected failed, got {status}"
 
     submission = ctx.api(f"/submission/{submission_id}")
-    assert not submission["successful"], "a failing build was reported as successful"
+    # A build error belongs to the tag that failed to build, not to the
+    # submission as a whole.
+    assert submission["report"] is None, f"unexpected submission report: {submission['report']}"
 
-    # Anything that goes wrong before grading starts — a failed clone, say —
-    # also ends as "failed", so check that the build is what actually broke.
-    report = submission["report"]
-    assert "submission" in report, f"grading never started: {report}"
-    tags = report["submission"]["tag_reports"]
-    assert any(t["build_failure"] for t in tags), f"no build failure reported: {tags}"
+    jobs = {job["tag"]: job for job in submission["jobs"]}
+    assert set(jobs) == {"hello"}, sorted(jobs)
+    job = jobs["hello"]
+
+    # 470 = BuildError, should not see any other error
+    assert job["status"]["code"] == 470, job["status"]
+    assert job["status"]["successful"] is False, job["status"]
+
+    report = job["report"]
+    assert report is not None, "no report on the failed job"
+    assert "tag_grading" in report, f"expected a tag_grading report, got {list(report)}"
+    assert report["tag_grading"]["build_failure"] is not None, f"no build failure recorded: {report}"

@@ -6,27 +6,83 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_value::Value as SerdeValue;
 use std::collections::BTreeMap;
+use struct_patch::Patch;
 
 use super::{group::TestGroup, Defaults, TestsLoadingOptions};
-use crate::{error::Error, utils::path_absolute_join};
+use crate::{config::utils::ApplyUntreated, error::Error, utils::path_absolute_join};
 
 /// Defaults applying to a tag as a whole.
 #[derive(Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
 pub struct TagDefaults {
-    /// Total timeout for grading an entire _submission_, in seconds.
-    ///
-    /// # WARNING:
-    /// This will be changed to a tag-level timeout in the future. At the
-    /// moment, this value only lives as a default value and therefore cannot
-    /// be customized for different tags. However, in the future, this value
-    /// will be customizable on a tag level.
+    /// Default timeout (in seconds) of a tag as a whole.
     pub timeout_total: u32,
+
+    /// Default rate limits for tags.
+    pub rate_limit: RateLimit,
+
+    /// Default budged of tags.
+    pub budget: Budget,
+}
+
+/// Limits how often a tag can be graded from a single source.
+#[derive(
+    Patch,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Debug,
+    Clone,
+    Documented,
+    DocumentedFields,
+    utoipa::ToSchema,
+)]
+#[patch(name = "_UntreatedRateLimit", attribute(derive(Deserialize, Default)))]
+pub struct RateLimit {
+    /// Whether the limit applies. If false, this tag will not be rate-limited.
+    pub enable: bool,
+
+    /// How many runs of the tag can be graded within the space of a window.
+    pub n: u32,
+
+    /// Length of the window, in seconds.
+    pub window_seconds: u64,
+}
+
+/// Limits how many times in total a tag can be graded from a single source.
+#[derive(
+    Patch,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Debug,
+    Clone,
+    Documented,
+    DocumentedFields,
+    utoipa::ToSchema,
+)]
+#[patch(name = "_UntreatedBudget", attribute(derive(Deserialize, Default)))]
+pub struct Budget {
+    /// Whether the budget applies. If false, this tag has no limit on the
+    /// number of times it can be graded.
+    pub enable: bool,
+
+    /// How many runs of the tag can be graded before the rest are rejected.
+    pub max_runs: u32,
 }
 
 /// Configuration for how to build the project that is being graded by a tag.
 #[derive(
-    Deserialize, Serialize, JsonSchema, Debug, Clone, Documented, DocumentedFields, utoipa::ToSchema,
+    Patch,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    Debug,
+    Clone,
+    Documented,
+    DocumentedFields,
+    utoipa::ToSchema,
 )]
+#[patch(name = "_UntreatedBuildConfig", attribute(derive(Deserialize, Default)))]
 pub struct BuildConfig {
     /// The source directory that contains the files to build.
     pub srcdir: String,
@@ -54,18 +110,6 @@ pub struct BuildConfig {
     pub allowed_binary_mimetypes: Vec<String>,
 }
 
-/// A deserializable version of `BuildConfig`.
-#[derive(Deserialize, Debug, Clone)]
-struct _UntreatedBuildConfig {
-    srcdir: Option<String>,
-    cmd: Option<Vec<String>>,
-    timeout: Option<u32>,
-    max_output: Option<usize>,
-    prohibit_binary_files: Option<bool>,
-    allowed_binary_files: Option<Vec<String>>,
-    allowed_binary_mimetypes: Option<Vec<String>>,
-}
-
 /// A test tag that can be invoked and graded.
 #[derive(Debug, Clone)]
 pub struct Tag {
@@ -87,27 +131,37 @@ pub struct Tag {
 
     /// Config on how the build the project being graded.
     pub build: BuildConfig,
+
+    /// How often this tag can be graded from a single source.
+    pub rate_limit: RateLimit,
+
+    /// How many times in total this tag can be graded from a single source.
+    pub budget: Budget,
 }
 
 /// A deserializable version of `Tag`, which does not extend any other tag.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize)]
 struct _UntreatedTag {
     dirs: Vec<String>,
     build: _UntreatedBuildConfig,
     metadata: Option<BTreeMap<String, SerdeValue>>,
     task_file: Option<String>,
+    rate_limit: Option<_UntreatedRateLimit>,
+    budget: Option<_UntreatedBudget>,
 }
 
 /// An `Tag` which extends a previous tag, inheriting values from another tag
 /// specified by the `extends` field. Note that the `dirs` field adds to the
 /// previously specified directory, and `metadata` is shallowly merged with the
 /// previous one.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize)]
 struct _UntreatedExtensibleTag {
     extends: String,
     dirs: Vec<String>,
     metadata: Option<BTreeMap<String, SerdeValue>>,
     task_file: Option<String>,
+    rate_limit: Option<_UntreatedRateLimit>,
+    budget: Option<_UntreatedBudget>,
 }
 
 impl Tag {
@@ -176,6 +230,10 @@ impl Tag {
                                     metadata,
                                     test_groups: vec![],
                                     build: extended.build.to_owned(),
+                                    rate_limit: extended
+                                        .rate_limit
+                                        .apply_untreated(uetg.rate_limit),
+                                    budget: extended.budget.apply_untreated(uetg.budget),
                                 };
                                 let dirs = [extended_dirs.to_owned(), uetg.dirs].concat();
                                 log::debug!("Found tag {t:?}");
@@ -191,30 +249,9 @@ impl Tag {
                                 task_file: task_file(name, utg.task_file)?,
                                 metadata: utg.metadata.unwrap_or_default(),
                                 test_groups: vec![],
-                                build: BuildConfig {
-                                    srcdir: utg
-                                        .build
-                                        .srcdir
-                                        .unwrap_or(defaults.build.srcdir.clone()),
-                                    cmd: utg.build.cmd.unwrap_or(defaults.build.cmd.clone()),
-                                    timeout: utg.build.timeout.unwrap_or(defaults.build.timeout),
-                                    max_output: utg
-                                        .build
-                                        .max_output
-                                        .unwrap_or(defaults.build.max_output),
-                                    prohibit_binary_files: utg
-                                        .build
-                                        .prohibit_binary_files
-                                        .unwrap_or(defaults.build.prohibit_binary_files),
-                                    allowed_binary_files: utg
-                                        .build
-                                        .allowed_binary_files
-                                        .unwrap_or(defaults.build.allowed_binary_files.clone()),
-                                    allowed_binary_mimetypes: utg
-                                        .build
-                                        .allowed_binary_mimetypes
-                                        .unwrap_or(defaults.build.allowed_binary_mimetypes.clone()),
-                                },
+                                build: defaults.build.apply_untreated(Some(utg.build)),
+                                rate_limit: defaults.tag.rate_limit.apply_untreated(utg.rate_limit),
+                                budget: defaults.tag.budget.apply_untreated(utg.budget),
                             };
                             log::debug!("Found tag {t:?}");
                             found.push(name.to_owned());

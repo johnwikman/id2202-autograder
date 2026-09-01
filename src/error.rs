@@ -196,6 +196,7 @@ define_error_kinds! {
     Format { msg: String, value: String },
     Identifier { got: String, expected: Vec<String> },
     HttpResponse { msg: String, code: u16, text: String },
+    MultiCause { msg: String, causes: Vec<Box<dyn std::error::Error + Send + Sync>> },
 }
 
 // Add these manually for the predefined TestConfigError and SyscommandError in the macro
@@ -241,6 +242,13 @@ impl std::fmt::Display for Error {
             }
             ErrorKind::HttpResponse { msg, code, text } => {
                 write!(f, "http response error {} with code {}: {}", msg, code, text)
+            }
+            ErrorKind::MultiCause { msg, causes } => {
+                write!(f, "multi cause error: {}", msg)?;
+                for (i, cause) in causes.iter().enumerate() {
+                    write!(f, " | cause {i}: {}", cause)?;
+                }
+                Ok(())
             }
             ErrorKind::Syscommand(e) => {
                 write!(f, "syscommand error on {:?}", e.cmd)?;
@@ -326,6 +334,8 @@ auto_convert_error!(std::time::SystemTimeError, "system time error");
 auto_convert_error!(std::fmt::Error, "fmt error");
 auto_convert_error!(toml::ser::Error, "toml serialization error");
 auto_convert_error!(toml::de::Error, "toml deserialization error");
+auto_convert_error!(walkdir::Error, "walkdir error");
+auto_convert_error!(shlex::QuoteError, "shlex quote error");
 
 impl Error {
     /// Converts the error `e` into this error kind and specifies a custom

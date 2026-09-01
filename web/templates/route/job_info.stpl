@@ -31,13 +31,17 @@
           }
         } %></td>
         <td><%
-          match &j.status_symbol_and_class {
-            Some((symbol, span_class)) => {
-              %><%= symbol %> <span class="<%= span_class %>"><%= j.status %></span><%
-          },
+          let (opt_symbol, opt_span_class) = &j.status_symbol_and_class;
+          if let Some(symbol) = opt_symbol {
+            %><%= symbol %> <%
+          }
+          match opt_span_class {
+            Some(span_class) => {
+              %><span class="<%= span_class %>"><%= j.status %></span><%
+            },
             None => {
               %><%= j.status %><%
-          }
+            }
           } %>
         </td>
     </tr>

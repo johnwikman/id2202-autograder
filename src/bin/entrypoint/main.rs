@@ -8,7 +8,16 @@ use std::sync::mpsc;
 use std::time::Duration;
 use subprocess::{Exec, Job};
 
-use id2202_autograder::{config::Settings, db::conn::DatabaseConnection, error::Error, podman};
+use id2202_autograder::{
+    config::Settings,
+    db::{
+        conn::DatabaseConnection,
+        models::{Submission, SubmissionJobPlain},
+    },
+    error::Error,
+    podman,
+    reporting::{MetaReport, Report, ReportMessage},
+};
 
 mod setup;
 mod testing;
@@ -73,6 +82,8 @@ fn start(s: &Settings) -> Result<(), Error> {
     log::debug!("Server binary: {}", server_bin.to_str().unwrap());
     log::debug!("Runner binary: {}", runner_bin.to_str().unwrap());
 
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
     // Verify existence of podman image and networks. Images are never fetched
     // here: `pull-image` and `build-image` do that, so that starting the
     // autograder does not depend on the network.
@@ -94,6 +105,42 @@ fn start(s: &Settings) -> Result<(), Error> {
         if !podnets.contains(&expected_net) {
             podman::create_network(&expected_net).unwrap();
         }
+    }
+
+    // A job held by a runner id at or above n_runners is owned by nobody: no
+    // runner will start that cleans it up, and the source it belongs to stays
+    // unclaimable for as long as it is unfinished. Each runner handles its own
+    // abandoned jobs at start, so only the retired ids are left to cover.
+    let n_runners = s.runner.n_runners;
+    let mut conn = DatabaseConnection::connect(s)?;
+    let report = Report::Message(ReportMessage {
+        msg: format!(
+            "{} {} {}",
+            "The runner was interrupted before it could finish grading your solution.",
+            "Please try to submit your solution again.",
+            "Contact course staff if the problem persists."
+        ),
+    });
+    let retired: Vec<Submission> = Submission::assigned_to_retired_runners(&mut conn, n_runners)?;
+    for mut sub in retired {
+        log::warn!("Submission {} has jobs held by a retired runner", sub.id);
+
+        SubmissionJobPlain::abandon_all(
+            sub.jobs.iter_mut().filter(|job| {
+                job.terminal_at().is_none()
+                    && job
+                        .assigned_runner_id
+                        .is_some_and(|id| usize::try_from(id).is_ok_and(|id| id >= n_runners))
+            }),
+            &mut conn,
+            &report,
+        )?;
+
+        rt.block_on(sub.origin.set_status_and_report(
+            s,
+            &MetaReport::Transient(&report),
+            sub.status(),
+        ))?;
     }
 
     // Using the .take() function to set these to None in the loop

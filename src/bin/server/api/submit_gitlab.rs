@@ -1,21 +1,28 @@
-use std::fmt::Display;
-
 use actix_web::{
     post,
     web::{self, Buf},
     HttpRequest, Responder,
 };
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use id2202_autograder::{
-    config::{settings::GitLabServerSettings, Settings},
-    db::{conn::DatabaseConnection, models::NewSubmissionSourceGitLab},
-    gitlab,
+    config::{Settings, Tests, TestsLoadingOptions},
+    db::{
+        conn::DatabaseConnection,
+        models::{NewSubmissionOriginGitLabRow, SubmissionStatus},
+    },
+    origin::{
+        gitlab::{self, GitLab, GitLabInfo},
+        Origin,
+    },
+    reporting::MetaReport,
 };
 
 use crate::api::{
-    common::{extract_grading_tags, validate_repo_prefix_suffix},
+    common::{
+        acceptance_message, extract_grading_tags, internal_error_report, report_superseded,
+        resolve_jobs, validate_repo_prefix_suffix,
+    },
     response::{ErrorResponse, SubmitResponse},
 };
 
@@ -50,50 +57,6 @@ struct GlsCommit {
     id: String,
     message: String,
     timestamp: String,
-}
-
-/// Convenient struct with the information necessary to create a commit message
-/// and a commit status.
-#[derive(Debug)]
-struct CommitMessageInfo<'a> {
-    settings: &'a Settings,
-    instance: &'a GitLabServerSettings,
-    namespace: &'a str,
-    sub: &'a GitLabSubmission,
-}
-
-impl<'a> CommitMessageInfo<'a> {
-    async fn post_msg_status(
-        &self,
-        msg: &impl Display,
-        status: gitlab::CommitState,
-        status_msg: Option<&str>,
-    ) -> Result<(), id2202_autograder::error::Error> {
-        gitlab::create_commit_message(
-            self.settings,
-            self.instance,
-            self.namespace,
-            &self.sub.project.name,
-            &self.sub.after,
-            msg,
-        )
-        .await
-        .inspect_err(|e| log::error!("Error creating commit message: {e}"))?;
-
-        gitlab::set_commit_status(
-            self.settings,
-            self.instance,
-            self.namespace,
-            &self.sub.project.name,
-            &self.sub.after,
-            status,
-            status_msg,
-        )
-        .await
-        .inspect_err(|e| log::error!("Error creating commit status: {e}"))?;
-
-        Ok(())
-    }
 }
 
 /// Submission from GitLab. From a webhook
@@ -145,7 +108,7 @@ pub async fn gitlab_submit_webhook(
         .and_then(|hv| hv.to_str().ok())
         .ok_or_else(|| ErrorResponse::unauthorized(&req, "missing gitlab token"))?;
     if gl_token != settings.submission.gitlab.webhook_secret {
-        return Err(ErrorResponse::unauthorized(&req, "invalid github token").into());
+        return Err(ErrorResponse::unauthorized(&req, "invalid gitlab token").into());
     }
 
     log::debug!("Submission request authorized.");
@@ -238,8 +201,14 @@ pub async fn gitlab_submit_webhook(
         }
     };
 
-    let commitinfo =
-        CommitMessageInfo { settings, instance: instance_settings, namespace, sub: &sub };
+    let origin = Origin::<GitLab> {
+        info: GitLabInfo {
+            instance: instance_settings.clone(),
+            namespace: namespace.to_string(),
+            repo_name: repo_name.to_string(),
+            commit_hash: sub.after.to_string(),
+        },
+    };
 
     if let Err(rejection) = validate_repo_prefix_suffix(
         namespace,
@@ -261,10 +230,11 @@ pub async fn gitlab_submit_webhook(
     let grading_tags: Vec<&str> = match extract_grading_tags(settings, &commit_to_grade.message) {
         Ok(tags) => tags,
         Err(rep) => {
-            commitinfo
-                .post_msg_status(
-                    &rep.formatter_markdown(&settings.reporting),
-                    gitlab::CommitState::Canceled,
+            origin
+                .set_state_and_report(
+                    settings,
+                    &rep.as_ref().into(),
+                    &gitlab::CommitState::Canceled,
                     Some("Invalid Grading Tags"),
                 )
                 .await
@@ -282,37 +252,98 @@ pub async fn gitlab_submit_webhook(
         return Ok(SubmitResponse::without_id(&req, "no grading tags provided").to_http());
     }
 
+    // Resolve the tags before inserting anything to the database. An unknown
+    // tag will result in an immediate error here.
+    let tests =
+        match Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
+        {
+            Ok(tests) => Some(tests),
+            Err(e) => {
+                // Fatal by design: a test configuration that will not load means
+                // the runner cannot grade anything either, so accepting the
+                // submission would only hide it.
+                log::error!("Could not load test configuration: {e}");
+                None
+            }
+        };
+    let jobs = match &tests {
+        Some(tests) => resolve_jobs(tests, &grading_tags),
+        None => Err(Box::new(internal_error_report())),
+    };
+
+    let source = NewSubmissionOriginGitLabRow {
+        domain: domain.clone(),
+        namespace: namespace.to_string(),
+        repo: sub.project.name.clone(),
+        ssh_url: sub.project.ssh_url.clone(),
+    };
+
     // Connect to database and insert the submission request
     let mut dbconn = DatabaseConnection::connect(settings).map_err(|err| {
         log::error!("Could not connect to database: {err}");
         ErrorResponse::internal_server_error(&req)
     })?;
 
-    let submission_id = dbconn
-        .register_gitlab_submission(
-            &grading_tags,
-            &NewSubmissionSourceGitLab {
-                domain: domain.clone(),
-                namespace: namespace.to_string(),
-                repo: sub.project.name.clone(),
-                ssh_url: sub.project.ssh_url.clone(),
-            },
-            &sub.user_username,
-            &sub.after,
-        )
+    let jobs = match jobs {
+        Ok(jobs) => jobs,
+        Err(report) => {
+            let submission = dbconn
+                .register_ungradable_submission::<GitLab>(
+                    &grading_tags,
+                    &report,
+                    &source,
+                    &sub.user_username,
+                    &sub.after,
+                )
+                .map_err(|e| {
+                    log::error!("Could not register submission with database: {e}");
+                    ErrorResponse::internal_server_error(&req)
+                })?;
+
+            origin
+                .set_state_and_report(
+                    settings,
+                    &report.as_ref().into(),
+                    &gitlab::CommitState::Failed,
+                    Some("Submission Error"),
+                )
+                .await
+                .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
+
+            log::info!("Submission {} recorded, but nothing can be graded", submission.id);
+            return Ok(
+                SubmitResponse::new(&req, "submission cannot be graded", submission.id).to_http()
+            );
+        }
+    };
+
+    let registered = dbconn
+        .register_submission::<GitLab>(&grading_tags, jobs, &source, &sub.user_username, &sub.after)
         .map_err(|e| {
             log::error!("Could not register submission with database: {e}");
             ErrorResponse::internal_server_error(&req)
         })?;
+    let submission_id = registered.submission.id;
+
+    report_superseded(settings, &registered)
+        .await
+        .unwrap_or_else(|e| log::warn!("Could not report superseded jobs: {e}"));
+
+    // A submission whose every tag was rejected has no job left for a runner
+    // to pick up, so nothing else would ever move its commit off pending.
+    let (state, label) = match registered.submission.status() {
+        SubmissionStatus::Aborted => (gitlab::CommitState::Canceled, "Nothing To Grade"),
+        _ => (gitlab::CommitState::Pending, "Waiting In Queue"),
+    };
 
     // Respond to the commit message and set the commit status
-    commitinfo.post_msg_status(&format!(
-            "**[Submission ID: {} | {}]**\n\n{} {}",
-            submission_id,
-            grading_tags.iter().format_with(", ", |t, f| f(&format_args!("`{t}`"))),
-            "The autograder has successfully received your submission and will start grading as soon as a runner is available.",
-            "Additional information and results of your submission will be provided as comments here."
-        ), gitlab::CommitState::Pending, Some("Waiting In Queue"))
+    origin
+        .set_state_and_report(
+            settings,
+            &MetaReport::Structured(acceptance_message(&registered.submission)),
+            &state,
+            Some(label),
+        )
         .await
         .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}. Will not reject this submission since it is already created."));
 

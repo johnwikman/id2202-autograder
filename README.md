@@ -31,6 +31,9 @@ For development (in addition to _deployment_ and _testing_ dependencies):
 
  * Python (3.11 or later)
  * `cargo` (Rust build system)
+ * `git`
+ * `podman`
+ * [`file`](https://www.darwinsys.com/file/)
 
 
 ## Testing: Getting Started

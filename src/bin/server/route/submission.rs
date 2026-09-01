@@ -5,12 +5,13 @@ use actix_web::{
     web::{self},
     HttpMessage, HttpRequest, HttpResponse,
 };
-use num_traits::FromPrimitive;
 use sailfish::TemplateSimple;
 
 use id2202_autograder::{
-    config::Settings, db::models::SubmissionInfo, reporting::Report,
-    utils::systemtime_to_utc_string,
+    config::Settings,
+    db::models::{origin::StoredOriginEnum, SubmissionStatus, SubmissionWithReports},
+    reporting::MetaReport,
+    utils::utc_string,
 };
 
 use crate::{
@@ -55,7 +56,7 @@ fn fetch_submission_and_report(
     settings: &Settings,
     req: &HttpRequest,
     submission_id_string: &str,
-) -> Result<(SubmissionInfo, Option<Report>), Result<HttpResponse, actix_web::Error>> {
+) -> Result<SubmissionWithReports, Result<HttpResponse, actix_web::Error>> {
     use id2202_autograder::db::conn::DatabaseConnection;
 
     let auth_info = req
@@ -84,20 +85,22 @@ fn fetch_submission_and_report(
         }
     };
 
-    let subinfo = match conn.get_submission_info(parsed_id) {
-        Ok(subinfo) => subinfo,
-        Err(_) => {
+    let sub = match SubmissionWithReports::by_id_opt(&mut conn, parsed_id) {
+        Ok(Some(sub)) => sub,
+        Ok(None) => {
             log::error!("Submission id not found: {parsed_id}");
             return Err(error_msg::not_found(settings));
         }
+        Err(e) => {
+            log::error!("Could not get submission {parsed_id}: {e}");
+            return Err(error_msg::internal_server_error(settings));
+        }
     };
 
-    let sub = subinfo.get_submission();
-    let src = subinfo.get_source();
     if auth_info.api_auth_ok {
         // OK, this counts as a valid authentication for all submissions
     } else if let Some(provided_auth_key) = &auth_info.auth_key {
-        if &src.auth_key != provided_auth_key {
+        if &sub.origin.src_row.auth_key != provided_auth_key {
             return Err(error_msg::unauthorized(settings));
         }
     } else {
@@ -105,15 +108,7 @@ fn fetch_submission_and_report(
         return Err(error_msg::unauthorized(settings));
     }
 
-    let report = match conn.get_submission_report(sub.id) {
-        Ok(maybe_r) => maybe_r,
-        Err(e) => {
-            log::warn!("Could not fetch report: {:?}", e);
-            None
-        }
-    };
-
-    Ok((subinfo, report))
+    Ok(sub)
 }
 
 /// Display information about a single submission
@@ -122,18 +117,14 @@ pub async fn get_submission(
     req: HttpRequest,
     submission_id: web::Path<String>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    use id2202_autograder::db::models::SubmissionStatusCode as SSC;
-
     let settings = data.get_ref();
 
-    let (subinfo, opt_report) =
-        match fetch_submission_and_report(settings, &req, submission_id.as_str()) {
-            Ok(tup) => tup,
-            Err(e) => {
-                return e;
-            }
-        };
-    let sub = subinfo.get_submission();
+    let sub = match fetch_submission_and_report(settings, &req, submission_id.as_str()) {
+        Ok(sub) => sub,
+        Err(e) => {
+            return e;
+        }
+    };
 
     let mut status_lists: Vec<SubmissionStatusList> = vec![];
 
@@ -141,51 +132,50 @@ pub async fn get_submission(
     let mut statlist_general =
         SubmissionStatusList { title: None, title_href: None, items: vec![] };
 
-    if let Some(ssc) = SSC::from_i32(sub.exec_status_code) {
-        let (li_class, rhs_symbol) = match ssc {
-            SSC::NotStarted | SSC::Running => (None, "".to_string()),
-            SSC::Success => (
-                Some("list-group-item-success".to_string()),
-                settings.reporting.markdown.symbol_ok.clone(),
-            ),
-            _ => (
-                Some("list-group-item-danger".to_string()),
-                settings.reporting.markdown.symbol_failed.clone(),
-            ),
-        };
-        statlist_general.items.push(SubmissionStatusListItem {
-            li_class: li_class.into(),
-            label: "Status",
-            value: format!("{ssc} {rhs_symbol}"),
-            ..Default::default()
-        });
-    }
-
+    let status = sub.status();
+    let (li_class, rhs_symbol) = match status {
+        SubmissionStatus::Waiting | SubmissionStatus::InProgress => {
+            (None, settings.reporting.markdown.symbol_waiting.clone())
+        }
+        SubmissionStatus::Success => (
+            Some("list-group-item-success".to_string()),
+            settings.reporting.markdown.symbol_ok.clone(),
+        ),
+        SubmissionStatus::Failed | SubmissionStatus::Aborted | SubmissionStatus::Unknown => (
+            Some("list-group-item-danger".to_string()),
+            settings.reporting.markdown.symbol_failed.clone(),
+        ),
+    };
     statlist_general.items.push(SubmissionStatusListItem {
-        label: "Submitted At",
-        value: systemtime_to_utc_string(&sub.date_submitted).unwrap_or("NO_TIME".to_string()),
+        li_class: li_class.into(),
+        label: "Status",
+        value: format!("{status} {rhs_symbol}"),
         ..Default::default()
     });
 
-    if let Some(started_at) = &sub.exec_date_started {
+    statlist_general.items.push(SubmissionStatusListItem {
+        label: "Submitted At",
+        value: utc_string(&sub.submitted_at),
+        ..Default::default()
+    });
+
+    statlist_general.items.push(SubmissionStatusListItem {
+        label: "Requested Tags",
+        value: sub.requested_tags.join(", "),
+        ..Default::default()
+    });
+
+    if let Some(started_at) = sub.started_at() {
         statlist_general.items.push(SubmissionStatusListItem {
             label: "Started At",
-            value: systemtime_to_utc_string(started_at).unwrap_or("NO_TIME".to_string()),
+            value: utc_string(&started_at),
             ..Default::default()
         });
     }
-    if let Some(finished_at) = &sub.exec_date_finished {
+    if let Some(finished_at) = sub.finished_at() {
         statlist_general.items.push(SubmissionStatusListItem {
             label: "Finished At",
-            value: systemtime_to_utc_string(finished_at).unwrap_or("NO_TIME".to_string()),
-            ..Default::default()
-        });
-    }
-
-    if let Some(runner_id) = &sub.assigned_runner_id {
-        statlist_general.items.push(SubmissionStatusListItem {
-            label: "Assigned Runner",
-            value: runner_id.to_string(),
+            value: utc_string(&finished_at),
             ..Default::default()
         });
     }
@@ -196,11 +186,11 @@ pub async fn get_submission(
     let mut statlist_source =
         SubmissionStatusList { title: Some("Submission Source"), title_href: None, items: vec![] };
 
-    match &subinfo {
-        SubmissionInfo::GitHub { sub: _, src: _, gh_src, gh_info } => {
+    match &sub.origin.origin {
+        StoredOriginEnum::GitHub(gh) => {
             statlist_source.title_href = Some(format!(
                 "https://{}/{}/{}/commit/{}",
-                gh_src.domain, gh_src.org, gh_src.repo, gh_info.commit
+                gh.src.domain, gh.src.org, gh.src.repo, gh.info.commit
             ));
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Origin",
@@ -210,32 +200,32 @@ pub async fn get_submission(
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Domain",
-                value: gh_src.domain.clone(),
+                value: gh.src.domain.clone(),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Organization",
-                value: gh_src.org.clone(),
+                value: gh.src.org.clone(),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Repository",
-                value: gh_src.repo.clone(),
+                value: gh.src.repo.clone(),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Commit",
-                value: gh_info.commit.clone(),
+                value: gh.info.commit.clone(),
                 ..Default::default()
             });
         }
-        SubmissionInfo::GitLab { sub: _, src: _, gl_src, gl_info } => {
+        StoredOriginEnum::GitLab(gl) => {
             let protocol = if settings
                 .submission
                 .gitlab
                 .known_instances
                 .iter()
-                .find(|ki| ki.domain == gl_src.domain)
+                .find(|ki| ki.domain == gl.src.domain)
                 .map(|ki| ki.use_https)
                 .unwrap_or(true)
             {
@@ -245,7 +235,7 @@ pub async fn get_submission(
             };
             statlist_source.title_href = Some(format!(
                 "{}://{}/{}/{}/-/commit/{}",
-                protocol, gl_src.domain, gl_src.namespace, gl_src.repo, gl_info.commit
+                protocol, gl.src.domain, gl.src.namespace, gl.src.repo, gl.info.commit
             ));
 
             statlist_source.items.push(SubmissionStatusListItem {
@@ -256,22 +246,22 @@ pub async fn get_submission(
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Domain",
-                value: gl_src.domain.to_string(),
+                value: gl.src.domain.to_string(),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Namespace",
-                value: gl_src.namespace.to_string(),
+                value: gl.src.namespace.to_string(),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Repository",
-                value: gl_src.repo.to_string(),
+                value: gl.src.repo.to_string(),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Commit",
-                value: gl_info.commit.to_string(),
+                value: gl.info.commit.to_string(),
                 ..Default::default()
             });
         }
@@ -282,7 +272,7 @@ pub async fn get_submission(
         common: CommonInformation::from_title(settings, &format!("Submission {}", sub.id)),
         submission_id: sub.id,
         status_lists,
-        report: RenderReport { v: opt_report, settings },
+        report: RenderReport { v: MetaReport::of_submission(&sub), settings },
     };
     tpl.common.include_syntax_highlighting = false;
 
@@ -303,10 +293,10 @@ pub async fn get_submission_markdown(
     let settings = data.get_ref();
 
     let md_text = match fetch_submission_and_report(settings, &req, submission_id.as_str()) {
-        Ok((_, Some(report))) => {
-            format!("{}", report.formatter_markdown(&settings.reporting))
+        Ok(sub) => {
+            let results = MetaReport::of_submission(&sub);
+            format!("{}", results.formatter_markdown(&settings.reporting))
         }
-        Ok(_) => "No report generated for this submission".to_string(),
         Err(e) => {
             return e;
         }

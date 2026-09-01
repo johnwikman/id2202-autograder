@@ -12,7 +12,8 @@ use utoipa::{Modify, OpenApi};
 use id2202_autograder::error::Error;
 
 use crate::api::response::{
-    ErrorResponse, SubmissionResponse, SubmitResponse, TagListResponse, TagResponse,
+    ErrorResponse, SubmissionJobWithReportResponse, SubmissionResponse, SubmitResponse,
+    TagListResponse, TagResponse,
 };
 use crate::api::{submission, submit_github, submit_gitlab, tag};
 
@@ -25,6 +26,7 @@ use crate::api::{submission, submit_github, submit_gitlab, tag};
         tag::get_tag,
         tag::get_tag_task,
         submission::get_submission,
+        submission::get_submission_job,
         submission::get_submission_search,
         submit_github::github_submission,
         submit_gitlab::gitlab_submit_webhook,
@@ -35,6 +37,7 @@ use crate::api::{submission, submit_github, submit_gitlab, tag};
         TagListResponse,
         TagResponse,
         SubmissionResponse,
+        SubmissionJobWithReportResponse,
     ))
 )]
 struct ApiEndpoints;

@@ -10,21 +10,19 @@ use id2202_autograder::{
     config::Settings,
     db::{
         conn::DatabaseConnection,
-        models::{Submission, SubmissionInfo, SubmissionStatusCode},
+        models::{Submission, SubmissionJobPlain, SubmissionStatus},
         notify::listen as db_listen,
     },
     error::Error,
-    reporting::{Report, ReportMessage, ReportWrapper},
-    utils::{
-        create_dir_if_not_exists, path_absolute_join, path_absolute_parent, syscommand_timeout,
-        systemtime_to_fsfriendly_utc_string, write_all_timeout, SyscommandSettings,
+    reporting::{
+        structured_text::StructuredParagraph, MetaJobResultsReport, MetaReport, Report,
+        ReportMessage, ReportWrapper,
     },
 };
 
+mod shadow;
 mod subrunner;
 use subrunner::SubmissionRunnerHandle;
-
-use crate::subrunner::tag_runner::TagRunner;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -45,6 +43,8 @@ fn main() -> Result<(), Error> {
     let args: Args = Args::parse();
     let settings = Settings::load(&args.settings)?;
 
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+
     let logname = format!("runner{}", args.runner_id);
     settings.setup_logging(&logname)?;
 
@@ -61,51 +61,29 @@ fn main() -> Result<(), Error> {
                     "Contact course staff if the problem persists."
                 ),
             });
-            let mut still_searching = true;
-            while still_searching {
-                use diesel::{self, ExpressionMethods, QueryDsl, RunQueryDsl, SelectableHelper};
-                use id2202_autograder::db::schema::submissions::{
-                    self, assigned_runner_id, exec_finished,
-                };
-                let ret: Result<Submission, _> = submissions::table
-                    .select(Submission::as_select())
-                    .filter(assigned_runner_id.eq(args.runner_id))
-                    .filter(exec_finished.eq(false))
-                    .first(&mut conn.conn);
-                match ret {
-                    Ok(sub) => {
-                        log::warn!("Found unfinished submission: {sub:?}");
-                        match conn.get_submission_info(sub.id) {
-                            Ok(info) => {
-                                conn.report_and_status(
-                                    &settings,
-                                    &info,
-                                    &err_report,
-                                    SubmissionStatusCode::AutograderFailure,
-                                    true,
-                                )?;
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "No source found for unfinished submission {}: {}",
-                                    sub.id,
-                                    e
-                                );
-                                conn.set_status(
-                                    &sub,
-                                    SubmissionStatusCode::AutograderFailure,
-                                    true,
-                                )?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::info!(
-                            "No previous submissions found in database ({e}). Proceeding to start runner."
-                        );
-                        still_searching = false;
-                    }
-                }
+            let abandoned: Vec<Submission> =
+                Submission::assigned_to_runner(&mut conn, args.runner_id)?;
+            for mut sub in abandoned {
+                log::warn!("Found submission {} with jobs left unfinished", sub.id);
+
+                SubmissionJobPlain::abandon_all(
+                    sub.jobs.iter_mut().filter(|j| j.is_claimed_by(args.runner_id)),
+                    &mut conn,
+                    &err_report,
+                )?;
+
+                // This may fail as the submission origin could be unavailable
+                rt.block_on(sub.origin.set_status_and_report(
+                    &settings,
+                    &MetaReport::Transient(&err_report),
+                    sub.status(),
+                ))
+                .unwrap_or_else(|e| {
+                    log::warn!(
+                        "Could not set status and report for abandoned submission {}: {e}",
+                        sub.id
+                    );
+                });
             }
         }
         Err(e) => {
@@ -198,55 +176,37 @@ fn main() -> Result<(), Error> {
                 // This is not the same as when failing a test case or when
                 // there is a build or timeout error.
                 log::error!("Received error when running a job: {e}");
-                run_handle.set_as_erroneous();
+                run_handle
+                    .set_as_erroneous()
+                    .inspect_err(|e| log::error!("Could not set run_handle as erroneous: {e}"))?;
             }
 
             if run_handle.is_finished() {
+                // At this point the results should have been recorded to the
+                // shadow repository and to the database as each tag finished.
+                // Now we just have to send back the result report to the
+                // origin.
+                let results = run_handle.job_results();
+
+                // A claimed job only covers the jobs that were eligible for
+                // it. So we do a read-back of the submission from the database
+                // to get the full submission status.
                 let mut conn = DatabaseConnection::connect(&settings)?;
+                let sub: Submission = Submission::by_id(&mut conn, run_handle.submission_id())?;
 
-                let subinfo = conn.get_submission_info(run_handle.submission_id)?;
-
-                // 1. First record the graded files and tag
-                //    results on the shadow repository.
-                let (report, status) = match record_to_shadow(
-                    &settings,
-                    &subinfo,
-                    &run_handle.workspace,
-                    &run_handle.source_dir,
-                    run_handle.get_tag_runners(),
-                ) {
-                    Ok(()) => (run_handle.compile_report(), run_handle.get_status_code()),
-                    Err(e) => {
-                        // Not being able to record info in the
-                        // shadow repository is a fatal error,
-                        // as that is being used to check
-                        // whether a student has passed or not.
-                        log::error!("Could not commit results to shadow repository: {e}");
-                        (
-                            Report::Message(ReportMessage {
-                                msg: format!(
-                                    "Error grading submission {}. Contact course staff.",
-                                    subinfo.get_submission().id,
-                                ),
-                            }),
-                            SubmissionStatusCode::AutograderFailure,
+                rt.block_on(async {
+                    run_handle
+                        .origin()
+                        .set_status_and_report(
+                            &settings,
+                            &MetaReport::JobResults(MetaJobResultsReport { jobs: &results }),
+                            sub.status(),
                         )
-                    }
-                };
+                        .await
+                })
+                .unwrap_or_else(|e| log::warn!("Could not set commit message and/or status: {e}"));
 
-                // 2. Write a comment to the GitHub commit
-                conn.report_and_status(&settings, &subinfo, &report, status, true).unwrap_or_else(
-                    |e| log::warn!("Could not set commit message and/or status: {e}"),
-                );
-                conn.set_exec_date_finished(subinfo.get_submission().id).unwrap_or_else(|e| {
-                    log::warn!(
-                        "Could not set finish date for job {}: {}",
-                        subinfo.get_submission().id,
-                        e
-                    )
-                });
-
-                log::info!("Grading of submission {} done.", run_handle.submission_id);
+                log::info!("Grading of submission {} done.", run_handle.submission_id());
                 run_handle.cleanup();
                 active_sub.take();
             }
@@ -288,51 +248,57 @@ fn main() -> Result<(), Error> {
 
             let mut conn = DatabaseConnection::connect(&settings)?;
 
-            if let Some(sub) = conn.try_assign_submission(args.runner_id)? {
-                log::info!("Assigned submission: {:#?}", sub);
+            if let Some(claim) = conn.try_claim_submission(args.runner_id)? {
+                log::info!("Claimed submission: {:#?}", claim.claimed);
 
-                let subinfo = conn.get_submission_info(sub.id)?;
+                // Kept because the handle takes ownership of the submission,
+                // and the error path still has to report back to the student.
+                let mut claimed = claim.claimed.clone();
+                let start_msg = claim_message(&claimed.jobs, &claim.deferred);
 
-                match SubmissionRunnerHandle::new(&settings, &subinfo, args.runner_id) {
+                match SubmissionRunnerHandle::new(&settings, claim.claimed, args.runner_id) {
                     Ok(handle) => {
-                        active_sub = Some(handle);
-                        conn.report_and_status(
-                                    &settings,
-                                    &subinfo,
-                                    &Report::Message(ReportMessage { msg: format!("{} {}",
-                                        "The autograder is now running your submission.",
-                                        "The results will be provided as a comment here when they are ready."
-                                    )}),
-                                    SubmissionStatusCode::Running,
-                                    false,
-                                )
-                                .unwrap_or_else(|e| {
-                                    log::warn!("Could not set commit message and/or status: {e}")
-                                });
-                        conn.set_exec_date_started(sub.id).unwrap_or_else(|e| {
-                            log::warn!("Could not set start date for job {}: {}", sub.id, e)
+                        // Posted as markdown rather than as a report: the tag
+                        // names in it are code spans, which the report
+                        // escaper would show as literal backticks.
+                        rt.block_on(claimed.origin.set_status_and_report(
+                            &settings,
+                            &MetaReport::Structured(start_msg),
+                            SubmissionStatus::InProgress,
+                        ))
+                        .unwrap_or_else(|e| {
+                            log::warn!("Could not set commit message and/or status: {e}")
                         });
+
+                        active_sub = Some(handle);
                         // Do not wait for a timeout, just proceed
                         // to run the test cases.
                         next_offset = init_time.elapsed();
                     }
                     Err(report) => {
-                        conn.report_and_status(
+                        // Nothing was graded: the handle failed before any job
+                        // could start, so these are voided rather than failed.
+                        SubmissionJobPlain::abandon_all(&mut claimed.jobs, &mut conn, &report)?;
+
+                        // Ensure that the commit status is still _waiting_ if
+                        // there are more jobs to run later for this
+                        // submission.
+                        let status = match claim.deferred.is_empty() {
+                            true => SubmissionStatus::Failed,
+                            false => SubmissionStatus::Waiting,
+                        };
+
+                        rt.block_on(claimed.origin.set_status_and_report(
                             &settings,
-                            &subinfo,
-                            &Report::Wrapper(ReportWrapper {
+                            &MetaReport::Transient(&Report::Wrapper(ReportWrapper {
                                 title: Some("Your submission could not be graded.".to_string()),
                                 reports: vec![report],
-                            }),
-                            SubmissionStatusCode::SubmissionError,
-                            true,
-                        )
+                            })),
+                            status,
+                        ))
                         .unwrap_or_else(|e| {
                             log::warn!("Could not set commit message and/or status: {e}")
                         });
-
-                        conn.set_exec_date_finished(sub.id)
-                            .unwrap_or_else(|e| log::warn!("Could not set exec finished: {e}"));
                     }
                 }
             }
@@ -381,129 +347,42 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
-/// Commits the repository files in `repo_dir` and creates new ones from the
-/// `files` list to the shadow repository for this submission.
-fn record_to_shadow(
-    settings: &Settings,
-    subinfo: &SubmissionInfo,
-    workspace_dir: &str,
-    source_dir: &str,
-    tag_runners: &[TagRunner],
-) -> Result<(), Error> {
-    // 1. Create the shadow repository if it does not exist.
-    let shadow_repo = match subinfo {
-        SubmissionInfo::GitHub { sub: _, src: _, gh_src, gh_info: _ } => path_absolute_join(
-            &settings.runner.shadow_dir,
-            format!("github/{}/{}/{}.git", gh_src.domain, gh_src.org, gh_src.repo),
-        )?,
-        SubmissionInfo::GitLab { sub: _, src: _, gl_src, gl_info: _ } => path_absolute_join(
-            &settings.runner.shadow_dir,
-            format!("gitlab/{}/{}/{}.git", gl_src.domain, gl_src.namespace, gl_src.repo),
-        )?,
+/// The comment posted when a runner starts grading, naming the tags of
+/// this run and any that are being held back for a later one.
+fn claim_message<'a>(
+    claimed: &[SubmissionJobPlain],
+    deferred: &[SubmissionJobPlain],
+) -> StructuredParagraph<'a> {
+    use id2202_autograder::reporting::structured_text::{
+        StructuredInline as Inline, StructuredParagraph as Par,
     };
-    if !std::fs::exists(&shadow_repo)? {
-        log::info!("The shadow repository does not exist. Creating new shadow repository at path {shadow_repo}");
-        std::fs::create_dir_all(&shadow_repo)?;
 
-        syscommand_timeout(
-            ["git", "-C", &shadow_repo, "init", "--bare"],
-            SyscommandSettings { expected_code: Some(0), ..Default::default() },
-        )?;
+    let mut paragraphs: Vec<Par> = vec![];
+
+    paragraphs.push(Par::Paragraph(Inline::Sentences(vec![
+        if deferred.is_empty() {
+            Inline::plain_str("The autograder is now grading your submission")
+        } else {
+            Inline::sep_space(vec![
+                Inline::plain_str("The autograder is now grading your submission for"),
+                Inline::OxfordCommaSepWords(
+                    claimed.iter().map(|job| Inline::inline_code(job.tag.clone())).collect(),
+                ),
+            ])
+        },
+        Inline::plain_str("The results will be provided as a comment here when they are ready."),
+    ])));
+
+    if !deferred.is_empty() {
+        paragraphs.push(Par::Paragraph(Inline::Sentences(vec![Inline::sep_space(vec![
+            Inline::plain_str("Your submission for"),
+            Inline::OxfordCommaSepWords(
+                deferred.iter().map(|job| Inline::inline_code(job.tag.clone())).collect(),
+            ),
+            Inline::plain_str(if deferred.len() == 1 { "is" } else { "are" }),
+            Inline::plain_str("rate-limited and will be run later."),
+        ])])));
     }
 
-    // 2. Clone the shadow repository.
-
-    // Ensure that the workspace dir exists
-    create_dir_if_not_exists(workspace_dir)?;
-
-    // Set up necessary paths
-    let shadow_dir = path_absolute_join(workspace_dir, "shadow")?;
-
-    let date_dir = path_absolute_join(
-        &shadow_dir,
-        systemtime_to_fsfriendly_utc_string(&subinfo.get_submission().date_submitted)
-            .ok_or_else(|| Error::convert("could not create date for date dir"))?,
-    )?;
-    let snapshot_dir = path_absolute_join(&shadow_dir, "snapshot")?;
-
-    log::debug!("Cloning shadow directory {shadow_repo} to {shadow_dir}");
-    syscommand_timeout(
-        ["git", "clone", "--local", &shadow_repo, &shadow_dir],
-        SyscommandSettings { expected_code: Some(0), ..Default::default() },
-    )
-    .inspect_err(|e| log::error!("Could not clone shadow repo {shadow_repo}: {e}"))?;
-
-    syscommand_timeout(
-        ["git", "-C", &shadow_dir, "config", "--local", "user.name", &settings.name],
-        SyscommandSettings { expected_code: Some(0), ..Default::default() },
-    )
-    .inspect_err(|e| log::error!("Could not set git config for shadow repo: {e}"))?;
-
-    syscommand_timeout(
-        ["git", "-C", &shadow_dir, "config", "--local", "user.email", "id2202@localhost"],
-        SyscommandSettings { expected_code: Some(0), ..Default::default() },
-    )
-    .inspect_err(|e| log::error!("Could not set git config for shadow repo: {e}"))?;
-
-    // 3. Add the new files and push
-
-    std::fs::create_dir(&date_dir)?;
-
-    for tr in tag_runners {
-        // Create the report
-        let report = tr.results_report();
-        let content_path = path_absolute_join(&date_dir, format!("{}.results.json", tr.tag_name))?;
-        let mut f = std::fs::File::create(content_path)?;
-        write_all_timeout(
-            &mut f,
-            report.to_json()?.as_bytes(),
-            Duration::from_secs(settings.fs_write_timeout_seconds.into()),
-        )?;
-
-        // Create the snapshot for this solution only if it attempted to
-        // actually build the project. If this is not the case, then there is
-        // something wrong with the tag source directory and these files may
-        // contain bad files that should not be stored.
-        if tr.attempted_build() {
-            let graded_src_dir = path_absolute_join(source_dir, &tr.build_conf.srcdir)?;
-            let target_src_dir = path_absolute_join(&snapshot_dir, &tr.build_conf.srcdir)?;
-            let target_src_parent = path_absolute_parent(&target_src_dir)?;
-
-            if !std::fs::exists(&target_src_parent)? {
-                std::fs::create_dir_all(&target_src_parent)?;
-            }
-            // Remove the previous solution if exists
-            if std::fs::exists(&target_src_dir)? {
-                std::fs::remove_dir_all(&target_src_dir)?;
-            }
-
-            dircpy::copy_dir(&graded_src_dir, &target_src_dir)?;
-        }
-    }
-
-    let mut cmdadd: Vec<&str> = vec!["git", "-C", &shadow_dir, "add", &date_dir];
-    if std::fs::exists(&snapshot_dir)? {
-        cmdadd.push(&snapshot_dir);
-    }
-
-    syscommand_timeout(
-        cmdadd.as_slice(),
-        SyscommandSettings { expected_code: Some(0), ..Default::default() },
-    )
-    .inspect_err(|e| log::error!("Could not add files to shadow repo {shadow_repo}: {e}"))?;
-
-    let commit_msg = format!("Results for submission {}", subinfo.get_submission().id);
-    syscommand_timeout(
-        ["git", "-C", &shadow_dir, "commit", "--allow-empty", "-m", &commit_msg],
-        SyscommandSettings { expected_code: Some(0), ..Default::default() },
-    )
-    .inspect_err(|e| log::error!("Could not commit files to shadow repo {shadow_repo}: {e}"))?;
-
-    syscommand_timeout(
-        ["git", "-C", &shadow_dir, "push"],
-        SyscommandSettings { expected_code: Some(0), ..Default::default() },
-    )
-    .inspect_err(|e| log::error!("Could not push files to shadow repo {shadow_repo}: {e}"))?;
-
-    Ok(())
+    Par::Many(paragraphs)
 }

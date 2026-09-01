@@ -4,10 +4,9 @@ use actix_web::{
     web::{self},
     HttpMessage, HttpRequest, HttpResponse,
 };
-use num_traits::FromPrimitive;
 use sailfish::TemplateSimple;
 
-use id2202_autograder::{config::Settings, utils::systemtime_to_utc_string};
+use id2202_autograder::{config::Settings, utils::utc_string};
 
 use crate::{
     auth::AuthorizationInfo,
@@ -29,7 +28,7 @@ struct JobInfo<'a> {
     grading_tags: &'a [String],
     status: String,
     /// ("symbol", "span class")
-    status_symbol_and_class: Option<(String, String)>,
+    status_symbol_and_class: (Option<String>, Option<String>),
     /// Link to the submission page (link is hidden if None)
     href: Option<String>,
 }
@@ -41,13 +40,14 @@ pub async fn get_job_info(
     req: HttpRequest,
 ) -> Result<HttpResponse, actix_web::Error> {
     use id2202_autograder::db::{
-        conn::DatabaseConnection, models::Submission, models::SubmissionStatusCode as SSC,
+        conn::DatabaseConnection, models::raw::SubmissionRow, models::Submission,
+        models::SubmissionStatus,
     };
 
     let settings = data.get_ref();
 
-    // this has no security implication, only that we hide links if we know for
-    // certain that the user is not authenticated
+    // This has no security implication, only that we show links if we know for
+    // certain that the user is authenticated.
     let show_submission_links =
         req.extensions().get::<AuthorizationInfo>().is_some_and(|a| a.api_auth_ok);
 
@@ -63,8 +63,8 @@ pub async fn get_job_info(
     let subs: Vec<Submission> = {
         use diesel::{self, ExpressionMethods, QueryDsl, RunQueryDsl, SelectableHelper};
         use id2202_autograder::db::schema::submissions::{self, id};
-        match submissions::table
-            .select(Submission::as_select())
+        let rows: Vec<SubmissionRow> = match submissions::table
+            .select(SubmissionRow::as_select())
             .order(id.desc())
             .limit(100)
             .load(&mut conn.conn)
@@ -72,6 +72,13 @@ pub async fn get_job_info(
             Ok(v) => v,
             Err(e) => {
                 log::error!("Could not get submissions from database: {e}");
+                return error_msg::internal_server_error(settings);
+            }
+        };
+        match Submission::from_rows(&mut conn, rows) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("Could not assemble the submissions: {e}");
                 return error_msg::internal_server_error(settings);
             }
         }
@@ -83,24 +90,24 @@ pub async fn get_job_info(
             .iter()
             .map(|sub| JobInfo {
                 id: sub.id,
-                date_submitted: systemtime_to_utc_string(&sub.date_submitted)
-                    .unwrap_or("NO_TIME".to_string()),
-                grading_tags: &sub.grading_tags,
-                status: SSC::from_i32(sub.exec_status_code)
-                    .map_or("Unknown".to_string(), |c| format!("{c}")),
-                status_symbol_and_class: SSC::from_i32(sub.exec_status_code).and_then(
-                    |c| match c {
-                        SSC::NotStarted | SSC::Running => None,
-                        SSC::Success => Some((
-                            settings.reporting.markdown.symbol_ok.to_owned(),
-                            "text-success-emphasis".to_string(),
-                        )),
-                        _ => Some((
-                            settings.reporting.markdown.symbol_failed.to_owned(),
-                            "text-danger-emphasis".to_string(),
-                        )),
-                    },
-                ),
+                date_submitted: utc_string(&sub.submitted_at),
+                grading_tags: &sub.requested_tags,
+                status: sub.status().to_string(),
+                status_symbol_and_class: match sub.status() {
+                    SubmissionStatus::Waiting | SubmissionStatus::InProgress => {
+                        (Some(settings.reporting.markdown.symbol_waiting.clone()), None)
+                    }
+                    SubmissionStatus::Success => (
+                        Some(settings.reporting.markdown.symbol_ok.clone()),
+                        Some("text-success-emphasis".to_string()),
+                    ),
+                    SubmissionStatus::Failed
+                    | SubmissionStatus::Aborted
+                    | SubmissionStatus::Unknown => (
+                        Some(settings.reporting.markdown.symbol_failed.clone()),
+                        Some("text-danger-emphasis".to_string()),
+                    ),
+                },
                 href: show_submission_links.then(|| format!("/submission/{}", sub.id)),
             })
             .collect(),

@@ -47,8 +47,9 @@ def http(method, url, *, headers=None, body=None):
         return status, raw.decode(errors="replace")
 
 
-def git(*args, cwd):
-    """A git command that is expected to work."""
+def git(*args, cwd, tries=1, interval=2.0):
+    """A git command that is expected to work. `tries` above one retries it,
+    for a command racing something GitLab does in the background."""
     ssh = (
         # `IdentitiesOnly` keeps ssh from offering whatever the agent holds, so
         # the push is always attributed to the test user. The known_hosts file
@@ -57,15 +58,22 @@ def git(*args, cwd):
         f"core.sshCommand=ssh -o BatchMode=yes -i {SSH_KEY} -o IdentitiesOnly=yes"
         f" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={KNOWN_HOSTS}"
     )
-    result = subprocess.run(
-        ["git", "-c", ssh, *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise SystemExit(f"git {' '.join(args)} failed:\n{result.stderr.strip()}")
-    return result.stdout.strip()
+    stderr = ""
+    for attempt in range(1, tries + 1):
+        result = subprocess.run(
+            ["git", "-c", ssh, *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        stderr = result.stderr.strip()
+        if attempt < tries:
+            print(f"    git {args[0]} failed, retrying ({attempt}/{tries - 1})")
+            time.sleep(interval)
+    attempts = "" if tries == 1 else f" after {tries} attempts"
+    raise SystemExit(f"git {' '.join(args)} failed{attempts}:\n{stderr}")
 
 
 @dataclass
@@ -334,7 +342,17 @@ class Context:
         with tempfile.TemporaryDirectory() as tmp:
             # A clone rather than a fresh history, since the project already
             # carries the commit the autograder seeded it with.
-            git("clone", "-q", "-b", branch, project["ssh_url_to_repo"], tmp, cwd=tmp)
+            #
+            # Retried because GitLab grants repository access asynchronously:
+            # the membership is in the API the moment it is created, but
+            # `project_authorizations` is rebuilt by a background job, and
+            # until that has run SSH refuses the clone as though the project
+            # did not exist.
+            git(
+                "clone", "-q", "-b", branch, project["ssh_url_to_repo"], tmp,
+                cwd=tmp,
+                tries=10,
+            )
 
             for path, content in files.items():
                 dest = Path(tmp) / path
@@ -390,6 +408,14 @@ class Context:
             interval=5,
         )
         return last
+
+    def commit_comments(self, project, sha):
+        """Every comment on the commit, oldest first. This is the text the
+        student actually reads, as opposed to what the API reports."""
+        notes = self.gitlab(
+            "GET", f"/projects/{project['id']}/repository/commits/{sha}/comments"
+        )
+        return [note["note"] for note in notes]
 
     def files_from(self, source, prefix):
         """A directory tree, relative to the repository root, as `push` wants

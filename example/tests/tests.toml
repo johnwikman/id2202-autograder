@@ -2,11 +2,24 @@
 [default.tag]
 timeout_total = 1200 # Timeout for a tag
 
+# If enabled, default is to allow 5 submission per day from each origin for
+# a specific tag.
+[default.tag.rate_limit]
+enable = false
+n = 5
+window_seconds = 86_400 # 86400 sec = 24*60*60 sec = 1 day
+
+# If enabled, default is to allow a total of 50 submissions from each origin
+# for a specific tag.
+[default.tag.budget]
+enable = false
+max_runs = 50
+
 [default.build]
 srcdir = "."
 cmd = ["make"]
-timeout = 60         # Timeout for building the project
-max_output = 4194304 # Maximum length of captured output (4 MiB)
+timeout = 60           # Timeout for building the project
+max_output = 4_194_304 # Maximum length of captured output (4 MiB)
 prohibit_binary_files = true
 allowed_binary_files = ["regalloc.pdf", "liveness.pdf"]
 allowed_binary_mimetypes = [
@@ -16,9 +29,9 @@ allowed_binary_mimetypes = [
 ]
 
 [default.test]
-timeout = 60         # Timeout for a single test case
-max_output = 4194304 # Maximum length of captured output (4 MiB)
-kind = "run"         # Default test kind to use
+timeout = 60           # Timeout for a single test case
+max_output = 4_194_304 # Maximum length of captured output (4 MiB)
+kind = "run"           # Default test kind
 
 # Default configuration for test kinds
 # (These can be overidden by specific tests, if you want the compilation
