@@ -42,7 +42,7 @@ struct GlsProject {
     /// Full repository name (format: `{NAMESPACE}/{REPO}`)
     path_with_namespace: String,
 
-    /// Repository name within the namespace
+    /// Written out repository display name.
     name: String,
 
     /// The URL to access the website
@@ -172,11 +172,6 @@ pub async fn gitlab_submit_webhook(
                 .into());
             }
         };
-    if repo_name != sub.project.name {
-        return Err(
-            ErrorResponse::bad_request(&req, "inconsistent repository name in submission").into()
-        );
-    }
 
     let instance_settings = settings
         .submission
@@ -274,7 +269,7 @@ pub async fn gitlab_submit_webhook(
     let source = NewSubmissionOriginGitLabRow {
         domain: domain.clone(),
         namespace: namespace.to_string(),
-        repo: sub.project.name.clone(),
+        repo: repo_name.to_string(),
         ssh_url: sub.project.ssh_url.clone(),
     };
 
