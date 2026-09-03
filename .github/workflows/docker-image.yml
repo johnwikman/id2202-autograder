@@ -2,7 +2,7 @@ name: Build Docker Image
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["**"]
 
 permissions:
   contents: read
@@ -23,6 +23,6 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           VERSION: ${{ github.ref_name }}
         run: |
-          image_name="ghcr.io/${OWNER,,}/test-temp-actions"
+          image_name="ghcr.io/${OWNER,,}/id2202-autograder"
           just build-image "$image_name" "$VERSION"
           docker push "${image_name}:$VERSION"
