@@ -10,59 +10,49 @@ use id2202_autograder::{
     podman,
 };
 
-/// The build context for the verifier image. Since it ships inside the
-/// autograder image next to the sources, it is located relative to the crate
-/// root.
-const VERIFIER_CONTEXT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/container/verifier");
-
 #[derive(Args, Debug)]
-pub struct BuildImageArgs {
-    /// Build without asking, even for a tag that is not local
+pub struct SetupImageArgs {
+    /// Automatically accept any prompt that would usually ask for permission.
     #[arg(short = 'y', long, default_value_t = false)]
     pub yes: bool,
 }
 
-/// Builds the verifier image, tagging it with `runner.podman_verifier_image`
-/// value from `Settings`.
-pub fn build_image(s: Settings, args: BuildImageArgs) -> Result<(), Error> {
+/// Sets up the images that can be used inside the autograder. If they have a
+/// build process provided, then it may attempt to build that image.
+pub fn setup_images(s: Settings, args: SetupImageArgs) -> Result<(), Error> {
     use std::io::Write;
 
-    let tag = &s.runner.podman_verifier_image;
-
-    // A tag outside `localhost/` names a registry, so it is more likely to be a
-    // pre-built image that was meant to be pulled than one to build over.
-    if !args.yes && !tag.starts_with("localhost/") {
-        println!("Warning: \"{tag}\" is not a local tag, so it may name an image");
-        println!("that is meant to be pulled rather than built here.");
-        print!("Build it anyway? [y/N] ");
-        std::io::stdout().flush()?;
-
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
-            println!("Aborted, no image was built.");
-            return Ok(());
+    for (name, img) in &s.runner.podman.images {
+        if podman::images()?.contains(&img.image) {
+            println!("{name}: {} already exists", img.image);
+            continue;
         }
+
+        if let Some(build) = &img.build {
+            let mut do_build = args.yes;
+            if !do_build {
+                println!("{name}: Build config exists for {}.", img.image);
+                print!("{name}: Build the image instead of attempting a pull? [Y/n] ");
+                std::io::stdout().flush()?;
+
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                if matches!(answer.trim().to_lowercase().as_str(), "" | "y" | "yes") {
+                    do_build = true;
+                }
+            }
+
+            if do_build {
+                println!("{name}: Building {}.", img.image);
+                podman::build(&img.image, &build.path, Some(&build.file))?;
+                continue;
+            }
+        }
+
+        println!("{name}: Pulling {}.", img.image);
+        podman::pull(&img.image)?;
     }
 
-    println!("Building {tag} from {VERIFIER_CONTEXT}");
-    podman::build(tag, VERIFIER_CONTEXT)?;
-    println!("Built {tag}");
-    Ok(())
-}
-
-/// Pulls the grading image named by `runner.podman_image`.
-pub fn pull_image(s: Settings) -> Result<(), Error> {
-    let tag = &s.runner.podman_image;
-
-    if podman::images()?.contains(tag) {
-        println!("{tag} already exists");
-        return Ok(());
-    }
-
-    println!("Pulling {tag}");
-    podman::pull(tag)?;
-    println!("Pulled {tag}");
     Ok(())
 }
 

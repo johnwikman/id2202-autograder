@@ -2,16 +2,13 @@
 /// This contains the functionality for building the project, as well as for
 /// iterating over the test cases.
 ///
-use std::{
-    rc::Rc,
-    time::{Duration, SystemTime},
-};
+use std::time::{Duration, SystemTime};
 
 use id2202_autograder::{
     config::{tests::kind::Kind as Testkind, BuildConfig, Settings, Tag, Test, TestGroup},
     db::models::{JobStatus, SubmissionJobPlain},
     error::{Error, ErrorKind, SyscommandError},
-    podman,
+    podman::{self, Mount, PodmanContainer},
     reporting::{DetailsBuildFailure, DetailsTagGradingGroup, MIMETypeInfo, ReportTagGrading},
     utils::{self, path_absolute_join, syscommand_timeout, SyscommandSettings},
 };
@@ -23,7 +20,7 @@ use crate::{
     subrunner::{
         container::ContainerInfo,
         test_grader::{FailureCause, GradingResult},
-        verifier,
+        verifier::Verifier,
     },
 };
 
@@ -53,6 +50,17 @@ pub enum BuildResult {
     },
 }
 
+pub struct TagRunnerOptions<'a, 'tmp> {
+    pub settings: &'a Settings,
+    pub runner_id: i32,
+    pub tag: &'tmp Tag,
+    pub job: SubmissionJobPlain,
+    pub source_dir: &'tmp str,
+    pub solution_dir: &'tmp str,
+    pub verifier_dir: &'tmp str,
+    pub tests_dir: &'tmp str,
+}
+
 /// The runner for a grading tag. This spawns a podman container, builds the
 /// project inside the container, and proceeds to run every test case defined
 /// for this tag.
@@ -73,7 +81,7 @@ pub struct TagRunner<'a> {
     pub build_conf: BuildConfig,
 
     /// The verifiers, shared with every other tag runner of this submission.
-    verifier: Rc<verifier::Verifier>,
+    verifier: Verifier,
 
     /// Iterators for each respective test group contained within this tag.
     toplevel_iterator: TestGroupIterator,
@@ -109,41 +117,66 @@ pub struct TagRunner<'a> {
     /// When grading of this tag has to be over. Provisional while the status
     /// is `NotStarted`, and stamped for real by `start`.
     deadline: SystemTime,
+
+    /// Whether or not a cleanup has been attempted
+    attempted_cleanup: bool,
 }
 
 impl<'a> TagRunner<'a> {
     /// Creates a new tag runner from a tag specification.
-    pub fn new(
-        settings: &'a Settings,
-        tag: &Tag,
-        job: SubmissionJobPlain,
-        container: ContainerInfo,
-        source_dir: &str,
-        verifier: Rc<verifier::Verifier>,
-        timeout_total: Duration,
-    ) -> Self {
-        TagRunner {
-            settings,
-            job,
-            container,
-            build_conf: tag.build.to_owned(),
-            verifier,
-
+    pub fn new(opts: TagRunnerOptions<'a, '_>) -> Result<Self, Error> {
+        let s_img = &opts.tag.solution_image;
+        let v_img = &opts.tag.verifier_image;
+        Ok(TagRunner {
+            settings: opts.settings,
+            job: opts.job,
+            container: ContainerInfo {
+                podman: {
+                    let mut c = PodmanContainer::new(
+                        s_img.image.clone(),
+                        format!("id2202_runner{}", opts.runner_id),
+                    );
+                    c.network = Some(format!(
+                        "{}{}",
+                        opts.settings.runner.podman.network_prefix, opts.runner_id
+                    ));
+                    c
+                },
+                internal_build_dir: path_absolute_join(&s_img.tmpdir, "graded_solution")?,
+                solution_dir: Mount {
+                    host_path: opts.solution_dir.to_string(),
+                    container_path: s_img.mount_code.clone(),
+                    writable: false,
+                },
+                tests_dir: Mount {
+                    host_path: opts.tests_dir.to_string(),
+                    container_path: s_img.mount_tests.clone(),
+                    writable: false,
+                },
+            },
+            build_conf: opts.tag.build.to_owned(),
+            verifier: Verifier::new(
+                v_img,
+                format!("id2202_verifier{}", opts.runner_id),
+                opts.verifier_dir,
+                &opts.tag.test_groups,
+            ),
             toplevel_iterator: TestGroupIterator::from_groups(
-                format!("top-level for tag \"{}\"", tag.name),
-                tag.test_groups.iter().map(TestGroupIterator::new).collect(),
+                format!("top-level for tag \"{}\"", opts.tag.name),
+                opts.tag.test_groups.iter().map(TestGroupIterator::new).collect(),
             ),
 
             build_result: None,
-            source_dir: source_dir.to_owned(),
+            source_dir: opts.source_dir.to_string(),
             testfail_count: 0,
             bad_test_behavior: None,
             collected_reports: 0,
             status: JobStatus::NotStarted,
             generated_report: None,
-            timeout_total,
+            timeout_total: opts.tag.timeout_total,
             deadline: SystemTime::UNIX_EPOCH,
-        }
+            attempted_cleanup: false,
+        })
     }
 
     /// Whether the tag has run past the deadline stamped when it started.
@@ -322,15 +355,23 @@ impl<'a> TagRunner<'a> {
     }
 
     /// Removes the podman container if it is still running and makes sure that
-    /// the build directory is removed.
+    /// the build directory is removed. Also ensures that the verifier
+    /// container is removed.
     pub fn cleanup(&mut self) -> Result<(), Error> {
+        if self.attempted_cleanup {
+            // It may happen that we perform cleanup twice, as we just skip the
+            // stoppage of podman containers.
+            return Ok(());
+        }
         self.container.podman.stop();
+        self.verifier.stop();
 
         if std::fs::exists(&self.container.solution_dir.host_path)? {
             log::debug!("Removing the build directory used for grading \"{}\"", self.job.tag);
             std::fs::remove_dir_all(&self.container.solution_dir.host_path)?;
         }
 
+        self.attempted_cleanup = true;
         Ok(())
     }
 
@@ -368,7 +409,7 @@ impl<'a> TagRunner<'a> {
 
         let running_containers = podman::ps_names()?;
         if running_containers.contains(&self.container.podman.name) {
-            log::warn!("Removing dangling image from previous run");
+            log::warn!("Removing dangling container from the previous run");
             podman::force_rm(&self.container.podman.name)?;
         }
 
@@ -391,6 +432,8 @@ impl<'a> TagRunner<'a> {
             return Ok(false);
         }
 
+        // Create the directory `self.container.solution_dir.host_path` which
+        // will be mounted into the container.
         dircpy::copy_dir(&solution_dir, &self.container.solution_dir.host_path)?;
 
         // Check for forbidden binary files inside the solution directory
@@ -449,30 +492,24 @@ impl<'a> TagRunner<'a> {
             return Ok(false);
         }
 
+        log::debug!("Starting the verifier container");
+        self.verifier
+            .start()
+            .inspect_err(|e| log::error!("Could not start the verifier container: {e}"))?;
+
         log::debug!("Starting podman container");
         self.container.podman.mounts =
             vec![self.container.solution_dir.clone(), self.container.tests_dir.clone()];
         self.container.podman.start()?;
 
-        // Wait for the container to start
-        let mut start_attempts = 0;
-        let mut container_started = false;
-        while !container_started {
-            start_attempts += 1;
-            if start_attempts > 10 {
-                return Error::err_runtime("container would not start after 10 attempts");
-            }
-            for ps_output in podman::ps()?.iter() {
-                if ps_output.names.contains(&self.container.podman.name)
-                    && ps_output.state == "running"
-                {
-                    container_started = true;
-                }
-            }
-            if !container_started {
-                std::thread::sleep(Duration::from_millis(500));
-            }
-        }
+        // Wait for the containers to start
+        let limit = Duration::from_secs(5);
+        self.verifier.container.block_until_started(limit).inspect_err(|e| {
+            log::error!("Error checking whether verifier container had started: {e}")
+        })?;
+        self.container.podman.block_until_started(limit).inspect_err(|e| {
+            log::error!("Error checking whether tag_runner container had started: {e}")
+        })?;
 
         let checked = SyscommandSettings {
             expected_code: Some(0),

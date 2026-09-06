@@ -249,18 +249,20 @@ pub async fn gitlab_submit_webhook(
 
     // Resolve the tags before inserting anything to the database. An unknown
     // tag will result in an immediate error here.
-    let tests =
-        match Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
-        {
-            Ok(tests) => Some(tests),
-            Err(e) => {
-                // Fatal by design: a test configuration that will not load means
-                // the runner cannot grade anything either, so accepting the
-                // submission would only hide it.
-                log::error!("Could not load test configuration: {e}");
-                None
-            }
-        };
+    let tests = match Tests::load(
+        settings,
+        &settings.runner.test_config,
+        TestsLoadingOptions { taginfo_only: true },
+    ) {
+        Ok(tests) => Some(tests),
+        Err(e) => {
+            // Fatal by design: a test configuration that will not load means
+            // the runner cannot grade anything either, so accepting the
+            // submission would only hide it.
+            log::error!("Could not load test configuration: {e}");
+            None
+        }
+    };
     let jobs = match &tests {
         Some(tests) => resolve_jobs(tests, &grading_tags),
         None => Err(Box::new(internal_error_report())),

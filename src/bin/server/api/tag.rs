@@ -26,11 +26,15 @@ pub async fn get_taglist(
 ) -> Result<impl Responder, actix_web::Error> {
     let settings = data.get_ref();
 
-    let tc = Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
-        .map_err(|e| {
-            log::error!("Could not load test configuration: {e}");
-            ErrorResponse::internal_server_error(&req)
-        })?;
+    let tc = Tests::load(
+        settings,
+        &settings.runner.test_config,
+        TestsLoadingOptions { taginfo_only: true },
+    )
+    .map_err(|e| {
+        log::error!("Could not load test configuration: {e}");
+        ErrorResponse::internal_server_error(&req)
+    })?;
 
     Ok(TagListResponse::new(&req, &tc).to_http())
 }
@@ -54,11 +58,15 @@ pub async fn get_tag(
     let settings = data.get_ref();
     let tagname = tagname.into_inner();
 
-    let tc = Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
-        .map_err(|e| {
-            log::error!("Could not load test configuration: {e}");
-            ErrorResponse::internal_server_error(&req)
-        })?;
+    let tc = Tests::load(
+        settings,
+        &settings.runner.test_config,
+        TestsLoadingOptions { taginfo_only: true },
+    )
+    .map_err(|e| {
+        log::error!("Could not load test configuration: {e}");
+        ErrorResponse::internal_server_error(&req)
+    })?;
 
     TagResponse::new(&req, &tc, &tagname)
         .ok_or_else(|| ErrorResponse::not_found(&req, "tag not found").into())
@@ -91,11 +99,15 @@ pub async fn get_tag_task(
     let settings = data.get_ref();
     let tagname = tagname.into_inner();
 
-    let tc = Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
-        .map_err(|e| {
-            log::error!("Could not load test configuration: {e}");
-            ErrorResponse::internal_server_error(&req)
-        })?;
+    let tc = Tests::load(
+        settings,
+        &settings.runner.test_config,
+        TestsLoadingOptions { taginfo_only: true },
+    )
+    .map_err(|e| {
+        log::error!("Could not load test configuration: {e}");
+        ErrorResponse::internal_server_error(&req)
+    })?;
 
     let tagnames = tc
         .tag_resolution

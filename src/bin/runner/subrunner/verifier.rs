@@ -13,11 +13,12 @@ use std::{
 
 use id2202_autograder::{
     config::{
+        settings::PodmanImageSettings,
         tests::kind::{run_verifier::ParamValue, Kind},
-        Settings, TestGroup, Tests,
+        TestGroup,
     },
     error::Error,
-    podman::{Mount, PodmanContainer},
+    podman::{self, Mount, PodmanContainer},
     utils::{path_absolute_join, SyscommandSettings},
 };
 use serde::{Deserialize, Serialize};
@@ -66,35 +67,35 @@ pub struct Verdict {
 /// The verifier programs, and the container they are run in.
 #[derive(Debug)]
 pub struct Verifier {
-    container: PodmanContainer,
+    pub container: PodmanContainer,
+
+    /// The mounting location of where verifier scripts.
+    mount: Mount,
+
+    /// Paths to the verifiers that will be used by this verifier.
+    host_paths: BTreeSet<String>,
 
     /// Where each verifier lives inside the container, keyed by its host path.
-    paths: BTreeMap<String, String>,
+    internal_paths: BTreeMap<String, String>,
 }
 
 impl Verifier {
-    /// Copies every verifier referenced by `tests` into the `host_mount_path`
-    /// and starts the container they run in.
-    pub fn start(
-        settings: &Settings,
-        container_name: &str,
-        host_mount_path: &str,
-        tests: &Tests,
-    ) -> Result<Self, Error> {
+    /// Sets up the verifier image and the verifiers it should use. But never
+    /// attempts to start the image itself.
+    pub fn new(
+        pis: &PodmanImageSettings,
+        container_name: String,
+        host_verifier_dir: &str,
+        test_groups: &[TestGroup],
+    ) -> Self {
         let mount = Mount {
-            host_path: host_mount_path.to_string(),
-            container_path: settings.runner.mount_verifiers.clone(),
+            host_path: host_verifier_dir.to_string(),
+            container_path: pis.mount_code.clone(),
             writable: false,
         };
 
-        std::fs::create_dir_all(&mount.host_path).map_err(|e| {
-            Error::fs("creating verifier directory", &mount.host_path).with_cause(Box::new(e))
-        })?;
-
-        let mut container =
-            PodmanContainer::new(&settings.runner.podman_verifier_image, container_name);
-
-        /// Recursively collect verifiers from all defined test cases.
+        // Recursively collect paths to verifiers from all test groups.
+        let mut host_paths: BTreeSet<String> = BTreeSet::new();
         fn collect_from_group(group: &TestGroup, out: &mut BTreeSet<String>) {
             for test in &group.tests {
                 if let Kind::RunVerifier(conf) = &test.kind {
@@ -105,23 +106,55 @@ impl Verifier {
                 collect_from_group(sub, out);
             }
         }
+        for group in test_groups {
+            collect_from_group(group, &mut host_paths);
+        }
 
-        let mut sources: BTreeSet<String> = BTreeSet::new();
-        for tag in tests.tags.values() {
-            for group in &tag.test_groups {
-                collect_from_group(group, &mut sources);
+        let mut container = PodmanContainer::new(pis.image.clone(), container_name);
+        container.mounts = vec![mount.clone()];
+        container.read_only = true;
+        container.drop_privileges = true;
+        container.pids_limit = Some(64);
+        container.memory = Some("256m".to_string());
+
+        Self { container, mount, host_paths, internal_paths: BTreeMap::new() }
+    }
+
+    /// Copies all the necessary verifiers into the verifier directory and
+    /// starts the verifier container.
+    pub fn start(&mut self) -> Result<(), Error> {
+        if !std::fs::exists(&self.mount.host_path)? {
+            log::debug!("Ensuring that the verifier directory exists outside the container");
+            std::fs::create_dir_all(&self.mount.host_path)?;
+        }
+
+        log::debug!(
+            "Cleaning up any previous entries in the verifier dir {}",
+            self.mount.host_path
+        );
+        for f in std::fs::read_dir(&self.mount.host_path)? {
+            let path = f?.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(path)?;
+            } else if path.is_file() {
+                std::fs::remove_file(path)?;
+            } else {
+                return Error::err_fs(
+                    "unknown file type when cleaning up verifier dir",
+                    path.to_string_lossy(),
+                );
             }
         }
 
-        let mut paths = BTreeMap::new();
-        for source in sources {
-            let file = std::path::Path::new(&source);
+        for p in &self.host_paths {
+            let file = std::path::Path::new(p);
             let (Some(stem), Some(ext)) = (file.file_stem(), file.extension()) else {
-                return Err(Error::convert(format!("malformed verifier path \"{source}\"")));
+                return Err(Error::convert(format!("malformed verifier path \"{p}\"")));
             };
             // Hashed, since verifiers are not necessarily under the test config
             // root and their directory layout cannot be mirrored.
-            let digest = Sha256::digest(source.as_bytes());
+            // (Note: paths here are absolute, so hashes should be unique.)
+            let digest = Sha256::digest(p.as_bytes());
             let name = format!(
                 "{}-{}.{}",
                 stem.to_string_lossy(),
@@ -129,24 +162,29 @@ impl Verifier {
                 ext.to_string_lossy(),
             );
 
-            std::fs::copy(&source, path_absolute_join(&mount.host_path, &name)?)
-                .map_err(|e| Error::fs("copying verifier", &source).with_cause(Box::new(e)))?;
-            paths.insert(source, path_absolute_join(&mount.container_path, &name)?);
+            std::fs::copy(p, path_absolute_join(&self.mount.host_path, &name)?)
+                .map_err(|e| Error::fs("copying verifier", p).with_cause(Box::new(e)))?;
+            self.internal_paths
+                .insert(p.clone(), path_absolute_join(&self.mount.container_path, &name)?);
         }
 
-        container.mounts = vec![mount];
-        container.read_only = true;
-        container.drop_privileges = true;
-        container.pids_limit = Some(64);
-        container.memory = Some("256m".to_string());
-        container.start()?;
+        let running_containers = podman::ps_names()?;
+        if running_containers.contains(&self.container.name) {
+            log::warn!("Removing dangling verifier container from a previous run");
+            podman::force_rm(&self.container.name)?;
+        }
 
-        Ok(Self { container, paths })
+        self.container.start()
+    }
+
+    /// Stops the running verifier container, but does not perform any cleanup.
+    pub fn stop(&mut self) {
+        self.container.stop();
     }
 
     /// The path inside the container for a verifier's path on the host.
     pub fn container_path(&self, host_path: &str) -> Result<&str, Error> {
-        self.paths.get(host_path).map(String::as_str).ok_or_else(|| {
+        self.internal_paths.get(host_path).map(String::as_str).ok_or_else(|| {
             Error::runtime(format!(
                 "verifier \"{host_path}\" was not collected before grading started"
             ))

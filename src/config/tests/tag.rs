@@ -5,17 +5,30 @@ use documented::{Documented, DocumentedFields};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_value::Value as SerdeValue;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 use struct_patch::Patch;
 
 use super::{group::TestGroup, Defaults, TestsLoadingOptions};
-use crate::{config::utils::ApplyUntreated, error::Error, utils::path_absolute_join};
+use crate::{
+    config::{
+        settings::{PodmanImageSettings, Settings},
+        utils::ApplyUntreated,
+    },
+    error::Error,
+    utils::path_absolute_join,
+};
 
 /// Defaults applying to a tag as a whole.
 #[derive(Deserialize, JsonSchema, Debug, Clone, Documented, DocumentedFields)]
 pub struct TagDefaults {
     /// Default timeout (in seconds) of a tag as a whole.
     pub timeout_total: u32,
+
+    /// Default podman image to use for running the solution being graded.
+    pub solution_image: String,
+
+    /// Default podman image to use when running a verifier.
+    pub verifier_image: String,
 
     /// Default rate limits for tags.
     pub rate_limit: RateLimit,
@@ -132,11 +145,21 @@ pub struct Tag {
     /// Config on how the build the project being graded.
     pub build: BuildConfig,
 
+    /// The podman image to use for running the solution being graded for this
+    /// tag.
+    pub solution_image: PodmanImageSettings,
+
+    /// The podman image to use when running a verifier for this tag.
+    pub verifier_image: PodmanImageSettings,
+
     /// How often this tag can be graded from a single source.
     pub rate_limit: RateLimit,
 
     /// How many times in total this tag can be graded from a single source.
     pub budget: Budget,
+
+    /// Timeout of a tag as a whole.
+    pub timeout_total: Duration,
 }
 
 /// A deserializable version of `Tag`, which does not extend any other tag.
@@ -144,10 +167,13 @@ pub struct Tag {
 struct _UntreatedTag {
     dirs: Vec<String>,
     build: _UntreatedBuildConfig,
+    solution_image: Option<String>,
+    verifier_image: Option<String>,
     metadata: Option<BTreeMap<String, SerdeValue>>,
     task_file: Option<String>,
     rate_limit: Option<_UntreatedRateLimit>,
     budget: Option<_UntreatedBudget>,
+    timeout_total: Option<u32>,
 }
 
 /// An `Tag` which extends a previous tag, inheriting values from another tag
@@ -162,6 +188,7 @@ struct _UntreatedExtensibleTag {
     task_file: Option<String>,
     rate_limit: Option<_UntreatedRateLimit>,
     budget: Option<_UntreatedBudget>,
+    timeout_total: Option<u32>,
 }
 
 impl Tag {
@@ -177,6 +204,7 @@ impl Tag {
     /// The `config_path` parameter is just there for logging purposes, stating
     /// the path where the TOML definitions originate from.
     pub fn from_toml(
+        settings: &Settings,
         mut tag_definitions: BTreeMap<String, toml::Value>,
         defaults: &Defaults,
         root_dir: &str,
@@ -230,10 +258,16 @@ impl Tag {
                                     metadata,
                                     test_groups: vec![],
                                     build: extended.build.to_owned(),
+                                    solution_image: extended.solution_image.to_owned(),
+                                    verifier_image: extended.verifier_image.to_owned(),
                                     rate_limit: extended
                                         .rate_limit
                                         .apply_untreated(uetg.rate_limit),
                                     budget: extended.budget.apply_untreated(uetg.budget),
+                                    timeout_total: uetg.timeout_total.map_or_else(
+                                        || extended.timeout_total,
+                                        |s| Duration::from_secs(s.into()),
+                                    ),
                                 };
                                 let dirs = [extended_dirs.to_owned(), uetg.dirs].concat();
                                 log::debug!("Found tag {t:?}");
@@ -244,14 +278,41 @@ impl Tag {
                             // This is a root tag that doesn't extend anything
                             let utg: _UntreatedTag =
                                 data.to_owned().try_into().map_err(Error::from)?;
+                            let img_solution =
+                                utg.solution_image.as_ref().unwrap_or(&defaults.tag.solution_image);
+                            let img_verifier =
+                                utg.verifier_image.as_ref().unwrap_or(&defaults.tag.verifier_image);
                             let t = Tag {
                                 name: name.to_owned(),
                                 task_file: task_file(name, utg.task_file)?,
                                 metadata: utg.metadata.unwrap_or_default(),
                                 test_groups: vec![],
                                 build: defaults.build.apply_untreated(Some(utg.build)),
+                                solution_image: settings
+                                    .runner
+                                    .podman
+                                    .images
+                                    .get(img_solution)
+                                    .ok_or_else(|| {
+                                        Error::test_config_msg(format!(
+                                            "unknown podman solution image \"{img_solution}\" for tag \"{name}\""
+                                        )).path(config_path)
+                                    })?
+                                    .clone(),
+                                verifier_image: settings
+                                    .runner
+                                    .podman
+                                    .images
+                                    .get(img_verifier)
+                                    .ok_or_else(|| {
+                                        Error::test_config_msg(format!(
+                                            "unknown podman verifier image \"{img_verifier}\" for tag \"{name}\""
+                                        )).path(config_path)
+                                    })?
+                                    .clone(),
                                 rate_limit: defaults.tag.rate_limit.apply_untreated(utg.rate_limit),
                                 budget: defaults.tag.budget.apply_untreated(utg.budget),
+                                timeout_total: Duration::from_secs(utg.timeout_total.unwrap_or(defaults.tag.timeout_total).into()),
                             };
                             log::debug!("Found tag {t:?}");
                             found.push(name.to_owned());

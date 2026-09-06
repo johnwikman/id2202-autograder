@@ -1,8 +1,10 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use confique::Config;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_inline_default::serde_inline_default;
 
 use crate::error::Error;
 use crate::utils::{path_absolute_join, path_absolute_parent, path_join};
@@ -66,13 +68,15 @@ impl<T: KnownInstanceSettings> KnownInstance for T {
 }
 
 /// The autograder is configured through a TOML settings file passed via the
-/// `-s` option on the entrypoint binary. Every setting listed below is required
-/// — the autograder supplies no fallback values, so omitting any of them causes
-/// startup to fail.
+/// `-s` option on the entrypoint binary.
 ///
 /// All relative paths are resolved relative to the directory containing the
 /// settings file. Where an environment variable is listed, it takes precedence
 /// over the value in the TOML file.
+///
+/// # Warning
+/// Every setting listed below is required with only a few exceptions. Failing
+/// to provide them will cause the startup of the autograder to fail.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct Settings {
     /// Name to use when responding to requests, creating commits, etc.
@@ -189,6 +193,7 @@ pub struct GitHubSettings {
     pub webhook_secret: String,
 
     /// Information for specific instances.
+    #[config(default = [])]
     pub known_instances: Vec<GitHubServerSettings>,
 }
 
@@ -198,7 +203,7 @@ pub struct GitHubSettings {
 /// via `AUTOGRADER_GITHUB_AUTH_TOKENS`, which holds semicolon-separated
 /// `domain=token` pairs. See [GitHubSettings] for settings that apply to all
 /// GitHub servers.
-#[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
 #[schemars(title = "GitHub instance")]
 pub struct GitHubServerSettings {
     /// The domain address at which the GitHub instance is hosted at.
@@ -256,6 +261,7 @@ pub struct GitLabSettings {
     pub webhook_secret: String,
 
     /// Information for specific instances.
+    #[config(default = [])]
     pub known_instances: Vec<GitLabServerSettings>,
 }
 
@@ -265,7 +271,7 @@ pub struct GitLabSettings {
 /// via `AUTOGRADER_GITLAB_AUTH_TOKENS`, which holds semicolon-separated
 /// `domain=token` pairs. See [GitLabSettings] for settings that apply to all
 /// GitLab servers.
-#[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
 #[schemars(title = "GitLab instance")]
 pub struct GitLabServerSettings {
     /// The domain address at which the GitLab instance is hosted at.
@@ -377,36 +383,6 @@ pub struct RunnerSettings {
     #[config(env = "AUTOGRADER_RUNNER_DATABASE_POLL_INTERVAL_SECONDS")]
     pub database_poll_interval_seconds: u16,
 
-    /// The docker/podman image to use for grading.
-    #[config(env = "AUTOGRADER_RUNNER_PODMAN_IMAGE")]
-    pub podman_image: String,
-
-    /// The prefix to use for the network attached to the image. The
-    /// network will be named as `{prefix}{runner_id}`.
-    #[config(env = "AUTOGRADER_RUNNER_PODMAN_NETWORK_PREFIX")]
-    pub podman_network_prefix: String,
-
-    /// The directory inside the container where the repository will be
-    /// mounted.
-    #[config(env = "AUTOGRADER_RUNNER_MOUNT_REPO")]
-    pub mount_repo: String,
-
-    /// The directory inside the container where a test case will be
-    /// located.
-    #[config(env = "AUTOGRADER_RUNNER_MOUNT_TESTS")]
-    pub mount_tests: String,
-
-    /// The podman image all verifier programs run in. The entrypoint can build
-    /// this image if it is missing, but custom pre-built images can also be
-    /// specified here.
-    #[config(env = "AUTOGRADER_RUNNER_PODMAN_VERIFIER_IMAGE")]
-    pub podman_verifier_image: String,
-
-    /// The directory inside the verifier container where the verifier
-    /// programs are mounted.
-    #[config(env = "AUTOGRADER_RUNNER_MOUNT_VERIFIERS")]
-    pub mount_verifiers: String,
-
     /// Directory to use as a workspace, to store temporary files.
     #[config(env = "AUTOGRADER_RUNNER_WORKSPACE_DIR")]
     pub workspace_dir: String,
@@ -429,6 +405,69 @@ pub struct RunnerSettings {
     /// be populated by the `verify-ssh-hosts` entrypoint command.
     #[config(env = "AUTOGRADER_RUNNER_SSH_KNOWN_HOSTS")]
     pub ssh_known_hosts: String,
+
+    /// Settings related to podman images, containers, and networks.
+    #[config(nested)]
+    pub podman: PodmanSettings,
+}
+
+/// Settings specific for handling podman images.
+#[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
+pub struct PodmanSettings {
+    /// The prefix to use for the network attached to the image. The
+    /// network will be named as `{prefix}{runner_id}`.
+    #[config(env = "AUTOGRADER_RUNNER_PODMAN_NETWORK_PREFIX")]
+    pub network_prefix: String,
+
+    /// Declarations of the available images to be used by the test specification.
+    #[config(default = {})]
+    pub images: BTreeMap<String, PodmanImageSettings>,
+}
+
+/// Declaration and specification for specific podman images.
+#[serde_inline_default]
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
+pub struct PodmanImageSettings {
+    /// The name of the image, formatted as `{repo}:{tag}`.
+    pub image: String,
+
+    /// Optional information about how to build this image if it does not
+    /// exist. If not specified, then the image is assumed to be fetchable
+    /// using `podman pull`.
+    pub build: Option<PodmanImageBuildSettings>,
+
+    /// A directory inside the container that can be used as a tmp directory
+    /// during grading.
+    ///
+    /// # Default
+    /// `/tmp` if not provided.
+    #[serde_inline_default("/tmp".to_string())]
+    pub tmpdir: String,
+
+    /// Where to mount the code that is going to be run inside the container.
+    ///
+    /// # Default
+    /// `/mnt/code` if not provided.
+    #[serde_inline_default("/mnt/code".to_string())]
+    pub mount_code: String,
+
+    /// Where to mount tests that are going to be run inside the container.
+    ///
+    /// # Default
+    /// `/mnt/tests` if not provided.
+    #[serde_inline_default("/mnt/tests".to_string())]
+    pub mount_tests: String,
+}
+
+/// Information about how to build a podman image.
+#[derive(Deserialize, JsonSchema, Debug, Clone)]
+pub struct PodmanImageBuildSettings {
+    /// The path (or context) that the image should be built in.
+    pub path: String,
+
+    /// The Containerfile/Dockerfile to use when building the image, specified
+    /// relative to the provided `path`.
+    pub file: String,
 }
 
 /// Settings controlling how grading results are reported.
@@ -539,6 +578,12 @@ impl Settings {
 
         s.runner.shadow_dir = path_absolute_join(&s.reldir, &s.runner.shadow_dir)?;
         s.runner.test_config = path_absolute_join(&s.reldir, &s.runner.test_config)?;
+        for img in s.runner.podman.images.values_mut() {
+            if let Some(build) = img.build.as_mut() {
+                build.path = path_absolute_join(&s.reldir, &build.path)?;
+                build.file = path_absolute_join(&build.path, &build.file)?;
+            }
+        }
 
         /// Helper function for parsing variables provided a semicolon
         /// separated associations for preconfigured domains. I.e.

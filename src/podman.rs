@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::BTreeSet, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::BTreeSet,
+    time::{Duration, SystemTime},
+};
 
 //use std::ffi::OsString;
 use serde::{Deserialize, Serialize};
@@ -177,9 +181,14 @@ pub fn pull(tag: &str) -> Result<(), Error> {
 /// timeout, since a build starts by pulling its base image. The output is
 /// bounded rather than unlimited so that a failed build carries its log in the
 /// returned error.
-pub fn build(tag: &str, context_dir: &str) -> Result<(), Error> {
+pub fn build(tag: &str, context_dir: &str, file: Option<&str>) -> Result<(), Error> {
+    let mut cmd = vec!["podman", "build", "-t", tag];
+    if let Some(f) = file {
+        cmd.extend(["-f", f]);
+    }
+    cmd.push(context_dir);
     let _output = syscommand_timeout(
-        ["podman", "build", "-t", tag, context_dir],
+        cmd,
         SyscommandSettings {
             expected_code: Some(0),
             timeout: Duration::from_secs(1200),
@@ -226,8 +235,10 @@ pub struct Mount {
     pub writable: bool,
 }
 
-/// A podman container. Deliberately not `Clone`: it is removed when dropped, so
-/// share it behind an `Rc`/`Arc` rather than copying it.
+/// A podman container. Deliberately does not implement `Clone`.
+///
+/// A running podman container is removed when dropped. Use an `Rc`/`Arc` when
+/// necessary to share a container.
 #[derive(Debug)]
 pub struct PodmanContainer {
     pub image: String,
@@ -251,6 +262,8 @@ pub struct PodmanContainer {
     /// Memory limit in podman's notation, e.g. `"256m"`.
     pub memory: Option<String>,
 
+    start_polling_interval: Duration,
+
     is_started: bool,
 }
 
@@ -268,6 +281,7 @@ impl PodmanContainer {
             drop_privileges: false,
             pids_limit: None,
             memory: None,
+            start_polling_interval: Duration::from_millis(100),
             is_started: false,
         }
     }
@@ -336,6 +350,35 @@ impl PodmanContainer {
         self.is_started = true;
 
         Ok(())
+    }
+
+    /// Blocks until the container has started, or until the time limit has
+    /// been exceeded.
+    pub fn block_until_started(&self, limit: Duration) -> Result<(), Error> {
+        log::debug!("Waiting until \"{}\" is started", self.name);
+
+        let init_time = SystemTime::now();
+
+        loop {
+            for ps_output in ps()?.iter() {
+                if ps_output.names.contains(&self.name) && ps_output.state == "running" {
+                    log::debug!("\"{}\" is running", self.name);
+                    return Ok(());
+                }
+            }
+
+            let diff = SystemTime::now().duration_since(init_time)?;
+
+            if diff > limit {
+                return Error::err_runtime(format!(
+                    "\"{}\" did not start after {} seconds",
+                    self.name,
+                    limit.as_secs_f64()
+                ));
+            }
+
+            std::thread::sleep(self.start_polling_interval);
+        }
     }
 
     /// Runs a command in a fresh container that is removed afterwards, without

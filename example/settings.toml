@@ -1,8 +1,7 @@
 name = "ID2202 Autograder"
-version = "3"
 fs_write_timeout_seconds = 10 # before giving up on a file system write
 
-# All paths are relative to this file, not where the binary is being run from.
+# Note: All paths are relative to this file, not where the binary is being run from.
 
 # Logging settings
 [log]
@@ -26,7 +25,6 @@ comment_signature = "(_This is an automated response from the autograder_ \U0001
 # Information about GitHub instances that can submit grading jobs
 [submission.github]
 webhook_secret = "s3cr3t"
-known_instances = [] # remove this line if including the example below
 
 # Known GitHub servers that we can accept requests from. Uncomment this when
 # performing integration testing against GitHub instances.
@@ -80,17 +78,6 @@ api_auth_tokens = []
 [runner]
 n_runners = 4
 database_poll_interval_seconds = 10
-podman_image = "docker.io/johnwikman/id2202:0.3.0"
-podman_network_prefix = "id2202_runnernet"
-
-# Only ever mount the input files, never expose the intended code or
-# output to the running program. That is checked outside the solutions
-# execution environment.
-mount_repo = "/id2202/repo"
-mount_tests = "/id2202/tests"
-
-podman_verifier_image = "localhost/id2202-autograder-verifier:2.0.0-dev4"
-mount_verifiers = "/id2202/verifiers"
 
 workspace_dir = "./data/workspace" # storage for data currently being worked on
 shadow_dir = "./data/shadow"       # storage for submitted solutions
@@ -98,6 +85,24 @@ test_config = "./tests/tests.toml" # configuration for test cases
 
 ssh_keys = []                              # empty means the default SSH configuration
 ssh_known_hosts = "./data/ssh/known_hosts" # host keys of the submission sources
+
+[runner.podman]
+network_prefix = "id2202_runnernet"
+
+# This must be able to be fetched, no build info provided
+[runner.podman.images.default]
+image = "docker.io/johnwikman/id2202:0.3.0"
+tmpdir = "/tmp"
+mount_code = "/id2202/solution"
+mount_tests = "/id2202/tests"
+
+# This can be built since it has "build" specified
+[runner.podman.images.verifier]
+image = "localhost/id2202-autograder-verifier:latest"
+tmpdir = "/tmp"
+build = {path = "../container/verifier", file = "Containerfile"}
+mount_code = "/id2202/verifiers"
+mount_tests = "/id2202/tests"
 
 [reporting]
 shown_failures = 3 # Number of failed tests that should be revealed to the user.

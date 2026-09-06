@@ -1,5 +1,5 @@
 //! Handle for running and grading all tags that are part of a submission.
-use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use std::collections::BTreeMap;
 
 use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
@@ -10,14 +10,13 @@ use id2202_autograder::{
         },
     },
     error::Error,
-    podman::{Mount, PodmanContainer},
     reporting::{Report, ReportMessage},
     utils::path_absolute_join,
 };
 
 use crate::{
     shadow::ShadowRepo,
-    subrunner::{container::ContainerInfo, tag_runner::TagRunner, verifier},
+    subrunner::tag_runner::{TagRunner, TagRunnerOptions},
 };
 
 static ERRMSG_INTERNAL_ERROR: &str = "Internal error when starting job. Contact course staff.";
@@ -71,11 +70,12 @@ impl<'a> SubmissionRunnerHandle<'a> {
             Report::Message(ReportMessage { msg: ERRMSG_INTERNAL_ERROR.to_string() })
         }
 
-        let tests = Tests::load(&settings.runner.test_config, TestsLoadingOptions::default())
-            .map_err(|e| {
-                log::error!("Could not load test configuration: {e}");
-                internal_error_report()
-            })?;
+        let tests =
+            Tests::load(settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .map_err(|e| {
+                    log::error!("Could not load test configuration: {e}");
+                    internal_error_report()
+                })?;
 
         // Step 1: Set up the workspace and information about the directories within.
         let workspace_dir = path_absolute_join(
@@ -110,63 +110,32 @@ impl<'a> SubmissionRunnerHandle<'a> {
                 .unwrap_or_else(|e| log::error!("Could not clean up workspace_dir: {e}"));
         });
 
+        // Where the fetched solution will be stored
+        // (Managed by `SubmissionRunnerHandle`, created below)
         let source_dir = path_absolute_join(&workspace_dir, "source").map_err(|e| {
             log::error!("Could not join source_dir path: {e}");
             internal_error_report()
         })?;
-
+        // Where the solution for any given tag will be copied to
+        // (Managed by `TagRunner`)
         let solution_dir = path_absolute_join(&workspace_dir, "solution").map_err(|e| {
             log::error!("Could not join solution_dir path: {e}");
             internal_error_report()
         })?;
-
+        // Where verifier related files will be stored
+        // (Managed by `Verifier`)
+        let verifier_dir = path_absolute_join(&workspace_dir, "verifiers").map_err(|e| {
+            log::error!("Could not join verifier directory path: {e}");
+            internal_error_report()
+        })?;
+        // Staging area for graded test cases
+        // (Managed by `TagRunner`)
         let tests_dir = path_absolute_join(&workspace_dir, "tests").map_err(|e| {
             log::error!("Could not join tests_dir path: {e}");
             internal_error_report()
         })?;
 
-        // Step 2: Describe the container each tag is built and graded in. Each
-        // tag runner gets its own, since a container is removed when dropped.
-        let container = || ContainerInfo {
-            podman: {
-                let mut c = PodmanContainer::new(
-                    settings.runner.podman_image.clone(),
-                    format!("id2202_runner{}", runner_id),
-                );
-                c.network = Some(format!("{}{}", settings.runner.podman_network_prefix, runner_id));
-                c
-            },
-            internal_build_dir: "/root/graded_solution".to_string(),
-            solution_dir: Mount {
-                host_path: solution_dir.clone(),
-                container_path: settings.runner.mount_repo.clone(),
-                writable: false,
-            },
-            tests_dir: Mount {
-                host_path: tests_dir.clone(),
-                container_path: settings.runner.mount_tests.clone(),
-                writable: false,
-            },
-        };
-
-        let verifier = Rc::new(
-            verifier::Verifier::start(
-                settings,
-                &format!("id2202_verifier{}", runner_id),
-                &path_absolute_join(&workspace_dir, "verifiers").map_err(|e| {
-                    log::error!("Could not join verifier directory path: {e}");
-                    internal_error_report()
-                })?,
-                &tests,
-            )
-            .map_err(|e| {
-                log::error!("Could not start the verifier container: {e}");
-                internal_error_report()
-            })?,
-        );
-
         // Step 3: Collect the tags to grade
-        let timeout_total = Duration::from_secs(tests.default.tag.timeout_total.into());
         let tag_runners: BTreeMap<String, TagRunner> = sub
             .jobs
             .iter()
@@ -180,16 +149,21 @@ impl<'a> SubmissionRunnerHandle<'a> {
                     log::error!("Received unknown grading tag {}", job.tag);
                     internal_error_report()
                 })?;
-                let tag_name = job.tag.to_owned();
-                let runner = TagRunner::new(
+                let tag_name = job.tag.clone();
+                let runner = TagRunner::new(TagRunnerOptions {
                     settings,
+                    runner_id,
                     tag,
                     job,
-                    container(),
-                    &source_dir,
-                    verifier.clone(),
-                    timeout_total,
-                );
+                    source_dir: &source_dir,
+                    solution_dir: &solution_dir,
+                    verifier_dir: &verifier_dir,
+                    tests_dir: &tests_dir,
+                })
+                .map_err(|e| {
+                    log::error!("Could not create tag_runner for tag {tag_name}: {e}");
+                    internal_error_report()
+                })?;
                 Ok((tag_name, runner))
             })
             .collect::<Result<_, Report>>()?;
@@ -370,6 +344,11 @@ impl<'a> SubmissionRunnerHandle<'a> {
             let mut conn = DatabaseConnection::connect(self.settings)?;
             tag_runner.job.set_as_finished(&mut conn, status, Some(&report))?;
 
+            // Make sure that all containers are stopped before moving on to
+            // the next tag runner.
+            tag_runner.cleanup().inspect_err(|e| {
+                log::error!("Could not clean up for tag {}: {e}", tag_runner.job.tag)
+            })?;
             self.next_tag_index += 1;
         }
 

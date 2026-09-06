@@ -4,7 +4,7 @@ use serde::Deserialize;
 use smart_default::SmartDefault;
 use std::collections::BTreeMap;
 
-use crate::{error::Error, utils::path_absolute_parent};
+use crate::{config::Settings, error::Error, utils::path_absolute_parent};
 
 pub mod group;
 pub mod kind;
@@ -80,11 +80,11 @@ pub struct Tests {
     /// tag groups (one to many), tag aliases (one to one), but also the
     /// identity lookup of each entry within `tags`.
     ///
-    /// ```rust
+    /// ```plain
     /// // If something is contained in tags, it must also be
     /// // contained in the tag_resolution.
-    /// assert!(tags.contains_key("hello"))
-    /// assert_eq!(tag_resolution.get("hello"), vec!["hello"])
+    /// assert!(tags.contains_key("hello"));
+    /// assert_eq!(tag_resolution.get("hello"), vec!["hello"]);
     /// ```
     pub tag_resolution: BTreeMap<String, Vec<String>>,
 }
@@ -120,7 +120,11 @@ impl AsRef<TestsLoadingOptions> for TestsLoadingOptions {
 
 impl Tests {
     /// Load test configuration from `path`.
-    pub fn load(path: &str, options: impl AsRef<TestsLoadingOptions>) -> Result<Self, Error> {
+    pub fn load(
+        settings: &Settings,
+        path: &str,
+        options: impl AsRef<TestsLoadingOptions>,
+    ) -> Result<Self, Error> {
         // "Hidden" structs that are only used for deserialization
         #[derive(Deserialize, Debug, Clone)]
         struct _UntreatedTests {
@@ -142,7 +146,7 @@ impl Tests {
 
         log::debug!("Instantiating tags");
         let root_dir = path_absolute_parent(path)?;
-        let tags = Tag::from_toml(ut.tags, &ut.default, &root_dir, path, options)?;
+        let tags = Tag::from_toml(settings, ut.tags, &ut.default, &root_dir, path, options)?;
 
         log::debug!("Building the tag resolution table");
         let mut tag_resolution: BTreeMap<String, Vec<String>> =
@@ -177,13 +181,14 @@ mod tests {
     use super::*;
     use asserting::prelude::*;
 
-    /// Path to the example tests.toml file (relative to project root)
-    const EXAMPLE_TESTS_TOML: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/example/tests/tests.toml");
+    /// Path to the example settings.toml file (relative to project root)
+    const EXAMPLE_SETTINGS_TOML: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/example/settings.toml");
 
     #[test]
     fn test_load_example_tests_toml() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         // Verify default values are loaded correctly
@@ -197,7 +202,8 @@ mod tests {
 
     #[test]
     fn test_example_tags_exist() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         // Verify all expected tags exist
@@ -214,7 +220,8 @@ mod tests {
 
     #[test]
     fn test_example_tag_group_hello_all() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         // Verify hello-all tag group contains all expected tags
@@ -230,7 +237,8 @@ mod tests {
 
     #[test]
     fn test_example_hello_tag_has_tests() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         let hello_tag = tests.tags.get("hello").expect("hello tag not found");
@@ -244,7 +252,8 @@ mod tests {
 
     #[test]
     fn test_example_build_config() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         let hello_tag = tests.tags.get("hello").expect("hello tag not found");
@@ -263,7 +272,8 @@ mod tests {
 
     #[test]
     fn test_example_default_kind_run() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         // Verify default kind.run configuration
@@ -278,7 +288,8 @@ mod tests {
 
     #[test]
     fn test_example_default_kind_gen_asm_and_run() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         // Verify default kind.gen_asm_and_run configuration
@@ -292,7 +303,8 @@ mod tests {
 
     #[test]
     fn test_example_allowed_binary_files() {
-        let tests = Tests::load(EXAMPLE_TESTS_TOML, TestsLoadingOptions::default())
+        let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
+        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
             .expect("Failed to load example tests.toml");
 
         // Verify allowed binary files

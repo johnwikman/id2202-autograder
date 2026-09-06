@@ -27,7 +27,7 @@ pub fn validate_settings(s: Settings, args: ValidateSettingsArgs) -> Result<(), 
     dbg!(&s);
 
     log::debug!("Loading test config");
-    let tc = Tests::load(&s.runner.test_config, TestsLoadingOptions::default())?;
+    let tc = Tests::load(&s, &s.runner.test_config, TestsLoadingOptions::default())?;
 
     if args.print_test_config {
         log::debug!("Printing the entire test configuration");

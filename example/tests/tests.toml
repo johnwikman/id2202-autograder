@@ -1,6 +1,8 @@
 # Default values
 [default.tag]
 timeout_total = 1200 # Timeout for a tag
+solution_image = "default"  # see configured images in settings.toml
+verifier_image = "verifier"
 
 # If enabled, default is to allow 5 submission per day from each origin for
 # a specific tag.

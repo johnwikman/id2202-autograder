@@ -254,15 +254,17 @@ pub async fn github_submission(
 
     // Resolve the tags before inserting anything to the database. An unknown
     // tag will result in an immediate error here.
-    let tests =
-        match Tests::load(&settings.runner.test_config, TestsLoadingOptions { taginfo_only: true })
-        {
-            Ok(tests) => Some(tests),
-            Err(e) => {
-                log::error!("FATAL: could not load test configuration: {e}");
-                None
-            }
-        };
+    let tests = match Tests::load(
+        settings,
+        &settings.runner.test_config,
+        TestsLoadingOptions { taginfo_only: true },
+    ) {
+        Ok(tests) => Some(tests),
+        Err(e) => {
+            log::error!("FATAL: could not load test configuration: {e}");
+            None
+        }
+    };
     let jobs = match &tests {
         Some(tests) => resolve_jobs(tests, &grading_tags),
         None => Err(Box::new(internal_error_report())),

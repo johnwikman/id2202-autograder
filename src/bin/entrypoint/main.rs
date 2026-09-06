@@ -40,8 +40,7 @@ enum Commands {
     CheckDatabase(testing::CheckDatabaseArgs),
     TestPodman(testing::TestPodmanArgs),
     TestSyscommand(testing::TestSyscommandArgs),
-    BuildImage(setup::BuildImageArgs),
-    PullImage,
+    SetupImages(setup::SetupImageArgs),
     VerifySshHosts(setup::VerifySshHostsArgs),
 }
 
@@ -62,8 +61,7 @@ fn main() -> Result<(), Error> {
         Commands::CheckDatabase(a) => testing::check_database(s, a),
         Commands::TestPodman(a) => testing::test_podman(s, a),
         Commands::TestSyscommand(a) => testing::test_syscommand(s, a),
-        Commands::BuildImage(a) => setup::build_image(s, a),
-        Commands::PullImage => setup::pull_image(s),
+        Commands::SetupImages(a) => setup::setup_images(s, a),
         Commands::VerifySshHosts(a) => setup::verify_ssh_hosts(s, a),
     }
 }
@@ -89,19 +87,19 @@ fn start(s: &Settings) -> Result<(), Error> {
     // autograder does not depend on the network.
     log::debug!("Checking that the podman images exist");
     let podimgs = podman::images().unwrap();
-    for (image, how) in
-        [(&s.runner.podman_image, "pull-image"), (&s.runner.podman_verifier_image, "build-image")]
-    {
-        if !podimgs.contains(image) {
+    for (name, img) in &s.runner.podman.images {
+        if !podimgs.contains(&img.image) {
             return Err(Error::runtime(format!(
-                "the podman image \"{image}\" does not exist, run `entrypoint {how}` first"
+                "Missing image \"{}\" for {}. Run `entrypoint setup-images`.",
+                img.image, name,
             )));
         }
     }
-    log::debug!("Checking that the podman networks exists for each runner");
+
+    log::debug!("Ensuring that the podman networks exists for each runner");
     let podnets = podman::networks().unwrap();
     for runner_id in 0..s.runner.n_runners {
-        let expected_net = format!("{}{}", s.runner.podman_network_prefix, runner_id);
+        let expected_net = format!("{}{}", s.runner.podman.network_prefix, runner_id);
         if !podnets.contains(&expected_net) {
             podman::create_network(&expected_net).unwrap();
         }

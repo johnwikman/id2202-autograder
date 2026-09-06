@@ -1,7 +1,7 @@
 # Read environment variables from `.env`.
 set dotenv-load := true
 
-image_version := "2.0.0-dev4"
+image_version := "2.0.0-dev5"
 image_name    := "localhost/id2202-autograder"
 image_tag     := image_name + ":" + image_version
 
@@ -15,7 +15,7 @@ rm-image:
     docker rmi {{image_tag}}
 
 setup-dirs:
-    mkdir -p data/containers data/log data/shadow data/ssh \
+    mkdir -p data/containers data/log data/shadow data/ssh data/workspace \
         data/postgres \
         data/gitlab/config data/gitlab/logs data/gitlab/data
 
