@@ -98,6 +98,7 @@ impl OriginKind for GitLab {
         info: &Self::Info,
         state: &Self::SubmissionState,
         description: Option<&str>,
+        _submission_id: Option<i64>,
     ) -> Result<(), Error> {
         let c = ReqwestClient::new();
 
@@ -143,6 +144,7 @@ impl OriginKind for GitLab {
         settings: &Settings,
         info: &Self::Info,
         report: &MetaReport<'a>,
+        _submission_id: Option<i64>,
     ) -> Result<(), Error> {
         let c = ReqwestClient::new();
 

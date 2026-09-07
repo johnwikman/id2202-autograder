@@ -58,6 +58,13 @@ prohibited_repo_prefixes = []
 prohibited_repo_suffixes = []
 use_https = false
 
+# Configuration for direct submission requests
+[submission.direct]
+secret = "s3cr3t"
+storage_dir = "./data/direct-submissions"
+max_unpacked_size = 4_194_304 # Maximum size of direct submissions (4 MiB)
+allowed_domains = ["localhost:5000"]
+
 # Postgres configuration
 [postgres]
 user = "autograder"

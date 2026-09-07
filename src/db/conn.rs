@@ -76,8 +76,7 @@ impl DatabaseConnection {
         requested_tags: &[&str],
         mut jobs: Vec<JobSpec<'_>>,
         origin: &K::NewOriginRow,
-        user: &str,
-        commit: &str,
+        info: &K::InfoData<'_>,
     ) -> Result<RegisterResult, Error> {
         use crate::db::schema::{
             submission_jobs,
@@ -212,7 +211,7 @@ impl DatabaseConnection {
                     Error::auto_msg("could not insert new submission into database", e)
                 })?;
 
-            K::insert_info(conn, &sub, &kind_src, user, commit)?;
+            K::insert_info(conn, &sub, &kind_src, info)?;
 
             // Inserted with `eligible_at` already decided, so no runner can
             // claim a job before its throttle has been applied.
@@ -250,8 +249,7 @@ impl DatabaseConnection {
         requested_tags: &[&str],
         report: &Report,
         origin: &K::NewOriginRow,
-        user: &str,
-        commit: &str,
+        info: &K::InfoData<'_>,
     ) -> Result<Submission, Error> {
         use crate::db::schema::submissions;
 
@@ -275,7 +273,7 @@ impl DatabaseConnection {
                     Error::auto_msg("could not insert new submission into database", e)
                 })?;
 
-            K::insert_info(conn, &sub, &kind_src, user, commit)?;
+            K::insert_info(conn, &sub, &kind_src, info)?;
 
             Ok::<_, Error>(sub.id)
         })?;

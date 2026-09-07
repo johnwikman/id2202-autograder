@@ -161,3 +161,43 @@ pub struct NewSubmissionInfoGitLabRow {
     pub user: String,
     pub commit: String,
 }
+
+#[derive(Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable)]
+#[diesel(table_name = crate::db::schema::submission_origin_direct)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct SubmissionOriginDirectRow {
+    pub id: i64,
+    pub domain: String,
+    pub entity: String,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::db::schema::submission_origin_direct)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct NewSubmissionOriginDirectRow {
+    pub domain: String,
+    pub entity: String,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, QueryableByName, Selectable)]
+#[diesel(table_name = crate::db::schema::submission_info_direct)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct SubmissionInfoDirectRow {
+    pub id: i64,
+    pub submission_id: i64,
+    pub direct_origin_id: i64,
+    pub local_path: String,
+    pub sink_url: Option<String>,
+    pub sink_secret_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::db::schema::submission_info_direct)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct NewSubmissionInfoDirectRow {
+    pub submission_id: i64,
+    pub direct_origin_id: i64,
+    pub local_path: String,
+    pub sink_url: Option<String>,
+    pub sink_secret_key: Option<String>,
+}

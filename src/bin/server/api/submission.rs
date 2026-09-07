@@ -131,14 +131,23 @@ pub async fn get_submission_job(
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct SubmissionSearchFilterQuery {
-    /// Kind of submission source: `github` or `gitlab`
+    /// Kind of submission source: `direct`, `github`, or `gitlab`
     source_kind: Option<String>,
     /// The git commit hash associated with the submission.
+    /// (Supported kinds: `github`, `gitlab`)
     commit_hash: Option<String>,
     /// The username associated with the submission.
+    /// (Supported kinds: `github`, `gitlab`)
     user: Option<String>,
     /// The repository associated with the submission.
+    /// (Supported kinds: `github`, `gitlab`)
     repo: Option<String>,
+    /// The domain that the submission originated from.
+    /// (Supported kinds: `direct`)
+    domain: Option<String>,
+    /// The entity of the submission.
+    /// (Supported kinds: `direct`)
+    entity: Option<String>,
     /// Only include submissions that has been graded with this tag. This does
     /// not capture tags which are aliases (that resolve to one or more grading
     /// tags).
@@ -173,9 +182,11 @@ pub async fn get_submission_search(
 ) -> Result<impl Responder, actix_web::Error> {
     use diesel::{self, ExpressionMethods, QueryDsl, RunQueryDsl, SelectableHelper};
     use id2202_autograder::db::schema::{
+        submission_info_direct,
         submission_info_github::{self, columns as gh_info_col},
         submission_info_gitlab::{self, columns as gl_info_col},
         submission_jobs::{self, columns as job_col},
+        submission_origin_direct::{self, columns as d_src_col},
         submission_origin_github::{self, columns as gh_src_col},
         submission_origin_gitlab::{self, columns as gl_src_col},
         submissions::{self, columns as sub_col},
@@ -202,13 +213,16 @@ pub async fn get_submission_search(
         }
     };
 
+    #[derive(Default)]
     struct SearchSources {
+        direct: bool,
         github: bool,
         gitlab: bool,
     }
     let search_sources = match q.source_kind.map(|s| s.to_lowercase()).as_deref() {
-        Some("github") => SearchSources { github: true, gitlab: false },
-        Some("gitlab") => SearchSources { github: false, gitlab: true },
+        Some("direct") => SearchSources { direct: true, ..Default::default() },
+        Some("github") => SearchSources { github: true, ..Default::default() },
+        Some("gitlab") => SearchSources { gitlab: true, ..Default::default() },
         Some(kind) => {
             return Err(ErrorResponse::bad_request(
                 &req,
@@ -216,7 +230,7 @@ pub async fn get_submission_search(
             )
             .into());
         }
-        None => SearchSources { github: true, gitlab: true },
+        None => SearchSources { direct: true, github: true, gitlab: true },
     };
 
     macro_rules! apply_common_filters {
@@ -238,6 +252,33 @@ pub async fn get_submission_search(
             }
         };
     }
+
+        let direct_results = if search_sources.direct {
+            let mut dbq = submissions::table
+                .inner_join(submission_info_direct::table.inner_join(submission_origin_direct::table))
+                .select(SubmissionRow::as_select())
+                .into_boxed();
+
+            apply_common_filters!(dbq, q);
+
+            if let Some(domain) = &q.domain {
+                dbq = dbq.filter(d_src_col::domain.eq(domain));
+            }
+            if let Some(entity) = &q.entity {
+                dbq = dbq.filter(d_src_col::entity.eq(entity));
+            }
+            let found: Vec<SubmissionRow> =
+                dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
+                    |e| {
+                        log::error!("Could not fetch results from database: {e}");
+                        ErrorResponse::internal_server_error(&req)
+                    },
+                )?;
+
+            found
+        } else {
+            Vec::new()
+        };
 
     let gh_results = if search_sources.github {
         let mut dbq = submissions::table
@@ -301,7 +342,8 @@ pub async fn get_submission_search(
         Vec::new()
     };
 
-    let mut rows = gh_results;
+    let mut rows = direct_results;
+    rows.extend(gh_results);
     rows.extend(gl_results);
     rows.sort_by_key(|r| std::cmp::Reverse(r.id));
     rows.truncate(limit as usize);

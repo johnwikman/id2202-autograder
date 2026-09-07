@@ -39,10 +39,10 @@ pub async fn report_superseded(settings: &Settings, reg: &RegisterResult) -> Res
             ),
         ]));
 
-        old.origin.set_status_and_report(settings, &rep, old.status()).await.unwrap_or_else(|e| {
+        old.origin.set_status_and_report(settings, &rep, old.status(), Some(old.id)).await.unwrap_or_else(|e| {
             errs.push(
                 Error::runtime(format!("could not report superseded submission {}", old.id))
-                    .with_cause(e.into())
+                    .with_cause(e)
                     .into(),
             );
         });
@@ -216,13 +216,14 @@ pub fn extract_grading_tags<'a>(
 /// show the student rather than a partial job list.
 pub fn resolve_jobs<'a>(
     tests: &'a Tests,
-    requested: &[&str],
+    requested: &[impl AsRef<str>],
 ) -> Result<Vec<JobSpec<'a>>, Box<Report>> {
     // maps "actual tag" -> "the tags that it was derived from"
     let mut by_tag: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
 
     for name in requested {
-        let Some(tagnames) = tests.tag_resolution.get(*name) else {
+        let name = name.as_ref();
+        let Some(tagnames) = tests.tag_resolution.get(name) else {
             log::info!("Received invalid tag {name}");
             return Err(Box::new(Report::InvalidTag(ReportInvalidTag {
                 tag_name: name.to_string(),

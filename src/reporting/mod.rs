@@ -259,6 +259,69 @@ impl<'a> MetaReport<'a> {
             Self::Structured(p) => p.render_html(settings, dst).map_err(|e| e.into()),
         }
     }
+
+    pub fn to_json(&self, settings: &ReportingSettings) -> Result<serde_json::Value, Error> {
+        /// Helper function for creating an object with a single key-value
+        /// binding of `{tag: value}`.
+        fn tagobj(tag: &str, value: serde_json::Value) -> serde_json::Value {
+            let mut object = serde_json::Map::new();
+            object.insert(tag.to_string(), value);
+            serde_json::Value::Object(object)
+        }
+
+        Ok(match self {
+            Self::Transient(r) => tagobj("transient", serde_json::to_value(r)?),
+            Self::JobResults(MetaJobResultsReport { jobs }) => {
+                use chrono::{DateTime, Utc};
+                #[derive(Serialize)]
+                struct SerializableJob<'a> {
+                    id: i64,
+                    tag: &'a str,
+                    requested_as: &'a Vec<String>,
+                    eligible_at: &'a Option<DateTime<Utc>>,
+                    voided_at: &'a Option<DateTime<Utc>>,
+                    assigned_runner_id: Option<i32>,
+                    status: String,
+                    status_text: &'a Option<String>,
+                    started_at: &'a Option<DateTime<Utc>>,
+                    finished_at: &'a Option<DateTime<Utc>>,
+                    report: &'a Option<Report>,
+                }
+                let jobs = jobs
+                    .iter()
+                    .map(|j| {
+                        serde_json::to_value(SerializableJob {
+                            id: j.job.id,
+                            tag: &j.job.tag,
+                            requested_as: &j.job.requested_as,
+                            eligible_at: &j.job.eligible_at,
+                            voided_at: &j.job.voided_at,
+                            assigned_runner_id: j.job.assigned_runner_id,
+                            status: j.job.status.to_string(),
+                            status_text: &j.job.status_text,
+                            started_at: &j.job.started_at,
+                            finished_at: &j.job.finished_at,
+                            report: &j.report,
+                        })
+                        .map_err(|e| {
+                            Error::convert("error serializing job into JSON").with_cause(e)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                tagobj("job_results", serde_json::Value::Array(jobs))
+            }
+            Self::Compound(parts) => {
+                let parts =
+                    parts.iter().map(|p| p.to_json(settings)).collect::<Result<Vec<_>, Error>>()?;
+                tagobj("compound", serde_json::Value::Array(parts))
+            }
+            Self::Structured(p) => {
+                let mut s = String::new();
+                p.render_markdown(settings, &mut s)?;
+                tagobj("structured", serde_json::Value::String(s))
+            }
+        })
+    }
 }
 
 pub struct MarkdownFormatterMetaReport<'a> {

@@ -3,9 +3,9 @@ use signal_hook::{
     consts::{SIGINT, SIGTERM},
     iterator::Signals,
 };
-use std::ffi::OsString;
 use std::sync::mpsc;
 use std::time::Duration;
+use std::{ffi::OsString, path::Path};
 use subprocess::{Exec, Job};
 
 use id2202_autograder::{
@@ -80,6 +80,19 @@ fn start(s: &Settings) -> Result<(), Error> {
     log::debug!("Server binary: {}", server_bin.to_str().unwrap());
     log::debug!("Runner binary: {}", runner_bin.to_str().unwrap());
 
+    // Ensure that runtime directories exist before proceeding.
+    let crucial_dirs: Vec<&str> = vec![
+        &s.log.dir,
+        &s.runner.shadow_dir,
+        &s.runner.workspace_dir,
+        &s.submission.direct.storage_dir,
+    ];
+    for path in crucial_dirs {
+        if !Path::new(path).is_dir() {
+            return Error::err_fs("missing crucial directory", path);
+        }
+    }
+
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 
     // Verify existence of podman image and networks. Images are never fetched
@@ -138,6 +151,7 @@ fn start(s: &Settings) -> Result<(), Error> {
             s,
             &MetaReport::Transient(&report),
             sub.status(),
+            Some(sub.id),
         ))?;
     }
 

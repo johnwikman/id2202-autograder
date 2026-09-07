@@ -15,7 +15,7 @@ rm-image:
     docker rmi {{image_tag}}
 
 setup-dirs:
-    mkdir -p data/containers data/log data/shadow data/ssh data/workspace \
+    mkdir -p data/containers data/log data/shadow data/ssh data/workspace data/direct-submissions \
         data/postgres \
         data/gitlab/config data/gitlab/logs data/gitlab/data
 

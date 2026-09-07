@@ -188,8 +188,9 @@ mod tests {
     #[test]
     fn test_load_example_tests_toml() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         // Verify default values are loaded correctly
         assert_that!(tests.default.build.timeout).is_equal_to(60);
@@ -203,8 +204,9 @@ mod tests {
     #[test]
     fn test_example_tags_exist() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         // Verify all expected tags exist
         assert_that!(&tests.tags).contains_key("hello");
@@ -221,8 +223,9 @@ mod tests {
     #[test]
     fn test_example_tag_group_hello_all() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         // Verify hello-all tag group contains all expected tags
         let hello_all =
@@ -238,8 +241,9 @@ mod tests {
     #[test]
     fn test_example_hello_tag_has_tests() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         let hello_tag = tests.tags.get("hello").expect("hello tag not found");
         assert_that!(hello_tag.name.as_str()).is_equal_to("hello");
@@ -253,8 +257,9 @@ mod tests {
     #[test]
     fn test_example_build_config() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         let hello_tag = tests.tags.get("hello").expect("hello tag not found");
 
@@ -273,8 +278,9 @@ mod tests {
     #[test]
     fn test_example_default_kind_run() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         // Verify default kind.run configuration
         let run_config = &tests.default.test.kinds.run;
@@ -289,8 +295,9 @@ mod tests {
     #[test]
     fn test_example_default_kind_gen_asm_and_run() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         // Verify default kind.gen_asm_and_run configuration
         let asm_config = &tests.default.test.kinds.gen_asm_and_run;
@@ -304,8 +311,9 @@ mod tests {
     #[test]
     fn test_example_allowed_binary_files() {
         let settings = Settings::load(EXAMPLE_SETTINGS_TOML).unwrap();
-        let tests = Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
-            .expect("Failed to load example tests.toml");
+        let tests =
+            Tests::load(&settings, &settings.runner.test_config, TestsLoadingOptions::default())
+                .expect("Failed to load example tests.toml");
 
         // Verify allowed binary files
         assert_that!(&tests.default.build.allowed_binary_files)

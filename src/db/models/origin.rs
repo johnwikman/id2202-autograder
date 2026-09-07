@@ -21,9 +21,15 @@ use super::raw::{
 use super::submission::SubmissionStatus;
 use crate::{
     config::Settings,
-    db::conn::DatabaseConnection,
+    db::{
+        conn::DatabaseConnection,
+        models::raw::{
+            NewSubmissionInfoDirectRow, NewSubmissionOriginDirectRow, SubmissionInfoDirectRow,
+            SubmissionOriginDirectRow,
+        },
+    },
     error::Error,
-    origin::{github::GitHub, gitlab::GitLab, Origin, OriginKind},
+    origin::{direct::Direct, github::GitHub, gitlab::GitLab, Origin, OriginKind},
     reporting::MetaReport,
 };
 
@@ -32,6 +38,7 @@ use crate::{
 pub enum StoredOriginKindID {
     GitHub = 0,
     GitLab = 1,
+    Direct = 2,
 }
 
 impl std::fmt::Display for StoredOriginKindID {
@@ -39,6 +46,7 @@ impl std::fmt::Display for StoredOriginKindID {
         match self {
             Self::GitHub => write!(f, "GitHub"),
             Self::GitLab => write!(f, "GitLab"),
+            Self::Direct => write!(f, "Direct"),
         }
     }
 }
@@ -111,6 +119,7 @@ pub struct SubmissionOrigin {
 pub enum StoredOriginEnum {
     GitHub(StoredOrigin<GitHub>),
     GitLab(StoredOrigin<GitLab>),
+    Direct(StoredOrigin<Direct>),
 }
 
 /// Common information that an origin needs to provide.
@@ -118,6 +127,7 @@ pub trait StoredOriginKind: OriginKind + Sized {
     type OriginRow: Selectable<diesel::pg::Pg>;
     type InfoRow: Selectable<diesel::pg::Pg>;
     type NewOriginRow;
+    type InfoData<'a>;
 
     const KIND_ID: StoredOriginKindID;
 
@@ -151,12 +161,11 @@ pub trait StoredOriginKind: OriginKind + Sized {
     /// This is currently hardcoded to a user and a commit, but will be changed
     /// in the future to handle more generic submission origins which are not
     /// git-based.
-    fn insert_info(
+    fn insert_info<'a>(
         conn: &mut PgConnection,
         submission: &SubmissionRow,
         origin: &Self::OriginRow,
-        user: &str,
-        commit: &str,
+        info: &Self::InfoData<'a>,
     ) -> Result<(), Error>;
 }
 
@@ -178,10 +187,16 @@ impl<K: StoredOriginKind> StoredOrigin<K> {
     }
 }
 
+pub struct GitSubmitData<'a> {
+    pub user: &'a str,
+    pub commit: &'a str,
+}
+
 impl StoredOriginKind for GitHub {
     type OriginRow = SubmissionOriginGitHubRow;
     type InfoRow = SubmissionInfoGitHubRow;
     type NewOriginRow = NewSubmissionOriginGitHubRow;
+    type InfoData<'a> = GitSubmitData<'a>;
     const KIND_ID: StoredOriginKindID = StoredOriginKindID::GitHub;
 
     fn as_origin(
@@ -264,12 +279,11 @@ impl StoredOriginKind for GitHub {
         })
     }
 
-    fn insert_info(
+    fn insert_info<'a>(
         conn: &mut PgConnection,
         submission: &SubmissionRow,
         origin: &SubmissionOriginGitHubRow,
-        user: &str,
-        commit: &str,
+        info: &GitSubmitData<'a>,
     ) -> Result<(), Error> {
         use crate::db::schema::submission_info_github;
 
@@ -277,8 +291,8 @@ impl StoredOriginKind for GitHub {
             .values(NewSubmissionInfoGitHubRow {
                 submission_id: submission.id,
                 github_origin_id: origin.id,
-                commit: commit.to_string(),
-                user: user.to_string(),
+                commit: info.commit.to_string(),
+                user: info.user.to_string(),
             })
             .execute(conn)
             .map_err(|e: diesel::result::Error| {
@@ -292,6 +306,7 @@ impl StoredOriginKind for GitLab {
     type OriginRow = SubmissionOriginGitLabRow;
     type InfoRow = SubmissionInfoGitLabRow;
     type NewOriginRow = NewSubmissionOriginGitLabRow;
+    type InfoData<'a> = GitSubmitData<'a>;
     const KIND_ID: StoredOriginKindID = StoredOriginKindID::GitLab;
 
     fn as_origin(
@@ -374,12 +389,11 @@ impl StoredOriginKind for GitLab {
         })
     }
 
-    fn insert_info(
+    fn insert_info<'a>(
         conn: &mut PgConnection,
         submission: &SubmissionRow,
         origin: &SubmissionOriginGitLabRow,
-        user: &str,
-        commit: &str,
+        info: &GitSubmitData<'a>,
     ) -> Result<(), Error> {
         use crate::db::schema::submission_info_gitlab;
 
@@ -387,12 +401,129 @@ impl StoredOriginKind for GitLab {
             .values(NewSubmissionInfoGitLabRow {
                 submission_id: submission.id,
                 gitlab_origin_id: origin.id,
-                commit: commit.to_string(),
-                user: user.to_string(),
+                commit: info.commit.to_string(),
+                user: info.user.to_string(),
             })
             .execute(conn)
             .map_err(|e: diesel::result::Error| {
                 Error::auto_msg("could not insert GitLab info into database", e)
+            })?;
+        Ok(())
+    }
+}
+
+pub struct DirectInfoData<'a> {
+    pub local_path: &'a str,
+    pub sink_and_secret: Option<(&'a str, &'a str)>,
+}
+
+impl StoredOriginKind for Direct {
+    type OriginRow = SubmissionOriginDirectRow;
+    type InfoRow = SubmissionInfoDirectRow;
+    type NewOriginRow = NewSubmissionOriginDirectRow;
+    type InfoData<'a> = DirectInfoData<'a>;
+    const KIND_ID: StoredOriginKindID = StoredOriginKindID::Direct;
+
+    fn as_origin(
+        _settings: &Settings,
+        origin_row: &Self::OriginRow,
+        info_row: &Self::InfoRow,
+    ) -> Result<Origin<Self>, Error> {
+        Ok(Origin {
+            info: Self::Info {
+                domain: origin_row.domain.clone(),
+                entity: origin_row.entity.clone(),
+                local_path: info_row.local_path.clone(),
+                sink_and_secret: match (&info_row.sink_url, &info_row.sink_secret_key) {
+                    (Some(u), Some(k)) => Some((u.clone(), k.clone())),
+                    (None, None) => None,
+                    _ => {
+                        return Err(Error::runtime("incoherent database on direct origin with sink url set but not its secret key"));
+                    }
+                },
+            },
+        })
+    }
+
+    fn status_to_state(status: SubmissionStatus) -> Self::SubmissionState {
+        type SS = SubmissionStatus;
+        use crate::origin::direct::DirectState as DS;
+        match status {
+            SS::Waiting => DS::Waiting,
+            SS::InProgress => DS::InProgress,
+            SS::Success => DS::Success,
+            SS::Failed => DS::Failed,
+            SS::Aborted => DS::Aborted,
+            SS::Unknown => DS::Unknown,
+        }
+    }
+
+    fn resolve(
+        conn: &mut PgConnection,
+        origin: &NewSubmissionOriginDirectRow,
+    ) -> Result<(SubmissionOriginRow, SubmissionOriginDirectRow), Error> {
+        use crate::db::schema::submission_origin_direct::{self, columns as d_col};
+
+        conn.transaction(|conn| {
+            let inserted = diesel::insert_into(submission_origin_direct::table)
+                .values(origin)
+                .on_conflict_do_nothing()
+                .returning(SubmissionOriginDirectRow::as_returning())
+                .get_result(conn)
+                .optional()
+                .map_err(|e: diesel::result::Error| {
+                    Error::auto_msg("could not insert a Direct origin", e)
+                })?;
+
+            if let Some(d_src) = inserted {
+                let src = Self::KIND_ID.insert_origin_row(conn, d_src.id)?;
+                return Ok((src, d_src));
+            }
+
+            let d_src = submission_origin_direct::table
+                .select(SubmissionOriginDirectRow::as_select())
+                .filter(d_col::domain.eq(&origin.domain))
+                .filter(d_col::entity.eq(&origin.entity))
+                .first(conn)
+                .map_err(|e: diesel::result::Error| {
+                    Error::auto_msg(
+                        format!(
+                            "expected an existing Direct origin {} {}",
+                            origin.domain, origin.entity
+                        ),
+                        e,
+                    )
+                })?;
+
+            let src = Self::KIND_ID.get_origin_row(conn, d_src.id)?;
+            Ok((src, d_src))
+        })
+    }
+
+    fn insert_info<'a>(
+        conn: &mut PgConnection,
+        submission: &SubmissionRow,
+        origin: &SubmissionOriginDirectRow,
+        info: &DirectInfoData<'a>,
+    ) -> Result<(), Error> {
+        use crate::db::schema::submission_info_direct;
+
+        let (sink_url, sink_secret_key) = match info.sink_and_secret {
+            Some((u, k)) => (Some(u.to_string()), Some(k.to_string())),
+            None => (None, None),
+        };
+
+        diesel::insert_into(submission_info_direct::table)
+            .values(NewSubmissionInfoDirectRow {
+                submission_id: submission.id,
+                direct_origin_id: origin.id,
+                local_path: info.local_path.to_string(),
+                sink_url,
+                sink_secret_key,
+            })
+            .execute(conn)
+            .map_err(|e: diesel::result::Error| {
+                Error::auto_msg("could not insert Direct info into database", e)
             })?;
         Ok(())
     }
@@ -406,9 +537,10 @@ impl SubmissionOrigin {
     /// or if its origin has a `kind` value that is not a `StoredOriginKindID`.
     pub fn of_submissions(db: &mut DatabaseConnection, ids: &[i64]) -> Result<Vec<Self>, Error> {
         use crate::db::schema::{
+            submission_info_direct::{self, columns as dinfo_col},
             submission_info_github::{self, columns as ghinfo_col},
             submission_info_gitlab::{self, columns as glinfo_col},
-            submission_origin_github, submission_origin_gitlab,
+            submission_origin_direct, submission_origin_github, submission_origin_gitlab,
             submission_origins::{self, columns as subsrc_col},
             submissions::{self, columns as sub_col},
         };
@@ -447,6 +579,17 @@ impl SubmissionOrigin {
             .into_iter()
             .collect();
 
+        let direct: BTreeMap<i64, StoredOrigin<Direct>> = submission_info_direct::table
+            .inner_join(submission_origin_direct::table)
+            .select((dinfo_col::submission_id, StoredOrigin::<Direct>::as_select()))
+            .filter(dinfo_col::submission_id.eq_any(ids))
+            .load(&mut db.conn)
+            .map_err(|e: diesel::result::Error| {
+                Error::auto_msg("could not get the Direct origins of the submissions", e)
+            })?
+            .into_iter()
+            .collect();
+
         ids.iter()
             .map(|id| {
                 let src_row = src_rows
@@ -460,6 +603,9 @@ impl SubmissionOrigin {
                     }
                     Some(StoredOriginKindID::GitLab) => {
                         gitlab.get(id).cloned().map(StoredOriginEnum::GitLab)
+                    }
+                    Some(StoredOriginKindID::Direct) => {
+                        direct.get(id).cloned().map(StoredOriginEnum::Direct)
                     }
                     None => {
                         return Error::err_runtime(format!(
@@ -480,6 +626,7 @@ impl SubmissionOrigin {
         match &self.origin {
             StoredOriginEnum::GitHub(o) => o.as_origin(settings)?.fetch_into(settings, dir),
             StoredOriginEnum::GitLab(o) => o.as_origin(settings)?.fetch_into(settings, dir),
+            StoredOriginEnum::Direct(o) => o.as_origin(settings)?.fetch_into(settings, dir),
         }
     }
 
@@ -489,16 +636,22 @@ impl SubmissionOrigin {
         settings: &Settings,
         report: &MetaReport<'a>,
         status: SubmissionStatus,
+        submission_id: Option<i64>,
     ) -> Result<(), Error> {
         match &self.origin {
             StoredOriginEnum::GitHub(o) => {
                 o.as_origin(settings)?
-                    .set_state_and_report(settings, report, &GitHub::status_to_state(status), None)
+                    .set_state_and_report(settings, report, &GitHub::status_to_state(status), None, submission_id)
                     .await
             }
             StoredOriginEnum::GitLab(o) => {
                 o.as_origin(settings)?
-                    .set_state_and_report(settings, report, &GitLab::status_to_state(status), None)
+                    .set_state_and_report(settings, report, &GitLab::status_to_state(status), None, submission_id)
+                    .await
+            }
+            StoredOriginEnum::Direct(o) => {
+                o.as_origin(settings)?
+                    .set_state_and_report(settings, report, &Direct::status_to_state(status), None, submission_id)
                     .await
             }
         }

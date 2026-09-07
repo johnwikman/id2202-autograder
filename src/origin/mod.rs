@@ -1,5 +1,6 @@
 //! Functionality related to different submission origins.
 
+pub mod direct;
 pub mod github;
 pub mod gitlab;
 
@@ -28,8 +29,9 @@ impl<K: OriginKind> Origin<K> {
         settings: &Settings,
         state: &K::SubmissionState,
         description: Option<&str>,
+        submission_id: Option<i64>,
     ) -> Result<(), Error> {
-        K::set_state(settings, &self.info, state, description).await
+        K::set_state(settings, &self.info, state, description, submission_id).await
     }
 
     /// Sends a report to the submission origin.
@@ -37,8 +39,9 @@ impl<K: OriginKind> Origin<K> {
         &self,
         settings: &Settings,
         report: &MetaReport<'_>,
+        submission_id: Option<i64>,
     ) -> Result<(), Error> {
-        K::send_report(settings, &self.info, report).await
+        K::send_report(settings, &self.info, report, submission_id).await
     }
 
     /// Sets the state of the submission at the origin and sends a report to
@@ -50,9 +53,10 @@ impl<K: OriginKind> Origin<K> {
         report: &MetaReport<'_>,
         state: &K::SubmissionState,
         state_description: Option<&str>,
+        submission_id: Option<i64>,
     ) -> Result<(), Error> {
-        let future_state = self.set_state(settings, state, state_description);
-        let future_report = self.send_report(settings, report);
+        let future_state = self.set_state(settings, state, state_description, submission_id);
+        let future_report = self.send_report(settings, report, submission_id);
 
         match tokio::join!(future_state, future_report) {
             (Ok(_), Ok(_)) => Ok(()),
@@ -81,6 +85,7 @@ pub trait OriginKind {
         info: &Self::Info,
         state: &Self::SubmissionState,
         description: Option<&str>,
+        submission_id: Option<i64>,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Sends a report to the submission origin.
@@ -88,6 +93,7 @@ pub trait OriginKind {
         settings: &Settings,
         info: &Self::Info,
         report: &MetaReport,
+        submission_id: Option<i64>,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 }
 

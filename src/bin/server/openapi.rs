@@ -15,7 +15,7 @@ use crate::api::response::{
     ErrorResponse, SubmissionJobWithReportResponse, SubmissionResponse, SubmitResponse,
     TagListResponse, TagResponse,
 };
-use crate::api::{submission, submit_github, submit_gitlab, tag};
+use crate::api::{submission, submit_direct, submit_github, submit_gitlab, tag};
 
 /// The API operations, collected from the annotated handlers. Paths here are
 /// relative to the `/api` scope; the prefix is applied by [`ApiDoc`].
@@ -28,6 +28,7 @@ use crate::api::{submission, submit_github, submit_gitlab, tag};
         submission::get_submission,
         submission::get_submission_job,
         submission::get_submission_search,
+        submit_direct::direct_submission,
         submit_github::github_submission,
         submit_gitlab::gitlab_submit_webhook,
     ),

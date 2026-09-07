@@ -9,7 +9,7 @@ use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
     db::{
         conn::DatabaseConnection,
-        models::{NewSubmissionOriginGitHubRow, SubmissionStatus},
+        models::{origin::GitSubmitData, NewSubmissionOriginGitHubRow, SubmissionStatus},
     },
     origin::{
         github::{self, GitHub, GitHubInfo},
@@ -236,6 +236,7 @@ pub async fn github_submission(
                         &MetaReport::Transient(rep.as_ref()),
                         &github::CommitState::Failure,
                         Some("Invalid Grading Tags"),
+                        None,
                     )
                     .await
                     .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
@@ -291,8 +292,7 @@ pub async fn github_submission(
                     &grading_tags,
                     &report,
                     &source,
-                    &sub.pusher.name,
-                    &sub.head_commit.id,
+                    &GitSubmitData { user: &sub.pusher.name, commit: &sub.head_commit.id },
                 )
                 .map_err(|e| {
                     log::error!("Could not register submission with database: {e}");
@@ -305,6 +305,7 @@ pub async fn github_submission(
                     &MetaReport::Transient(&report),
                     &github::CommitState::Failure,
                     Some("Submission Error"),
+                    Some(submission.id),
                 )
                 .await
                 .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}"));
@@ -321,8 +322,7 @@ pub async fn github_submission(
             &grading_tags,
             jobs,
             &source,
-            &sub.pusher.name,
-            &sub.head_commit.id,
+            &GitSubmitData { user: &sub.pusher.name, commit: &sub.head_commit.id },
         )
         .map_err(|e| {
             log::error!("Could not register submission with database: {e}");
@@ -342,7 +342,7 @@ pub async fn github_submission(
     };
 
     // Respond to the commit message and set the commit status
-    origin.set_state_and_report(settings, &MetaReport::Structured(acceptance_message(&registered.submission)), &state, Some(label))
+    origin.set_state_and_report(settings, &MetaReport::Structured(acceptance_message(&registered.submission)), &state, Some(label), Some(submission_id))
         .await
         .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}. Will not reject this submission since it is already created."));
 

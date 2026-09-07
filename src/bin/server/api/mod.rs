@@ -12,6 +12,7 @@ use id2202_autograder::config::Settings;
 mod common;
 pub mod response;
 pub mod submission;
+pub mod submit_direct;
 pub mod submit_github;
 pub mod submit_gitlab;
 pub mod tag;
@@ -26,6 +27,7 @@ pub fn config(cfg: &mut ServiceConfig, _settings: &Settings) {
     // Route paths for these handlers are defined on the handlers themselves via
     // actix route macros (`#[get(...)]` / `#[post(...)]`), which is also where
     // utoipa reads them for the generated OpenAPI documentation.
+    cfg.service(submit_direct::direct_submission);
     cfg.service(submit_github::github_submission);
     cfg.service(submit_gitlab::gitlab_submit_webhook);
     cfg.service(submission::get_submission);
@@ -69,7 +71,7 @@ pub async fn auth_hook(
     req: ServiceRequest,
     next: Next<impl MessageBody>,
 ) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
-    static BYPASS_PREFIXES: [&str; 1] = ["/submit"];
+    static BYPASS_PREFIXES: [&str; 1] = ["/submit/"];
 
     if !BYPASS_PREFIXES.iter().any(|pfx| {
         // We check the part that comes after the scope prefix, assuming that

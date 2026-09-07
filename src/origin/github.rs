@@ -95,6 +95,7 @@ impl OriginKind for GitHub {
         info: &Self::Info,
         state: &Self::SubmissionState,
         description: Option<&str>,
+        _submission_id: Option<i64>,
     ) -> Result<(), Error> {
         #[derive(Debug, Clone, Serialize, Deserialize)]
         struct GhCommitStatus {
@@ -143,6 +144,7 @@ impl OriginKind for GitHub {
         settings: &Settings,
         info: &Self::Info,
         report: &MetaReport<'a>,
+        _submission_id: Option<i64>,
     ) -> Result<(), Error> {
         #[derive(Debug, Clone, Serialize, Deserialize)]
         struct GhCommitMessage {

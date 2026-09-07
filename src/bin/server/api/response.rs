@@ -266,6 +266,8 @@ pub enum SubmissionResponseOrigin<'a> {
         user: &'a str,
         commit: &'a str,
     },
+    #[serde(rename = "direct")]
+    Direct { domain: &'a str, entity: &'a str },
 }
 impl<'a> SubmissionResponseOrigin<'a> {
     pub fn new(origin: &'a SubmissionOrigin) -> Self {
@@ -286,6 +288,9 @@ impl<'a> SubmissionResponseOrigin<'a> {
                 user: &gl.info.user,
                 commit: &gl.info.commit,
             },
+            StoredOriginEnum::Direct(d) => {
+                Self::Direct { domain: &d.src.domain, entity: &d.src.entity }
+            }
         }
     }
 }

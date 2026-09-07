@@ -55,6 +55,10 @@ impl<'a> ShadowRepo<'a> {
                 &settings.runner.shadow_dir,
                 format!("gitlab/{}/{}/{}.git", gl.src.domain, gl.src.namespace, gl.src.repo),
             )?,
+            StoredOriginEnum::Direct(d) => path_absolute_join(
+                &settings.runner.shadow_dir,
+                format!("direct/{}/{}.git", d.src.domain, d.src.entity),
+            )?,
         };
 
         if !std::fs::exists(&bare)? {

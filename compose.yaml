@@ -44,6 +44,12 @@ services:
         target: /var/lib/id2202/shadow
         bind:
           selinux: z
+        # Direct submissions
+      - type: bind
+        source: data/direct-submissions
+        target: /var/lib/id2202/direct-submissions
+        bind:
+          selinux: z
       - type: bind
         source: data/log
         target: /var/log/id2202
@@ -55,6 +61,7 @@ services:
       AUTOGRADER_RUNNER_SSH_KEYS: "/root/.ssh/id_ed25519"
       AUTOGRADER_RUNNER_SSH_KNOWN_HOSTS: "/root/.ssh/known_hosts"
       AUTOGRADER_RUNNER_WORKSPACE_DIR: "/tmp/id2202/workspace"
+      AUTOGRADER_SUBMISSION_DIRECT_STORAGE_DIR: "/var/lib/id2202/direct-submissions"
       #AUTOGRADER_SUBMISSION_GITHUB_WEBHOOK_SECRET: "5up3rS3cr3t"
       AUTOGRADER_GITHUB_AUTH_TOKENS: "${AUTOGRADER_GITHUB_AUTH_TOKENS}"
       AUTOGRADER_GITLAB_AUTH_TOKENS: "${AUTOGRADER_GITLAB_AUTH_TOKENS}"

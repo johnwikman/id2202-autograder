@@ -182,6 +182,10 @@ pub struct SubmissionSettings {
     /// Settings for submissions coming from a GitLab instance
     #[config(nested)]
     pub gitlab: GitLabSettings,
+
+    /// Settings for direct submissions requests
+    #[config(nested)]
+    pub direct: DirectSettings,
 }
 
 /// Settings specific to incoming GitHub requests. See [ServerSettings] for
@@ -323,6 +327,27 @@ impl KnownInstanceSettings for GitLabServerSettings {
     fn outbound(&self) -> &str {
         &self.outbound_host
     }
+}
+
+/// Settings specific to incoming direct submission requests.
+#[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
+pub struct DirectSettings {
+    /// Secret used to validate incoming submission requests.
+    #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_SECRET")]
+    pub secret: String,
+
+    /// Where incoming direct submissions should be stored on the local file
+    /// system while waiting to be graded.
+    #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_STORAGE_DIR")]
+    pub storage_dir: String,
+
+    /// The maximum allowed size of an archive after it has been unpacked.
+    #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_MAX_UNPACKED_SIZE")]
+    pub max_unpacked_size: usize,
+
+    /// Known domains that are allowed to make direct submission requests.
+    #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_ALLOWED_DOMAINS", parse_env = confique::env::parse::list_by_semicolon)]
+    pub allowed_domains: Vec<String>,
 }
 
 /// Connection details for the PostgreSQL database.
@@ -553,6 +578,8 @@ impl Settings {
 
         //eprintln!("Converting relative paths to absolute paths");
         s.log.dir = path_absolute_join(&s.reldir, &s.log.dir)?;
+        s.submission.direct.storage_dir =
+            path_absolute_join(&s.reldir, &s.submission.direct.storage_dir)?;
         s.runner.workspace_dir = path_absolute_join(&s.reldir, &s.runner.workspace_dir)?;
         // SSH keys and known hosts are quoted directly into the SSH command as
         // a string, which cannot carry every byte that a path can.

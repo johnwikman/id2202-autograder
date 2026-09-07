@@ -1,6 +1,17 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    submission_info_direct (id) {
+        id -> Int8,
+        submission_id -> Int8,
+        direct_origin_id -> Int8,
+        local_path -> Text,
+        sink_url -> Nullable<Text>,
+        sink_secret_key -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
     submission_info_github (id) {
         id -> Int8,
         submission_id -> Int8,
@@ -34,6 +45,14 @@ diesel::table! {
         started_at -> Nullable<Timestamptz>,
         finished_at -> Nullable<Timestamptz>,
         report -> Nullable<Json>,
+    }
+}
+
+diesel::table! {
+    submission_origin_direct (id) {
+        id -> Int8,
+        domain -> Text,
+        entity -> Text,
     }
 }
 
@@ -76,6 +95,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(submission_info_direct -> submission_origin_direct (direct_origin_id));
+diesel::joinable!(submission_info_direct -> submissions (submission_id));
 diesel::joinable!(submission_info_github -> submission_origin_github (github_origin_id));
 diesel::joinable!(submission_info_github -> submissions (submission_id));
 diesel::joinable!(submission_info_gitlab -> submission_origin_gitlab (gitlab_origin_id));
@@ -84,9 +105,11 @@ diesel::joinable!(submission_jobs -> submissions (submission_id));
 diesel::joinable!(submissions -> submission_origins (origin_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    submission_info_direct,
     submission_info_github,
     submission_info_gitlab,
     submission_jobs,
+    submission_origin_direct,
     submission_origin_github,
     submission_origin_gitlab,
     submission_origins,

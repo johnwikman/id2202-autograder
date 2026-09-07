@@ -9,7 +9,7 @@ use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
     db::{
         conn::DatabaseConnection,
-        models::{NewSubmissionOriginGitLabRow, SubmissionStatus},
+        models::{origin::GitSubmitData, NewSubmissionOriginGitLabRow, SubmissionStatus},
     },
     origin::{
         gitlab::{self, GitLab, GitLabInfo},
@@ -231,6 +231,7 @@ pub async fn gitlab_submit_webhook(
                     &rep.as_ref().into(),
                     &gitlab::CommitState::Canceled,
                     Some("Invalid Grading Tags"),
+                    None,
                 )
                 .await
                 .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
@@ -289,8 +290,7 @@ pub async fn gitlab_submit_webhook(
                     &grading_tags,
                     &report,
                     &source,
-                    &sub.user_username,
-                    &sub.after,
+                    &GitSubmitData { user: &sub.user_username, commit: &sub.after },
                 )
                 .map_err(|e| {
                     log::error!("Could not register submission with database: {e}");
@@ -303,6 +303,7 @@ pub async fn gitlab_submit_webhook(
                     &report.as_ref().into(),
                     &gitlab::CommitState::Failed,
                     Some("Submission Error"),
+                    Some(submission.id),
                 )
                 .await
                 .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}."));
@@ -315,7 +316,12 @@ pub async fn gitlab_submit_webhook(
     };
 
     let registered = dbconn
-        .register_submission::<GitLab>(&grading_tags, jobs, &source, &sub.user_username, &sub.after)
+        .register_submission::<GitLab>(
+            &grading_tags,
+            jobs,
+            &source,
+            &GitSubmitData { user: &sub.user_username, commit: &sub.after },
+        )
         .map_err(|e| {
             log::error!("Could not register submission with database: {e}");
             ErrorResponse::internal_server_error(&req)
@@ -340,6 +346,7 @@ pub async fn gitlab_submit_webhook(
             &MetaReport::Structured(acceptance_message(&registered.submission)),
             &state,
             Some(label),
+            Some(submission_id),
         )
         .await
         .unwrap_or_else(|e| log::warn!("Could not submit commit info: {e}. Will not reject this submission since it is already created."));

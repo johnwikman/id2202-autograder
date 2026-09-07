@@ -265,6 +265,24 @@ pub async fn get_submission(
                 ..Default::default()
             });
         }
+
+        StoredOriginEnum::Direct(d) => {
+            statlist_source.items.push(SubmissionStatusListItem {
+                label: "Origin",
+                value: "Direct Submission".to_string(),
+                ..Default::default()
+            });
+            statlist_source.items.push(SubmissionStatusListItem {
+                label: "Domain",
+                value: d.src.domain.to_string(),
+                ..Default::default()
+            });
+            statlist_source.items.push(SubmissionStatusListItem {
+                label: "Entity",
+                value: d.src.entity.to_string(),
+                ..Default::default()
+            });
+        }
     }
     status_lists.push(statlist_source);
 

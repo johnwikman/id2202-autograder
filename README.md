@@ -258,6 +258,7 @@ dotenv set AUTOGRADER_SERVER_API_AUTH_TOKENS "example-api-token"
 dotenv set AUTOGRADER_LOG_DIR "$(pwd)/data/log"
 dotenv set AUTOGRADER_RUNNER_SHADOW_DIR "$(pwd)/data/shadow"
 dotenv set AUTOGRADER_RUNNER_WORKSPACE_DIR "$(pwd)/data/workspace"
+dotenv set AUTOGRADER_SUBMISSION_DIRECT_STORAGE_DIR "$(pwd)/data/direct-submissions"
 
 # Start the database
 sudo docker compose up -d --remove-orphans postgres

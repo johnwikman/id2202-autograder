@@ -8,8 +8,8 @@ pub struct Error {
 
 impl Error {
     /// Associates a cause with the error, overwriting any existing cause.
-    pub fn with_cause(self, cause: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        Self { kind: self.kind, cause: Some(cause) }
+    pub fn with_cause(self, cause: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self { kind: self.kind, cause: Some(cause.into()) }
     }
 }
 

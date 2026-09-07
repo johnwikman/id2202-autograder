@@ -77,6 +77,7 @@ fn main() -> Result<(), Error> {
                     &settings,
                     &MetaReport::Transient(&err_report),
                     sub.status(),
+                    Some(sub.id),
                 ))
                 .unwrap_or_else(|e| {
                     log::warn!(
@@ -201,6 +202,7 @@ fn main() -> Result<(), Error> {
                             &settings,
                             &MetaReport::JobResults(MetaJobResultsReport { jobs: &results }),
                             sub.status(),
+                            Some(sub.id),
                         )
                         .await
                 })
@@ -265,6 +267,7 @@ fn main() -> Result<(), Error> {
                             &settings,
                             &MetaReport::Structured(start_msg),
                             SubmissionStatus::InProgress,
+                            Some(claimed.id),
                         ))
                         .unwrap_or_else(|e| {
                             log::warn!("Could not set commit message and/or status: {e}")
@@ -295,6 +298,7 @@ fn main() -> Result<(), Error> {
                                 reports: vec![report],
                             })),
                             status,
+                            Some(claimed.id),
                         ))
                         .unwrap_or_else(|e| {
                             log::warn!("Could not set commit message and/or status: {e}")
