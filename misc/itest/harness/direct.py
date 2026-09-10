@@ -86,8 +86,8 @@ class Sink:
             def log_message(self, *_args):
                 pass
 
-        host, _, port = domain.partition(":")
-        self._server = ThreadingHTTPServer((host, int(port) if port is not None else 80), Handler)
+        _, _, port = domain.partition(":")
+        self._server = ThreadingHTTPServer(("0.0.0.0", int(port) if port is not None else 80), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 

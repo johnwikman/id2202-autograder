@@ -206,10 +206,7 @@ magic-setup:
     # Fetches and builds necessary images
     $(dotenv get MAGIC_SUDO) docker compose run --rm --no-deps autograder \
         /autograder/target/release/entrypoint \
-        --settings /mnt/example/settings.toml pull-image
-    $(dotenv get MAGIC_SUDO) docker compose run --rm --no-deps autograder \
-        /autograder/target/release/entrypoint \
-        --settings /mnt/example/settings.toml build-image
+        --settings /mnt/example/settings.toml setup-images
 
     # A freshly created GitLab needs a few minutes before it answers, so
     # hopefully it should be up by now.

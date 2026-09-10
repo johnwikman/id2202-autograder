@@ -67,6 +67,12 @@ It will read settings from `example/settings.toml` and test configuration from
 autograder. If you edit `example/settings.toml`, you need to restart the
 autograder for your changes to come into effect.
 
+To run the test suite (see details later in README.md) on the magic instance:
+
+```sh
+ITEST_DIRECT_DOMAIN=host.docker.internal:5000 just test-itest
+```
+
 ## Deployment: Getting Started
 
 To use the autograder for deployment in a production environment, we will build

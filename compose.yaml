@@ -2,7 +2,7 @@ name: id2202-autograder
 
 services:
   autograder:
-    image: localhost/id2202-autograder:2.0.0-dev4
+    image: localhost/id2202-autograder:2.0.0-dev5
     depends_on:
       - postgres
     restart: unless-stopped
@@ -19,6 +19,8 @@ services:
     init: true
     ports:
       - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - type: bind
         source: example
@@ -44,7 +46,7 @@ services:
         target: /var/lib/id2202/shadow
         bind:
           selinux: z
-        # Direct submissions
+        # Direct submissions (mounted since they need to be preserved between restarts)
       - type: bind
         source: data/direct-submissions
         target: /var/lib/id2202/direct-submissions

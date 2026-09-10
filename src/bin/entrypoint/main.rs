@@ -90,8 +90,16 @@ fn start(s: &Settings) -> Result<(), Error> {
         &s.submission.direct.storage_dir,
     ];
     for path in crucial_dirs {
-        if !Path::new(path).is_dir() {
-            return Error::err_fs("missing crucial directory", path);
+        let path = Path::new(path);
+        if !path.exists() {
+            std::fs::create_dir_all(path).map_err(|e| {
+                Error::fs("could not create directory", path.to_string_lossy()).with_cause(e)
+            })?;
+        } else if !path.is_dir() {
+            return Error::err_fs(
+                "expected crucial directory, found something else",
+                path.to_string_lossy(),
+            );
         }
     }
 
