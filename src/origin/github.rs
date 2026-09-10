@@ -1,6 +1,8 @@
 //! Various GitHub related utilities
 // Using this library for HTTP: https://docs.rs/reqwest/latest/reqwest/
 
+use std::time::Duration;
+
 use crate::{
     config::{
         settings::{GitHubServerSettings, KnownInstance},
@@ -118,6 +120,7 @@ impl OriginKind for GitHub {
                 state: state.as_str().to_string(),
                 description: description.map(|s| s.to_owned()),
             })
+            .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
             .send()
             .await
             .map_err(|e| {
@@ -169,6 +172,7 @@ impl OriginKind for GitHub {
                     settings.submission.comment_signature
                 ),
             })
+            .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
             .send()
             .await
             .map_err(|e| {
@@ -208,6 +212,7 @@ pub async fn repo_exists(
             repo_name
         ))
         .headers(common_headers(settings, instance)?)
+        .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
         .send()
         .await
         .map_err(|e| {
@@ -247,6 +252,7 @@ pub async fn create_repo(
         ))
         .headers(common_headers(settings, instance)?)
         .json(&GhCreateRepo { name: repo_name.to_owned(), private })
+        .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
         .send()
         .await
         .map_err(|e| {

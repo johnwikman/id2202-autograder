@@ -112,7 +112,7 @@ impl<'a> ShadowRepo<'a> {
         write_all_timeout(
             &mut f,
             report.to_json()?.as_bytes(),
-            Duration::from_secs(self.settings.fs_write_timeout_seconds.into()),
+            Duration::from_secs(self.settings.timeout.fs_write_seconds.into()),
         )?;
         Ok(())
     }

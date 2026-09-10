@@ -43,7 +43,7 @@ pub fn listen<S: AsRef<str>>(s: &Settings, ch: S) -> Result<bool, Error> {
     // https://docs.rs/postgres/0.19.12/postgres/notifications/struct.TimeoutIter.html
     let mut notifications = client.notifications();
     let mut to_iter =
-        notifications.timeout_iter(Duration::from_millis(s.notify.poll_timeout_millisec as u64));
+        notifications.timeout_iter(Duration::from_millis(s.timeout.notify_poll_millisec as u64));
 
     match to_iter.next()? {
         Some(_) => Ok(true),

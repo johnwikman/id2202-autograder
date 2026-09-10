@@ -4,8 +4,8 @@ pub mod tests;
 pub mod utils;
 
 pub use settings::{
-    GitHubSettings, LoggingSettings, MonitorSettings, NotifySettings, PostgresSettings,
-    ReportingMarkdownSettings, ReportingSettings, RunnerSettings, ServerSettings, Settings,
+    GitHubSettings, LoggingSettings, MonitorSettings, PostgresSettings, ReportingMarkdownSettings,
+    ReportingSettings, RunnerSettings, ServerSettings, Settings, TimeoutSettings,
 };
 
 pub use tests::{

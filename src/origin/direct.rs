@@ -1,7 +1,7 @@
 //! Direct submission origin
 // Using this library for HTTP: https://docs.rs/reqwest/latest/reqwest/
 
-use std::io::Read;
+use std::{io::Read, time::Duration};
 
 use crate::{
     config::Settings,
@@ -99,7 +99,7 @@ impl OriginKind for Direct {
     /// Sends a "state" message back to the sink if this origin has specified a
     /// sink.
     async fn set_state(
-        _settings: &Settings,
+        settings: &Settings,
         info: &Self::Info,
         state: &Self::SubmissionState,
         description: Option<&str>,
@@ -133,10 +133,17 @@ impl OriginKind for Direct {
         )?;
 
         let c = ReqwestClient::new();
-        let response = c.post(sink_url).headers(headers).body(data).send().await.map_err(|e| {
-            log::error!("Error with GitHub commit status: {e}");
-            e
-        })?;
+        let response = c
+            .post(sink_url)
+            .headers(headers)
+            .body(data)
+            .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
+            .send()
+            .await
+            .map_err(|e| {
+                log::error!("Error with GitHub commit status: {e}");
+                e
+            })?;
 
         if response.status().is_success() {
             log::debug!(
@@ -188,10 +195,17 @@ impl OriginKind for Direct {
         )?;
 
         let c = ReqwestClient::new();
-        let response = c.post(sink_url).headers(headers).body(data).send().await.map_err(|e| {
-            log::error!("Error with GitHub commit status: {e}");
-            e
-        })?;
+        let response = c
+            .post(sink_url)
+            .headers(headers)
+            .body(data)
+            .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
+            .send()
+            .await
+            .map_err(|e| {
+                log::error!("Error with GitHub commit status: {e}");
+                e
+            })?;
 
         if response.status().is_success() {
             log::debug!(
@@ -250,7 +264,7 @@ impl FetchSpec for DirectFetch {
             write_all_timeout(
                 &mut out_file,
                 &data,
-                Duration::from_secs(settings.fs_write_timeout_seconds as u64),
+                Duration::from_secs(settings.timeout.fs_write_seconds as u64),
             )
             .map_err(|e| {
                 Error::fs("could not write to archive path", out_path.to_string_lossy())

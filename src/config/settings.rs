@@ -85,12 +85,6 @@ pub struct Settings {
     #[config(env = "AUTOGRADER_NAME")]
     pub name: String,
 
-    /// Timeout (in seconds) for writing a file to the file system. Guards
-    /// against a file system that stops making progress, such as an
-    /// unresponsive network mount.
-    #[config(env = "AUTOGRADER_FS_WRITE_TIMEOUT_SECONDS")]
-    pub fs_write_timeout_seconds: u16,
-
     #[config(nested)]
     pub log: LoggingSettings,
 
@@ -98,7 +92,7 @@ pub struct Settings {
     pub monitor: MonitorSettings,
 
     #[config(nested)]
-    pub notify: NotifySettings,
+    pub timeout: TimeoutSettings,
 
     #[config(nested)]
     pub submission: SubmissionSettings,
@@ -150,13 +144,24 @@ pub struct MonitorSettings {
     pub poll_interval_seconds: u16,
 }
 
-/// Settings for process notification
+/// General settings for timeout related operations within the autograder
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
-pub struct NotifySettings {
+pub struct TimeoutSettings {
     /// Timeout (in milliseconds) for polling the notification file, to
     /// make sure that a process does not freeze due to polling.
-    #[config(env = "AUTOGRADER_NOTIFY_POLL_TIMEOUT_MILLISEC")]
-    pub poll_timeout_millisec: u16,
+    #[config(env = "AUTOGRADER_TIMEOUT_NOTIFY_POLL_MILLISEC")]
+    pub notify_poll_millisec: u16,
+
+    /// Timeout (in milliseconds) for sending HTTP requests. This ensures that
+    /// a process does not freeze due to a slow endpoint.
+    #[config(env = "AUTOGRADER_TIMEOUT_HTTP_SEND_MILLISEC")]
+    pub http_send_millisec: u16,
+
+    /// Timeout (in seconds) for writing a file to the file system. Guards
+    /// against a file system that stops making progress, such as an
+    /// unresponsive network mount.
+    #[config(env = "AUTOGRADER_TIMEOUT_FS_WRITE_SECONDS")]
+    pub fs_write_seconds: u16,
 }
 
 /// Settings for incoming submissions

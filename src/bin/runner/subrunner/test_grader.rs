@@ -426,7 +426,7 @@ pub mod grade {
             write_all_timeout(
                 &mut asm_f,
                 generated_assembly.as_bytes(),
-                Duration::from_secs(settings.fs_write_timeout_seconds.into()),
+                Duration::from_secs(settings.timeout.fs_write_seconds.into()),
             )?;
             asm_f.flush()?;
         }

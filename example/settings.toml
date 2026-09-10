@@ -1,5 +1,4 @@
 name = "ID2202 Autograder"
-fs_write_timeout_seconds = 10 # before giving up on a file system write
 
 # Note: All paths are relative to this file, not where the binary is being run from.
 
@@ -12,9 +11,11 @@ verbose = false     # whether to output debug messages
 [monitor]
 poll_interval_seconds = 30
 
-# Process notification settings
-[notify]
-poll_timeout_millisec = 5000
+# General purpose timeout settings
+[timeout]
+notify_poll_millisec = 5000
+http_send_millisec = 5000
+fs_write_seconds = 10 # before giving up on a file system write
 
 # Configuration for incoming submissions
 [submission]

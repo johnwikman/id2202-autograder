@@ -240,7 +240,7 @@ fn start(s: &Settings) -> Result<(), Error> {
         }
 
         log::debug!("Housekeeping on direct submission files");
-        if let Err(e) = housekeep_storage_dir(&s) {
+        if let Err(e) = housekeep_storage_dir(s) {
             log::error!("Could not perform housekeeping on the storage directory: {e}");
             running = false;
         }
@@ -345,9 +345,9 @@ fn housekeep_storage_dir(s: &Settings) -> Result<(), Error> {
     // Remove files which have no submission associated with them at all
     let known_files: BTreeSet<&str> = check_active.iter().map(|x| x.1.as_str()).collect();
     for local_path in files.iter().filter(|path| !known_files.contains(path.as_str())) {
-        if std::fs::exists(&local_path)? {
+        if std::fs::exists(local_path)? {
             log::info!("Removing orphaned code (without a submission): {local_path}");
-            std::fs::remove_file(&local_path)?;
+            std::fs::remove_file(local_path)?;
         }
     }
 

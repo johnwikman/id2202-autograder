@@ -1,6 +1,6 @@
 //! Various GitLab related utilities
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use crate::{
     config::{
@@ -119,6 +119,7 @@ impl OriginKind for GitLab {
             ))
             .headers(headers)
             .form(&form_params)
+            .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
             .send()
             .await
             .map_err(|e| {
@@ -169,6 +170,7 @@ impl OriginKind for GitLab {
             ))
             .headers(headers)
             .form(&form_params)
+            .timeout(Duration::from_millis(settings.timeout.http_send_millisec.into()))
             .send()
             .await
             .map_err(|e| {
