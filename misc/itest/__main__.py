@@ -82,7 +82,11 @@ def main():
     needed = {feat for s in scenarios for feat in s.feats} & selected
     ctx = harness.Context(
         autograder=autograder,
-        direct=DirectContext(DirectConfig(autograder)) if "direct" in needed else None,
+        direct=(
+            DirectContext(DirectConfig(autograder))
+            if needed & set(harness.DIRECT_FEATURES)
+            else None
+        ),
         gitlab=(
             GitLabContext(GitLabConfig.load(settings, autograder))
             if "gitlab" in needed

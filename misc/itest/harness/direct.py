@@ -117,24 +117,26 @@ class Sink:
                 )
             )
 
-    def of_type(self, message_type):
+    def of_type(self, message_type, where=None):
         with self._lock:
-            return [m for m in self.messages if m.message_type == message_type]
+            found = [m for m in self.messages if m.message_type == message_type]
+        return [m for m in found if where(m)] if where else found
 
-    def wait_for(self, message_type, count=1, timeout=120):
+    def wait_for(self, message_type, count=1, timeout=120, where=None):
         """Blocks until `count` messages of `message_type` have arrived, and
-        returns all of them."""
+        returns all of them. The callable predicate `where` (if provided) only
+        counts the messages it returns true for."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            found = self.of_type(message_type)
+            found = self.of_type(message_type, where)
             if len(found) >= count:
                 return found
             time.sleep(0.2)
         with self._lock:
             seen = [m.message_type for m in self.messages]
         raise AssertionError(
-            f"sink got {len(self.of_type(message_type))} {message_type!r} messages, "
-            f"wanted {count}, after {timeout}s. Everything it did get: {seen}"
+            f"sink got {len(self.of_type(message_type, where))} matching {message_type!r} "
+            f"messages, wanted {count}, after {timeout}s. Everything it did get: {seen}"
         )
 
     def close(self):

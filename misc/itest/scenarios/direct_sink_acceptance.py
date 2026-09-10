@@ -12,10 +12,14 @@ def run(ctx):
     files = files_from("misc/example-solutions/hello", "solutions/hello")
     submission_id = ctx.direct.submit_ok(files, ["hello"], entity=ENTITY, sink=sink)
 
+    # The sink sits at a fixed address, so a submission from an earlier run
+    # that this one supersedes still reports its own outcome here.
+    mine = lambda m: m.body["submission_id"] == submission_id
+
     # The submit handler sets the state and sends the acceptance report
     # concurrently, so both land without a runner ever claiming the job.
-    state = sink.wait_for("state")[0]
-    report = sink.wait_for("report")[0]
+    state = sink.wait_for("state", where=mine)[0]
+    report = sink.wait_for("report", where=mine)[0]
 
     for message in (state, report):
         assert message.signature_ok, (

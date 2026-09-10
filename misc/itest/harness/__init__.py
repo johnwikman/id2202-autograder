@@ -14,7 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Every feature a scenario may be registered under. "full" is the CLI's word
 # for all of them and is never a feature itself.
-FEATURES = ("direct", "gitlab")
+FEATURES = ("direct", "direct-stresstest", "gitlab")
+
+# The features whose scenarios submit through the direct origin.
+DIRECT_FEATURES = ("direct", "direct-stresstest")
 
 
 @dataclass

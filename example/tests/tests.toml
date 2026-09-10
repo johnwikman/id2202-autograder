@@ -139,6 +139,17 @@ dirs = ["hello-file"]
 build.srcdir = "solutions/hello-file"
 build.cmd = ["make"]
 
+# Throttled copies of `hello` for the itest suite.
+[tags.hello-throttle-rate]
+extends = "hello"
+dirs = []
+rate_limit = {enable = true, n = 2, window_seconds = 3600}
+
+[tags.hello-throttle-budget]
+extends = "hello"
+dirs = []
+budget = {enable = true, max_runs = 3}
+
 # "Alias" tags which can be used to run invoke multiple tags
 # (Intentionally excluded `hello-extra-more` here.)
 [tag_groups]
