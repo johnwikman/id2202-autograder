@@ -232,7 +232,36 @@ pub async fn direct_submission(
             domain: sub.domain.clone(),
             entity: sub.entity.clone(),
             local_path: local_path.clone(),
-            sink_and_secret: sub.sink.as_ref().map(|ss| (ss.url.clone(), ss.secret_key.clone())),
+            sink_and_secret: match &sub.sink {
+                Some(ss) => {
+                    let (u, k) = (ss.url.clone(), ss.secret_key.clone());
+                    // validate that the url is within the provided domain
+                    let parsed = url::Url::parse(&ss.url).map_err(|e| {
+                        log::error!("Could not parse sink url: {e}");
+                        ErrorResponse::bad_request(&req, "bad sink url")
+                    })?;
+                    let mut sink_domain =
+                        parsed.host_str().map(|s| s.to_string()).ok_or_else(|| {
+                            log::error!("Sink url does not have a host string");
+                            ErrorResponse::bad_request(&req, "bad sink url")
+                        })?;
+                    if let Some(port) = parsed.port() {
+                        sink_domain.push_str(&format!(":{port}"));
+                    }
+                    if sink_domain != sub.domain {
+                        log::error!(
+                            "mismatch between sink domain ({sink_domain}) and provided domain ({})",
+                            sub.domain
+                        );
+                        return Err(
+                            ErrorResponse::bad_request(&req, "sink url domain mismatch").into()
+                        );
+                    }
+
+                    Some((u, k))
+                }
+                None => None,
+            },
         },
     };
 

@@ -20,8 +20,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import Autograder, http
 
-# Terminal for a submission as a whole: every job it has is finished.
+# How long a submission may take to have every one of its jobs finished.
 GRADED_TIMEOUT = 900
+
+# Direct submitter info.
+DOMAIN = os.environ.get("ITEST_DIRECT_DOMAIN", "localhost:5000")
+SECRET = os.environ.get("ITEST_DIRECT_SECRET", "s3cr3t")
+MAX_UNPACKED_SIZE = int(os.environ.get("ITEST_DIRECT_MAX_UNPACKED_SIZE", 4 * 1024 * 1024))
 
 
 def pack(files, archive="tar.gz"):
@@ -59,11 +64,11 @@ class SinkMessage:
 
 
 class Sink:
-    """An HTTP endpoint on the loopback that collects what the autograder
-    posts to it, checking the HMAC of every delivery as it arrives."""
+    """An HTTP endpoint for collecting direct submission status messages."""
 
-    def __init__(self, secret_key):
+    def __init__(self, secret_key, domain):
         self.secret_key = secret_key
+        self.domain = domain
         self.messages = []
         self._lock = threading.Lock()
         sink = self
@@ -81,14 +86,14 @@ class Sink:
             def log_message(self, *_args):
                 pass
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        host, _, port = domain.partition(":")
+        self._server = ThreadingHTTPServer((host, int(port) if port is not None else 80), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
     @property
     def url(self):
-        host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}/"
+        return f"http://{self.domain}/"
 
     @property
     def spec(self):
@@ -140,30 +145,9 @@ class Sink:
 @dataclass
 class DirectConfig:
     autograder: Autograder
-    domain: str
-    secret: str
-    max_unpacked_size: int
-
-    @classmethod
-    def load(cls, settings, autograder):
-        direct = settings["submission"]["direct"]
-        domains = direct["allowed_domains"]
-        if not domains:
-            raise SystemExit("submission.direct.allowed_domains is empty")
-        return cls(
-            autograder=autograder,
-            domain=os.environ.get(
-                "AUTOGRADER_SUBMISSION_DIRECT_ALLOWED_DOMAINS", ""
-            ).split(";")[0] or domains[0],
-            secret=os.environ.get("AUTOGRADER_SUBMISSION_DIRECT_SECRET")
-            or direct["secret"],
-            max_unpacked_size=int(
-                os.environ.get(
-                    "AUTOGRADER_SUBMISSION_DIRECT_MAX_UNPACKED_SIZE",
-                    direct["max_unpacked_size"],
-                )
-            ),
-        )
+    domain: str = DOMAIN
+    secret: str = SECRET
+    max_unpacked_size: int = MAX_UNPACKED_SIZE
 
 
 class DirectContext:
@@ -174,8 +158,8 @@ class DirectContext:
         self.submission_id = None
 
     def sink(self, secret_key="itest-sink-key"):
-        """A sink that is torn down when the scenario ends."""
-        s = Sink(secret_key)
+        """Creates a new sink within this context."""
+        s = Sink(secret_key, self.cfg.domain)
         self.sinks.append(s)
         return s
 
