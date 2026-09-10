@@ -1,10 +1,11 @@
 use clap::{Parser, Subcommand};
+use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
 use signal_hook::{
     consts::{SIGINT, SIGTERM},
     iterator::Signals,
 };
-use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+use std::{collections::BTreeSet, sync::mpsc};
 use std::{ffi::OsString, path::Path};
 use subprocess::{Exec, Job};
 
@@ -17,6 +18,7 @@ use id2202_autograder::{
     error::Error,
     podman,
     reporting::{MetaReport, Report, ReportMessage},
+    utils::path_absolute_join,
 };
 
 mod setup;
@@ -118,41 +120,41 @@ fn start(s: &Settings) -> Result<(), Error> {
         }
     }
 
-    // A job held by a runner id at or above n_runners is owned by nobody: no
-    // runner will start that cleans it up, and the source it belongs to stays
-    // unclaimable for as long as it is unfinished. Each runner handles its own
-    // abandoned jobs at start, so only the retired ids are left to cover.
-    let n_runners = s.runner.n_runners;
-    let mut conn = DatabaseConnection::connect(s)?;
-    let report = Report::Message(ReportMessage {
-        msg: format!(
-            "{} {} {}",
-            "The runner was interrupted before it could finish grading your solution.",
-            "Please try to submit your solution again.",
-            "Contact course staff if the problem persists."
-        ),
-    });
-    let retired: Vec<Submission> = Submission::assigned_to_retired_runners(&mut conn, n_runners)?;
-    for mut sub in retired {
-        log::warn!("Submission {} has jobs held by a retired runner", sub.id);
+    // Clean up any pending submissions that will never be picked up by a
+    // runner. (The scope is to ensure drop of conn)
+    {
+        let mut conn = DatabaseConnection::connect(s)?;
+        let report = Report::Message(ReportMessage {
+            msg: format!(
+                "{} {} {}",
+                "The runner was interrupted before it could finish grading your solution.",
+                "Please try to submit your solution again.",
+                "Contact course staff if the problem persists."
+            ),
+        });
+        let retired: Vec<Submission> =
+            Submission::assigned_to_retired_runners(&mut conn, s.runner.n_runners)?;
+        for mut sub in retired {
+            log::warn!("Submission {} has jobs held by a retired runner", sub.id);
 
-        SubmissionJobPlain::abandon_all(
-            sub.jobs.iter_mut().filter(|job| {
-                job.terminal_at().is_none()
-                    && job
-                        .assigned_runner_id
-                        .is_some_and(|id| usize::try_from(id).is_ok_and(|id| id >= n_runners))
-            }),
-            &mut conn,
-            &report,
-        )?;
+            SubmissionJobPlain::abandon_all(
+                sub.jobs.iter_mut().filter(|job| {
+                    job.terminal_at().is_none()
+                        && job.assigned_runner_id.is_some_and(|id| {
+                            usize::try_from(id).is_ok_and(|id| id >= s.runner.n_runners)
+                        })
+                }),
+                &mut conn,
+                &report,
+            )?;
 
-        rt.block_on(sub.origin.set_status_and_report(
-            s,
-            &MetaReport::Transient(&report),
-            sub.status(),
-            Some(sub.id),
-        ))?;
+            rt.block_on(sub.origin.set_status_and_report(
+                s,
+                &MetaReport::Transient(&report),
+                sub.status(),
+                Some(sub.id),
+            ))?;
+        }
     }
 
     // Using the .take() function to set these to None in the loop
@@ -237,15 +239,23 @@ fn start(s: &Settings) -> Result<(), Error> {
             }
         }
 
-        let sleep_time = next_offset - init_time.elapsed();
-        match sigc_recv.recv_timeout(sleep_time) {
-            Ok(_) => {
-                // Received a message on the signal channel, no longer running
-                running = false;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {} // timeout, expected
-            Err(e) => {
-                log::warn!("Received unexpected channel error: {e}")
+        log::debug!("Housekeeping on direct submission files");
+        if let Err(e) = housekeep_storage_dir(&s) {
+            log::error!("Could not perform housekeeping on the storage directory: {e}");
+            running = false;
+        }
+
+        if running {
+            let sleep_time = next_offset - init_time.elapsed();
+            match sigc_recv.recv_timeout(sleep_time) {
+                Ok(_) => {
+                    // Received a message on the signal channel, no longer running
+                    running = false;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {} // timeout, expected
+                Err(e) => {
+                    log::warn!("Received unexpected channel error: {e}")
+                }
             }
         }
         if running && sigc_handle.is_finished() {
@@ -272,5 +282,74 @@ fn start(s: &Settings) -> Result<(), Error> {
         .unwrap_or_else(|e| log::warn!("Could not notify: {e:#}"));
 
     log::info!("Entrypoint process exiting");
+    Ok(())
+}
+
+/// Performs housekeeping on the storage directory, cleaning up old files no
+/// longer needed for direct submissions.
+fn housekeep_storage_dir(s: &Settings) -> Result<(), Error> {
+    use id2202_autograder::db::schema::{
+        submission_info_direct::{self, columns as d_info_col},
+        submission_jobs::{self, columns as job_col},
+    };
+    let mut files: BTreeSet<String> = BTreeSet::new();
+    for entry in std::fs::read_dir(&s.submission.direct.storage_dir)? {
+        let entry = entry?;
+
+        // Only check .tar.gz files
+        let path = path_absolute_join(&s.submission.direct.storage_dir, entry.path())?;
+        if !path.ends_with(".tar.gz") {
+            continue;
+        }
+
+        // Ignore files not older than 15 seconds
+        let Ok(file_age) = SystemTime::now().duration_since(entry.metadata()?.modified()?) else {
+            log::warn!("Could not determine file age of {path}");
+            continue;
+        };
+        if file_age < Duration::from_secs(15) {
+            continue;
+        }
+
+        files.insert(path);
+    }
+
+    // No files to perform housekeeping on.
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let mut conn = DatabaseConnection::connect(s)?;
+    let check_active: Vec<(i64, String, bool)> = submission_info_direct::table
+        .select((
+            d_info_col::submission_id,
+            d_info_col::local_path,
+            d_info_col::submission_id.eq_any(
+                submission_jobs::table
+                    .select(job_col::submission_id)
+                    .filter(job_col::finished_at.is_null())
+                    .filter(job_col::voided_at.is_null()),
+            ),
+        ))
+        .filter(d_info_col::local_path.eq_any(&files))
+        .load(&mut conn.conn)?;
+
+    for (submission_id, local_path, in_use) in &check_active {
+        if !in_use && std::fs::exists(local_path)? {
+            log::info!("Removing submitted code for submission {submission_id}: {local_path}");
+            std::fs::remove_file(local_path)?;
+            files.remove(local_path);
+        }
+    }
+
+    // Remove files which have no submission associated with them at all
+    let known_files: BTreeSet<&str> = check_active.iter().map(|x| x.1.as_str()).collect();
+    for local_path in files.iter().filter(|path| !known_files.contains(path.as_str())) {
+        if std::fs::exists(&local_path)? {
+            log::info!("Removing orphaned code (without a submission): {local_path}");
+            std::fs::remove_file(&local_path)?;
+        }
+    }
+
     Ok(())
 }

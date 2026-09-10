@@ -50,9 +50,8 @@ impl Archive {
     pub fn from_zip(compressed: &[u8], limit: Option<u64>) -> Result<Self, Error> {
         use zip::ZipArchive;
 
-        let mut zip = ZipArchive::new(std::io::Cursor::new(compressed)).map_err(|e| {
-            Error::convert("could not initialize ZipArchive").with_cause(e)
-        })?;
+        let mut zip = ZipArchive::new(std::io::Cursor::new(compressed))
+            .map_err(|e| Error::convert("could not initialize ZipArchive").with_cause(e))?;
         let mut tree = BTreeMap::new();
         let mut budget = limit.unwrap_or(u64::MAX);
 

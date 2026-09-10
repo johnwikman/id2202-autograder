@@ -6,8 +6,8 @@ use actix_web::{
     HttpRequest, Responder,
 };
 use base64::Engine;
-use serde::{Deserialize, Serialize};
 use derive_more::derive::Debug;
+use serde::{Deserialize, Serialize};
 
 use id2202_autograder::{
     archive::Archive,

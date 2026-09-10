@@ -641,17 +641,35 @@ impl SubmissionOrigin {
         match &self.origin {
             StoredOriginEnum::GitHub(o) => {
                 o.as_origin(settings)?
-                    .set_state_and_report(settings, report, &GitHub::status_to_state(status), None, submission_id)
+                    .set_state_and_report(
+                        settings,
+                        report,
+                        &GitHub::status_to_state(status),
+                        None,
+                        submission_id,
+                    )
                     .await
             }
             StoredOriginEnum::GitLab(o) => {
                 o.as_origin(settings)?
-                    .set_state_and_report(settings, report, &GitLab::status_to_state(status), None, submission_id)
+                    .set_state_and_report(
+                        settings,
+                        report,
+                        &GitLab::status_to_state(status),
+                        None,
+                        submission_id,
+                    )
                     .await
             }
             StoredOriginEnum::Direct(o) => {
                 o.as_origin(settings)?
-                    .set_state_and_report(settings, report, &Direct::status_to_state(status), None, submission_id)
+                    .set_state_and_report(
+                        settings,
+                        report,
+                        &Direct::status_to_state(status),
+                        None,
+                        submission_id,
+                    )
                     .await
             }
         }

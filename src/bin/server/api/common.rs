@@ -39,13 +39,16 @@ pub async fn report_superseded(settings: &Settings, reg: &RegisterResult) -> Res
             ),
         ]));
 
-        old.origin.set_status_and_report(settings, &rep, old.status(), Some(old.id)).await.unwrap_or_else(|e| {
-            errs.push(
-                Error::runtime(format!("could not report superseded submission {}", old.id))
-                    .with_cause(e)
-                    .into(),
-            );
-        });
+        old.origin
+            .set_status_and_report(settings, &rep, old.status(), Some(old.id))
+            .await
+            .unwrap_or_else(|e| {
+                errs.push(
+                    Error::runtime(format!("could not report superseded submission {}", old.id))
+                        .with_cause(e)
+                        .into(),
+                );
+            });
     }
 
     if errs.is_empty() {

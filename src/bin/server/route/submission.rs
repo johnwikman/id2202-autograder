@@ -270,6 +270,7 @@ pub async fn get_submission(
             statlist_source.items.push(SubmissionStatusListItem {
                 label: "Origin",
                 value: "Direct Submission".to_string(),
+                svg_icon: Some("source-direct"),
                 ..Default::default()
             });
             statlist_source.items.push(SubmissionStatusListItem {

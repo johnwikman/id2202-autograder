@@ -253,32 +253,32 @@ pub async fn get_submission_search(
         };
     }
 
-        let direct_results = if search_sources.direct {
-            let mut dbq = submissions::table
-                .inner_join(submission_info_direct::table.inner_join(submission_origin_direct::table))
-                .select(SubmissionRow::as_select())
-                .into_boxed();
+    let direct_results = if search_sources.direct {
+        let mut dbq = submissions::table
+            .inner_join(submission_info_direct::table.inner_join(submission_origin_direct::table))
+            .select(SubmissionRow::as_select())
+            .into_boxed();
 
-            apply_common_filters!(dbq, q);
+        apply_common_filters!(dbq, q);
 
-            if let Some(domain) = &q.domain {
-                dbq = dbq.filter(d_src_col::domain.eq(domain));
-            }
-            if let Some(entity) = &q.entity {
-                dbq = dbq.filter(d_src_col::entity.eq(entity));
-            }
-            let found: Vec<SubmissionRow> =
-                dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
-                    |e| {
-                        log::error!("Could not fetch results from database: {e}");
-                        ErrorResponse::internal_server_error(&req)
-                    },
-                )?;
+        if let Some(domain) = &q.domain {
+            dbq = dbq.filter(d_src_col::domain.eq(domain));
+        }
+        if let Some(entity) = &q.entity {
+            dbq = dbq.filter(d_src_col::entity.eq(entity));
+        }
+        let found: Vec<SubmissionRow> =
+            dbq.order(sub_col::id.desc()).limit(limit.into()).load(&mut conn.conn).map_err(
+                |e| {
+                    log::error!("Could not fetch results from database: {e}");
+                    ErrorResponse::internal_server_error(&req)
+                },
+            )?;
 
-            found
-        } else {
-            Vec::new()
-        };
+        found
+    } else {
+        Vec::new()
+    };
 
     let gh_results = if search_sources.github {
         let mut dbq = submissions::table
