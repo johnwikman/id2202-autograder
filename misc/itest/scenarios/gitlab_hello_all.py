@@ -2,21 +2,23 @@
 
 TAGS = ("hello", "hello-asm", "hello-extra", "hello-file")
 
+from ..harness import files_from, register_scenario
 
+@register_scenario("gitlab")
 def run(ctx):
-    project = ctx.create_project("hello-all")
+    project = ctx.gitlab.create_project("hello-all")
 
     files = {}
     for tag in TAGS:
-        files |= ctx.files_from(f"misc/example-solutions/{tag}", f"solutions/{tag}")
-    sha = ctx.push(project, files, "#hello-all")
+        files |= files_from(f"misc/example-solutions/{tag}", f"solutions/{tag}")
+    sha = ctx.gitlab.push(project, files, "#hello-all")
 
-    submission_id = ctx.wait_for_submission(sha)
-    status = ctx.wait_for_status(project, sha, timeout=900)
+    submission_id = ctx.gitlab.wait_for_submission(sha)
+    status = ctx.gitlab.wait_for_status(project, sha, timeout=900)
     assert status != "canceled", "nothing was graded at all: rejected tags, or every job voided"
     assert status == "success", f"expected success, got {status}"
 
-    submission = ctx.api(f"/submission/{submission_id}")
+    submission = ctx.autograder.get(f"/submission/{submission_id}")
     assert submission["requested_tags"] == ["hello-all"], submission["requested_tags"]
     assert submission["report"] is None, f"unexpected submission report: {submission['report']}"
 
@@ -39,7 +41,7 @@ def run(ctx):
     assert len(starts) > 1, f"every job claims the same start time: {starts}"
 
     # What the student is told, in order: accepted, being graded, results.
-    comments = "\n".join(ctx.commit_comments(project, sha))
+    comments = "\n".join(ctx.gitlab.commit_comments(project, sha))
     assert f"[Submission ID: {submission_id}" in comments, "no acceptance comment"
     assert "The autograder is now grading your submission." in comments, "no claim comment"
     assert "rate-limited" not in comments, f"nothing was throttled here: {comments}"

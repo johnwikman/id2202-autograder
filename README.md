@@ -29,7 +29,7 @@ For testing (in addition to _deployment_ dependencies):
 
 For development (in addition to _deployment_ and _testing_ dependencies):
 
- * Python (3.11 or later)
+ * Python (3.12 or later)
  * `cargo` (Rust build system)
  * `git`
  * `podman`

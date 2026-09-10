@@ -2,21 +2,23 @@
 
 SOLUTION_DIRS = ("hello-asm", "hello-extra")
 
+from ..harness import files_from, register_scenario
 
+@register_scenario("gitlab")
 def run(ctx):
-    project = ctx.create_project("multiple-tags")
+    project = ctx.gitlab.create_project("multiple-tags")
 
     files = {}
     for dir in SOLUTION_DIRS:
-        files |= ctx.files_from(f"misc/example-solutions/{dir}", f"solutions/{dir}")
-    sha = ctx.push(project, files, "#hello-asm #hello-extra-more")
+        files |= files_from(f"misc/example-solutions/{dir}", f"solutions/{dir}")
+    sha = ctx.gitlab.push(project, files, "#hello-asm #hello-extra-more")
 
-    submission_id = ctx.wait_for_submission(sha)
-    status = ctx.wait_for_status(project, sha, timeout=900)
+    submission_id = ctx.gitlab.wait_for_submission(sha)
+    status = ctx.gitlab.wait_for_status(project, sha, timeout=900)
     assert status != "canceled", "nothing was graded at all: rejected tags, or every job voided"
     assert status == "success", f"expected success, got {status}"
 
-    submission = ctx.api(f"/submission/{submission_id}")
+    submission = ctx.autograder.get(f"/submission/{submission_id}")
     requested = set(submission["requested_tags"])
     assert requested == {"hello-asm", "hello-extra-more"}, requested
     assert submission["report"] is None, f"unexpected submission report: {submission['report']}"

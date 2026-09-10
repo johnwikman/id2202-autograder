@@ -33,10 +33,11 @@ test-basic:
     cargo test
     cargo clippy
 
-# Run the GitLab test suite against an already running stack. Optionally takes
-# the names of the scenarios to run. See misc/test_gitlab/__main__.py.
-test-gitlab *SCENARIOS:
-    python3 -m misc.test_gitlab {{SCENARIOS}}
+# Run the integration suite against an already running instance. Takes the
+# origins to run tests for: `full` (default), `direct` or `gitlab`. See
+# misc/itest/__main__.py.
+test-itest *ORIGINS:
+    python3 -m misc.itest {{ORIGINS}}
 
 setup-sshkeys:
     #!/usr/bin/env bash

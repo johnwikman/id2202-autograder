@@ -1,18 +1,15 @@
-"""Support code for the GitLab test suite."""
+"""Submissions pushed over SSH to a GitLab instance, the way a student
+submits. Needs a running GitLab as well as the autograder."""
 
-import json
 import os
 import subprocess
 import tempfile
 import time
-import tomllib
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from . import REPO_ROOT, Autograder, http, poll
 
 # "canceled" is what the autograder reports for AutograderFailure, i.e. a bug
 # in the autograder rather than a bad submission.
@@ -20,31 +17,11 @@ TERMINAL_STATUSES = ("success", "failed", "canceled", "skipped")
 
 # The suite pushes as an ordinary group member rather than as root, so that it
 # is subject to the same permissions a student would be. The key is never
-# generated here; `Config.load` says how to create it.
+# generated here; `GitLabConfig.load` says how to create it.
 TEST_USER = "itest"
+
 SSH_KEY = REPO_ROOT / "data" / "ssh" / "itest_ed25519"
 KNOWN_HOSTS = REPO_ROOT / "data" / "ssh" / "itest_known_hosts"
-
-
-def http(method, url, *, headers=None, body=None):
-    """Returns (status, parsed body)."""
-    headers = dict(headers or {})
-    data = None
-    if body is not None:
-        data = json.dumps(body).encode()
-        headers.setdefault("Content-Type", "application/json")
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw, status = resp.read(), resp.status
-    except urllib.error.HTTPError as e:
-        raw, status = e.read(), e.code
-    except urllib.error.URLError as e:
-        raise SystemExit(f"could not reach {url}: {e.reason}")
-    try:
-        return status, json.loads(raw)
-    except ValueError:
-        return status, raw.decode(errors="replace")
 
 
 def git(*args, cwd, tries=1, interval=2.0):
@@ -73,25 +50,23 @@ def git(*args, cwd, tries=1, interval=2.0):
             print(f"    git {args[0]} failed, retrying ({attempt}/{tries - 1})")
             time.sleep(interval)
     attempts = "" if tries == 1 else f" after {tries} attempts"
-    raise SystemExit(f"git {' '.join(args)} failed{attempts}:\n{stderr}")
+    raise AssertionError(f"git {' '.join(args)} failed{attempts}:\n{stderr}")
 
 
 @dataclass
-class Config:
+class GitLabConfig:
+    autograder: Autograder
     domain: str  # host[:port], as matched against known_instances
     gitlab_api: str
     secret: str
     namespace: str
     prefix: str
-    autograder_api: str
     webhook_url: str
     gitlab_token: str
     autograder_token: str
-    api_token: str
 
     @classmethod
-    def load(cls, settings_path):
-        """`settings_path` should point to the same settings file the autograder was started with."""
+    def load(cls, settings, autograder):
         SSH_KEY.parent.mkdir(parents=True, exist_ok=True)
         if not (SSH_KEY.is_file() and SSH_KEY.with_suffix(".pub").is_file()):
             raise SystemExit(
@@ -99,7 +74,6 @@ class Config:
                 f'  ssh-keygen -t ed25519 -N "" -f {SSH_KEY.relative_to(REPO_ROOT)}'
             )
 
-        settings = tomllib.loads(Path(settings_path).read_text())
         instance = settings["submission"]["gitlab"]["known_instances"][0]
         domain = instance["domain"]
         scheme = "https" if instance.get("use_https") else "http"
@@ -118,74 +92,56 @@ class Config:
                 "own non-root token, specified by GITLAB_AUTOGRADER_TOKEN."
             )
 
-        api_tokens = settings["server"]["secrets"]["api_auth_tokens"]
-        api_token = os.environ.get("AUTOGRADER_SERVER_API_AUTH_TOKENS", "").split(";")[0] or (
-            api_tokens[0] if api_tokens else ""
-        )
-        if not api_token:
-            raise SystemExit(
-                "No autograder API token. Export AUTOGRADER_SERVER_API_AUTH_TOKENS for "
-                "both the autograder and this shell."
-            )
-
         port = int(os.environ.get("AUTOGRADER_SERVER_PORT", settings["server"]["port"]))
-        address = os.environ.get("AUTOGRADER_SERVER_ADDRESS", settings["server"]["address"])
         return cls(
+            autograder=autograder,
             domain=domain,
             gitlab_api=f"{scheme}://{domain}/api/v4",
             secret=settings["submission"]["gitlab"]["webhook_secret"],
             namespace=instance["allowed_namespaces"][0],
             prefix=(instance["allowed_repo_prefixes"] or [""])[0],
-            # The suite reaches the autograder over the loopback; GitLab reaches it
-            # from inside its container, which is what the webhook URL has to name.
-            autograder_api=f"http://{'127.0.0.1' if address == '0.0.0.0' else address}:{port}/api",
+            # GitLab reaches the autograder from inside its container, which is
+            # what the webhook URL has to name.
             webhook_url=f"http://host.docker.internal:{port}/api/submit/gitlab",
             gitlab_token=token,
             autograder_token=autograder_token,
-            api_token=api_token,
         )
-
 
     def request(self, target, path, method="GET", body=None, token=None):
         """Returns (status, parsed). `target` is "gitlab" or "autograder"."""
         if target == "gitlab":
-            url = f"{self.gitlab_api}{path}"
-            headers = {"PRIVATE-TOKEN": token or self.gitlab_token}
-        else:
-            url = f"{self.autograder_api}{path}"
-            headers = {"Authorization": f"Bearer {token or self.api_token}"}
-        return http(method, url, headers=headers, body=body)
+            return http(
+                method,
+                f"{self.gitlab_api}{path}",
+                headers={"PRIVATE-TOKEN": token or self.gitlab_token},
+                body=body,
+            )
+        return self.autograder.request(path, method, body)
 
     def gitlab(self, method, path, body=None, token=None):
         """A GitLab API call that is expected to work."""
         status, parsed = self.request("gitlab", path, method, body, token)
         if not 200 <= status < 300:
-            raise SystemExit(f"GitLab {method} {path}: {status} {parsed}")
+            raise AssertionError(f"GitLab {method} {path}: {status} {parsed}")
         return parsed
 
     def api(self, path):
         """An authenticated call to the autograder's own API."""
-        status, parsed = self.request("autograder", path)
-        assert status == 200, f"GET {path}: {status} {parsed}"
-        return parsed
+        return self.autograder.get(path)
 
     def request_until(self, target, path, *, until, method="GET", body=None,
                       token=None, timeout=60, interval=0.5):
         """A call that is expected to work once `until(status, parsed)` holds."""
-        deadline = time.monotonic() + timeout
-        status, parsed = None, None
-        while time.monotonic() < deadline:
-            status, parsed = self.request(target, path, method, body, token)
-            if until(status, parsed):
-                if not 200 <= status < 300:
-                    raise SystemExit(f"{target} {method} {path}: {status} {parsed}")
-                return parsed
-            time.sleep(interval)
-        raise SystemExit(f"{target} {method} {path} still {status} after {timeout}s: {parsed}")
+        return poll(
+            lambda: self.request(target, path, method, body, token),
+            until=until,
+            what=f"{target} {method} {path}",
+            timeout=timeout,
+            interval=interval,
+        )
 
-
-class Context:
-    def __init__(self, cfg: Config):
+class GitLabContext:
+    def __init__(self, cfg: GitLabConfig):
         """Brings GitLab to the state the scenarios assume. Create-once and safe
         to repeat. The only thing it will not do for you is generate the SSH key."""
         self.cfg = cfg
@@ -416,16 +372,6 @@ class Context:
             "GET", f"/projects/{project['id']}/repository/commits/{sha}/comments"
         )
         return [note["note"] for note in notes]
-
-    def files_from(self, source, prefix):
-        """A directory tree, relative to the repository root, as `push` wants
-        it."""
-        root = REPO_ROOT / source
-        return {
-            f"{prefix}/{p.relative_to(root)}": p.read_bytes()
-            for p in sorted(root.rglob("*"))
-            if p.is_file()
-        }
 
     def cleanup(self):
         """Ends a scenario: drops its projects and forgets its state."""

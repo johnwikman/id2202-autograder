@@ -2,16 +2,20 @@
 is recorded as a different status than one that fails to build."""
 
 
-def run(ctx):
-    project = ctx.create_project("test-failure")
-    files = ctx.files_from("misc/test_gitlab/files/wrong-output", "solutions/hello")
-    sha = ctx.push(project, files, "#hello")
 
-    submission_id = ctx.wait_for_submission(sha)
-    status = ctx.wait_for_status(project, sha)
+from ..harness import files_from, register_scenario
+
+@register_scenario("gitlab")
+def run(ctx):
+    project = ctx.gitlab.create_project("test-failure")
+    files = files_from("misc/itest/files/wrong-output", "solutions/hello")
+    sha = ctx.gitlab.push(project, files, "#hello")
+
+    submission_id = ctx.gitlab.wait_for_submission(sha)
+    status = ctx.gitlab.wait_for_status(project, sha)
     assert status == "failed", f"expected failed, got {status}"
 
-    submission = ctx.api(f"/submission/{submission_id}")
+    submission = ctx.autograder.get(f"/submission/{submission_id}")
     assert submission["report"] is None, f"unexpected submission report: {submission['report']}"
 
     jobs = {job["tag"]: job for job in submission["jobs"]}

@@ -1,18 +1,20 @@
 """A solution that does not build is reported as failed, not as an autograder error."""
 
+from ..harness import files_from, register_scenario
 
+@register_scenario("gitlab")
 def run(ctx):
-    project = ctx.create_project("build-failure")
-    files = ctx.files_from("misc/test_gitlab/files/build-failure", "solutions/hello")
-    sha = ctx.push(project, files, "#hello")
+    project = ctx.gitlab.create_project("build-failure")
+    files = files_from("misc/itest/files/build-failure", "solutions/hello")
+    sha = ctx.gitlab.push(project, files, "#hello")
 
-    submission_id = ctx.wait_for_submission(sha)
-    status = ctx.wait_for_status(project, sha)
+    submission_id = ctx.gitlab.wait_for_submission(sha)
+    status = ctx.gitlab.wait_for_status(project, sha)
     # The point of this scenario: "canceled" would mean the autograder blamed
     # itself for the student's build error.
     assert status == "failed", f"expected failed, got {status}"
 
-    submission = ctx.api(f"/submission/{submission_id}")
+    submission = ctx.autograder.get(f"/submission/{submission_id}")
     # A build error belongs to the tag that failed to build, not to the
     # submission as a whole.
     assert submission["report"] is None, f"unexpected submission report: {submission['report']}"
