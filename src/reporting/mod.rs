@@ -1232,7 +1232,7 @@ impl DetailsBuildFailure {
                 Some(settings.markdown.truncate_len),
             )?;
         }
-        if let Some(serr) = &self.captured_stdout {
+        if let Some(serr) = &self.captured_stderr {
             dst.write_str("\n\n### Captured Standard Error\n\n")?;
             markdown_write_preformatted_with_truncation(
                 dst,
@@ -1298,7 +1298,7 @@ impl DetailsBuildFailure {
             dst.write_str("<p><strong>Captured Standard Output</strong></p>")?;
             html_write_codeblock(dst, sout, escape)?;
         }
-        if let Some(serr) = &self.captured_stdout {
+        if let Some(serr) = &self.captured_stderr {
             dst.write_str("<p><strong>Captured Standard Error</strong></p>")?;
             html_write_codeblock(dst, serr, escape)?;
         }
