@@ -8,6 +8,7 @@ use actix_web::{
 use base64::Engine;
 use derive_more::derive::Debug;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use id2202_autograder::{
     archive::Archive,
@@ -32,8 +33,8 @@ use crate::api::{
 
 /// A serializable direct submission. This is our own custom format, and serves
 /// as the definition of the interface for direct submissions.
-#[derive(Debug, Serialize, Deserialize)]
-struct DirectSubmission {
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DirectSubmission {
     /// The domain of the submitter.
     domain: String,
 
@@ -59,7 +60,7 @@ struct DirectSubmission {
 }
 
 /// Sink for where to write back status about the submission.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct DirectSubmissionSink {
     /// The URL to send reports to. See `origin/direct` for more information
     /// about the format.
@@ -78,6 +79,7 @@ struct DirectSubmissionSink {
     params(
         ("X-Direct-Secret" = String, Header, description = "The secret key used for direct submissions"),
     ),
+    request_body = DirectSubmission,
     security(("direct_submission" = [])),
     responses(
         (status = 201, description = "Submission created and registered in the database.", body = SubmitResponse),

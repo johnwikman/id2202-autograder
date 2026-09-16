@@ -68,23 +68,36 @@ pub fn doc_table<'a, D: Into<FieldDoc>>(
     defs: Defs<'a, '_>,
     doc: impl Fn(&str) -> D,
 ) -> String {
-    let rows: Vec<Vec<String>> = schema::properties(schema)
+    let fields = schema::properties(schema)
         .into_iter()
-        .map(|(name, prop)| {
-            let badge = type_badge(prop, defs, "");
+        .map(|(name, prop)| (name.to_string(), prop, doc(name).into()));
+    field_table(context, fields, defs)
+}
+
+/// A `Field | Type | Description` table over fields the caller names itself,
+/// each given as its name, the schema its type badge is read from, and its
+/// prose. `context` names the section for [`warn_untyped`].
+pub fn field_table<'a>(
+    context: &str,
+    fields: impl IntoIterator<Item = (String, &'a Value, FieldDoc)>,
+    defs: Defs<'a, '_>,
+) -> String {
+    let rows: Vec<Vec<String>> = fields
+        .into_iter()
+        .map(|(name, schema, field)| {
+            let badge = type_badge(schema, defs, "");
             if badge.is_empty() {
-                warn_untyped(context, name);
+                warn_untyped(context, &name);
             }
-            let field = doc(name).into();
             let name = match &field.note {
                 Some(note) => format!(
                     "<code class=\"doc-field\">{}</code>\
                      <br><small class=\"doc-field-note\">{}</small>",
-                    escape(name),
+                    escape(&name),
                     inline(note)
                 ),
                 None => {
-                    format!("<code class=\"doc-field\">{}</code>", escape(name))
+                    format!("<code class=\"doc-field\">{}</code>", escape(&name))
                 }
             };
             vec![name, badge, value_markdown(&field.doc)]

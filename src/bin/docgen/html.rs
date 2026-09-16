@@ -96,7 +96,7 @@ const THEME_PICKER: &str = r##"<div class="dropup doc-theme mt-auto pt-2 border-
 /// the frame. `title` is inserted verbatim, so callers escape their own text.
 pub fn notched_box(title: &str, inner_html: &str) -> String {
     format!(
-        "<div class=\"border rounded-3 p-3 pt-4 mt-3 mb-3 position-relative bg-secondary-subtle\">\
+        "<div class=\"doc-box border rounded-3 p-3 pt-4 mt-3 mb-3 position-relative bg-secondary-subtle\">\
          <span class=\"position-absolute top-0 start-0 translate-middle-y ms-3 badge text-bg-secondary\">\
          {title}</span>\n{inner_html}</div>\n"
     )
@@ -113,6 +113,22 @@ pub fn details(summary: &str, inner_html: &str) -> String {
          <summary class=\"doc-summary\">{}</summary>\n{inner_html}</details>\n",
         escape(summary)
     )
+}
+
+/// A link. `href` is escaped here; `inner_html` is inserted verbatim. An
+/// address that leaves the documentation — one carrying a scheme (`https:`,
+/// `mailto:`), one beginning `//`, and an absolute path — opens in a tab of its
+/// own; a relative path and a fragment stay in the current one.
+pub fn link(href: &str, inner_html: &str) -> String {
+    let scheme = href.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    });
+    let target = match scheme || href.starts_with('/') {
+        true => " target=\"_blank\" rel=\"noopener noreferrer\"",
+        false => "",
+    };
+    format!("<a href=\"{}\"{target}>{inner_html}</a>", escape(href))
 }
 
 pub fn code_block(code: &str, lang: &str) -> String {

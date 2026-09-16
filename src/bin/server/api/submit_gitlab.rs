@@ -4,6 +4,7 @@ use actix_web::{
     HttpRequest, Responder,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
@@ -28,8 +29,11 @@ use crate::api::{
 
 /// A serializable GitLab submission, based on the JSON blob that is provided
 /// by the server.
-#[derive(Debug, Serialize, Deserialize)]
-struct GitLabSubmission {
+///
+/// See more information at
+/// https://docs.gitlab.com/user/project/integrations/webhook_events/#push-events
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct GitLabSubmission {
     before: String,
     after: String,
     user_username: String,
@@ -37,7 +41,7 @@ struct GitLabSubmission {
     commits: Vec<GlsCommit>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct GlsProject {
     /// Full repository name (format: `{NAMESPACE}/{REPO}`)
     path_with_namespace: String,
@@ -52,16 +56,14 @@ struct GlsProject {
     ssh_url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct GlsCommit {
     id: String,
     message: String,
     timestamp: String,
 }
 
-/// Submission from GitLab. From a webhook
-///
-/// This is just used for testing for now.
+/// Submission from a GitLab webhook.
 #[utoipa::path(
     tag = "Submissions",
     params(
@@ -69,6 +71,7 @@ struct GlsCommit {
         ("X-Gitlab-Token" = String, Header, description = "GitLab webhook authentication token"),
         ("X-Gitlab-Webhook-UUID" = String, Header, description = "Unique identifier of the webhook delivery."),
     ),
+    request_body = GitLabSubmission,
     security(("gitlab_webhook" = [])),
     responses(
         (status = 200, description = "Webhook was accepted, but no submission was registered.", body = SubmitResponse),

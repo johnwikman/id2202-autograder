@@ -11,10 +11,6 @@ use utoipa::{Modify, OpenApi};
 
 use id2202_autograder::error::Error;
 
-use crate::api::response::{
-    ErrorResponse, SubmissionJobWithReportResponse, SubmissionResponse, SubmitResponse,
-    TagListResponse, TagResponse,
-};
 use crate::api::{submission, submit_direct, submit_github, submit_gitlab, tag};
 
 /// The API operations, collected from the annotated handlers. Paths here are
@@ -31,15 +27,7 @@ use crate::api::{submission, submit_direct, submit_github, submit_gitlab, tag};
         submit_direct::direct_submission,
         submit_github::github_submission,
         submit_gitlab::gitlab_submit_webhook,
-    ),
-    components(schemas(
-        ErrorResponse,
-        SubmitResponse,
-        TagListResponse,
-        TagResponse,
-        SubmissionResponse,
-        SubmissionJobWithReportResponse,
-    ))
+    )
 )]
 struct ApiEndpoints;
 
@@ -64,6 +52,10 @@ impl Modify for SecurityAddon {
                     )))
                     .build(),
             ),
+        );
+        components.add_security_scheme(
+            "direct_submission",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-Direct-Secret"))),
         );
         components.add_security_scheme(
             "github_webhook",

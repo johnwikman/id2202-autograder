@@ -4,6 +4,7 @@ use actix_web::{
     HttpRequest, Responder,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use id2202_autograder::{
     config::{Settings, Tests, TestsLoadingOptions},
@@ -35,14 +36,14 @@ use crate::api::{
 /// server.
 ///
 /// https://docs.github.com/en/enterprise-server@3.16/webhooks/webhook-events-and-payloads#push
-#[derive(Debug, Serialize, Deserialize)]
-struct GitHubSubmission {
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct GitHubSubmission {
     repository: GhsRepository,
     head_commit: GhsHeadCommit,
     pusher: GhsPusher,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct GhsRepository {
     /// Full repository name (format: `{ORG}/{REPO}`)
     full_name: String,
@@ -61,20 +62,20 @@ struct GhsRepository {
     /// URL for cloning the repository over SSH
     ssh_url: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct GhsHeadCommit {
     id: String,
     message: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct GhsPusher {
     name: String,
     email: String,
 }
 
-/// Submission from GitHub. Received a webhook
+/// Submission from a GitHub webhook.
 ///
-/// See documentation over at docs.github.com/enterprise-server@3.16/webhooks/
+/// See documentation over at https://docs.github.com/en/enterprise-server@3.16/webhooks
 #[utoipa::path(
     tag = "Submissions",
     params(
@@ -82,6 +83,7 @@ struct GhsPusher {
         ("X-Github-Hook-ID" = String, Header, description = "Unique identifier of the webhook"),
         ("X-Hub-Signature-256" = String, Header, description = "Hashed authentication of the webhook, on the format `sha256=<lower case hex>`."),
     ),
+    request_body = GitHubSubmission,
     security(("github_webhook" = [])),
     responses(
         (status = 200, description = "Webhook was accepted, but no submission was registered.", body = SubmitResponse),

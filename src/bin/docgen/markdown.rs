@@ -4,7 +4,7 @@
 //! doc comments actually contain, so that user-facing prose can live on the
 //! types it documents rather than being hard-coded in the renderer.
 
-use crate::html::code_block;
+use crate::html::{code_block, link};
 
 /// Collapses each run of whitespace into a single space.
 pub fn collapse_ws(s: &str) -> String {
@@ -27,11 +27,17 @@ pub fn escape(s: &str) -> String {
     out
 }
 
-/// Renders inline formatting — `` `code` ``, `**bold**`, and `[text](url)`
-/// links — leaving all other text escaped. A code span is marked `doc-code`,
-/// which is what `docs.css` sets as a chip; a code block carries the classes
-/// [`crate::html::code_block`] gives it instead.
+/// Renders inline formatting — `` `code` ``, `**bold**`, `[text](url)` links
+/// and bare `http(s)://` URLs — leaving all other text escaped. A code span is
+/// marked `doc-code`, which is what `docs.css` sets as a chip; a code block
+/// carries the classes [`crate::html::code_block`] gives it instead.
 pub fn inline(s: &str) -> String {
+    inline_parts(s, true)
+}
+
+/// [`inline`], with bare URLs left as text when `linkify` is false — the text
+/// of a link cannot hold another one.
+fn inline_parts(s: &str, linkify: bool) -> String {
     let mut out = String::new();
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -59,7 +65,7 @@ pub fn inline(s: &str) -> String {
             if let Some(end) = inner.find("**") {
                 flush!();
                 out.push_str("<strong>");
-                out.push_str(&inline(&inner[..end]));
+                out.push_str(&inline_parts(&inner[..end], linkify));
                 out.push_str("</strong>");
                 i += 2 + end + 2;
                 continue;
@@ -75,7 +81,7 @@ pub fn inline(s: &str) -> String {
                 if !inner[end + 1..].chars().next().is_some_and(char::is_alphanumeric) {
                     flush!();
                     out.push_str("<em>");
-                    out.push_str(&inline(&inner[..end]));
+                    out.push_str(&inline_parts(&inner[..end], linkify));
                     out.push_str("</em>");
                     i += 1 + end + 1;
                     continue;
@@ -85,8 +91,16 @@ pub fn inline(s: &str) -> String {
         if rest.starts_with('[') {
             if let Some((text, url, len)) = parse_link(rest) {
                 flush!();
-                out.push_str(&format!("<a href=\"{}\">{}</a>", escape(url), inline(text)));
+                out.push_str(&link(url, &inline_parts(text, false)));
                 i += len;
+                continue;
+            }
+        }
+        if linkify {
+            if let Some(url) = bare_url(rest) {
+                flush!();
+                out.push_str(&link(url, &escape(url)));
+                i += url.len();
                 continue;
             }
         }
@@ -96,6 +110,34 @@ pub fn inline(s: &str) -> String {
     }
     flush!();
     out
+}
+
+/// The bare URL `s` starts with, taken as far as it runs. Punctuation that ends
+/// a sentence rather than the address is left out, as is a closing bracket the
+/// URL never opened. `None` unless `s` starts with a scheme followed by
+/// something to address.
+fn bare_url(s: &str) -> Option<&str> {
+    let scheme = ["https://", "http://"].into_iter().find(|s2| s.starts_with(s2))?;
+    let end = s.find([' ', '\t', '\n', '<', '`', '*', '"']).unwrap_or(s.len());
+    let mut url = &s[..end];
+    loop {
+        let trimmed = url.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'']);
+        // A URL may carry brackets, so one is only dropped when it closes
+        // nothing inside the URL itself — "(see https://example.com/a)".
+        let unopened = |open: char, close: char| {
+            trimmed.ends_with(close)
+                && trimmed.matches(open).count() < trimmed.matches(close).count()
+        };
+        let trimmed = match unopened('(', ')') || unopened('[', ']') {
+            true => &trimmed[..trimmed.len() - 1],
+            false => trimmed,
+        };
+        if trimmed.len() == url.len() {
+            break;
+        }
+        url = trimmed;
+    }
+    (url.len() > scheme.len()).then_some(url)
 }
 
 fn parse_link(s: &str) -> Option<(&str, &str, usize)> {

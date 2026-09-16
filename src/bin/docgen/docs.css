@@ -35,6 +35,7 @@
                      border-bottom: var(--bs-border-width) solid var(--cal-border); }
 .doc-callout-body { padding: .75rem .9rem; }
 .doc-callout-body > :last-child { margin-bottom: 0; }
+.doc-box > :last-child { margin-bottom: 0; }
 .cal-danger { --cal-bg: var(--bs-danger-bg-subtle); --cal-fg: var(--bs-danger-text-emphasis); --cal-border: var(--bs-danger-border-subtle); }
 .cal-warning { --cal-bg: var(--bs-warning-bg-subtle); --cal-fg: var(--bs-warning-text-emphasis); --cal-border: var(--bs-warning-border-subtle); }
 .cal-info { --cal-bg: var(--bs-info-bg-subtle); --cal-fg: var(--bs-info-text-emphasis); --cal-border: var(--bs-info-border-subtle); }
