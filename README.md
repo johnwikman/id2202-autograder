@@ -301,6 +301,13 @@ To start a local instance of the autograder (unreachable from external hosts):
 dotenv run ./target/debug/entrypoint -s example/settings.toml start
 ```
 
+Once the GitLab instance and autograder is up and running, you can run the
+`itest` suite to verify the functionality of the autograder:
+
+```sh
+just test-itest
+```
+
 
 ### Notes on Manually Setting Up The GitLab Instance
 

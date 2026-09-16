@@ -35,7 +35,12 @@ pub async fn report_superseded(settings: &Settings, reg: &RegisterResult) -> Res
                 reg.submission.id
             )),
             StructuredParagraph::Itemized(
-                replaced.iter().map(|job| StructuredInline::inline_code(job.tag.clone())).collect(),
+                replaced
+                    .iter()
+                    .map(|job| {
+                        StructuredInline::inline_code(StructuredInline::Raw(job.tag.clone()))
+                    })
+                    .collect(),
             ),
         ]));
 
@@ -76,7 +81,7 @@ pub fn acceptance_message<'a>(sub: &'a Submission) -> StructuredParagraph<'a> {
                 Inline::sep_comma(
                     derivs
                         .into_iter()
-                        .map(|s| Inline::inline_code(Inline::plain(s.clone())))
+                        .map(|s| Inline::inline_code(Inline::Raw(s.clone())))
                         .collect(),
                 ),
                 ")".into(),
@@ -91,7 +96,10 @@ pub fn acceptance_message<'a>(sub: &'a Submission) -> StructuredParagraph<'a> {
             Inline::Plain(sub.id.to_string()),
             Inline::PlainStr(" | "),
             Inline::sep_comma(
-                sub.requested_tags.iter().map(|s| Inline::inline_code(s.clone())).collect(),
+                sub.requested_tags
+                    .iter()
+                    .map(|s| Inline::inline_code(Inline::Raw(s.clone())))
+                    .collect(),
             ),
             Inline::PlainStr("]"),
         ],
@@ -129,9 +137,12 @@ pub fn acceptance_message<'a>(sub: &'a Submission) -> StructuredParagraph<'a> {
                 .iter()
                 .map(|job| {
                     if let Some(deriv) = derived_from(job) {
-                        Inline::sep_space(vec![Inline::inline_code(job.tag.clone()), deriv])
+                        Inline::sep_space(vec![
+                            Inline::inline_code(Inline::Raw(job.tag.clone())),
+                            deriv,
+                        ])
                     } else {
-                        Inline::inline_code(job.tag.clone())
+                        Inline::inline_code(Inline::Raw(job.tag.clone()))
                     }
                 })
                 .collect(),
@@ -152,9 +163,12 @@ pub fn acceptance_message<'a>(sub: &'a Submission) -> StructuredParagraph<'a> {
                     sep: "",
                     parts: vec![
                         if let Some(deriv) = derived_from(job) {
-                            Inline::sep_space(vec![Inline::inline_code(job.tag.clone()), deriv])
+                            Inline::sep_space(vec![
+                                Inline::inline_code(Inline::Raw(job.tag.clone())),
+                                deriv,
+                            ])
                         } else {
-                            Inline::inline_code(job.tag.clone())
+                            Inline::inline_code(Inline::Raw(job.tag.clone()))
                         },
                         ": ".into(),
                         utc_string(eligible_at).into(),

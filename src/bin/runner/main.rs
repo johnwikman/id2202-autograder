@@ -370,7 +370,10 @@ fn claim_message<'a>(
             Inline::sep_space(vec![
                 Inline::plain_str("The autograder is now grading your submission for"),
                 Inline::OxfordCommaSepWords(
-                    claimed.iter().map(|job| Inline::inline_code(job.tag.clone())).collect(),
+                    claimed
+                        .iter()
+                        .map(|job| Inline::inline_code(Inline::Raw(job.tag.clone())))
+                        .collect(),
                 ),
             ])
         },
@@ -381,7 +384,10 @@ fn claim_message<'a>(
         paragraphs.push(Par::Paragraph(Inline::Sentences(vec![Inline::sep_space(vec![
             Inline::plain_str("Your submission for"),
             Inline::OxfordCommaSepWords(
-                deferred.iter().map(|job| Inline::inline_code(job.tag.clone())).collect(),
+                deferred
+                    .iter()
+                    .map(|job| Inline::inline_code(Inline::Raw(job.tag.clone())))
+                    .collect(),
             ),
             Inline::plain_str(if deferred.len() == 1 { "is" } else { "are" }),
             Inline::plain_str("rate-limited and will be run later."),
