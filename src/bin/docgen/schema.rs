@@ -12,7 +12,7 @@ pub type Defs<'a, 'b> = &'b dyn Fn(&str) -> Option<&'a Value>;
 
 /// The name a `$ref` points at, which is its last path segment. Covers both
 /// `#/$defs/X` (`schemars`) and `#/components/schemas/X` (OpenAPI).
-fn ref_name(schema: &Value) -> Option<&str> {
+pub fn ref_name(schema: &Value) -> Option<&str> {
     schema.get("$ref").and_then(Value::as_str).and_then(|reference| reference.rsplit('/').next())
 }
 
@@ -37,10 +37,37 @@ fn type_of(schema: &Value) -> &str {
     }
 }
 
-/// The type of a value, and whether that name pluralises when it is an array's
-/// element type. A `format` is a name (`uint16`), so it does not; a plain type
-/// or a definition's title is a noun, so it does.
+/// The schema of an optional value, which states a choice between the type and
+/// `null`, reduced to the type itself — the `null` is how "may be left out of
+/// the file" is spelled, not part of what the value is. Any other choice is
+/// left alone.
+fn denull(schema: &Value) -> &Value {
+    let variants = ["anyOf", "oneOf"]
+        .iter()
+        .find_map(|key| schema.get(*key).and_then(Value::as_array));
+    let Some(variants) = variants else {
+        return schema;
+    };
+    let mut stated = variants.iter().filter(|variant| type_of(variant) != "null");
+    match (stated.next(), stated.next()) {
+        (Some(only), None) => only,
+        _ => schema,
+    }
+}
+
+/// A described type as it reads when a container holds several of them.
+fn plural((name, pluralises): (String, bool)) -> String {
+    match pluralises {
+        true => format!("{name}s"),
+        false => name,
+    }
+}
+
+/// The type of a value, and whether that name pluralises when it is the type a
+/// container holds. A `format` is a name (`uint16`), so it does not; a plain
+/// type or a definition's title is a noun, so it does.
 fn describe<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> (String, bool) {
+    let schema = denull(schema);
     if let Some(name) = ref_name(schema) {
         let title = defs(name).and_then(|target| target.get("title")).and_then(Value::as_str);
         return match title {
@@ -54,12 +81,12 @@ fn describe<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> (String, bool) {
             Some(items) => describe(items, defs),
             None => (String::new(), false),
         };
-        let (name, plural) = element;
-        let name = match plural {
-            true => format!("{name}s"),
-            false => name,
-        };
-        return (format!("array of {name}"), false);
+        return (format!("array of {}", plural(element)), false);
+    }
+    // A map is an object whose keys the settings file names itself, which the
+    // schema states as the type every one of them holds.
+    if let Some(values) = schema.get("additionalProperties").filter(|v| v.is_object()) {
+        return (format!("map of {}", plural(describe(values, defs))), false);
     }
     // The exact width and signedness of a number is worth keeping, and only the
     // format carries it — `minimum`/`maximum` are emitted for the narrow types
@@ -81,7 +108,7 @@ pub fn type_name<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> String {
 /// rather than the displayed name, which may be a format (`uint16`) or a title.
 /// `ty-other` covers an object and anything the schema gives no type to.
 fn scalar_class(schema: &Value) -> &'static str {
-    match type_of(schema) {
+    match type_of(denull(schema)) {
         "string" => "ty-string",
         "integer" | "number" => "ty-integer",
         "boolean" => "ty-boolean",
@@ -93,6 +120,7 @@ fn scalar_class(schema: &Value) -> &'static str {
 /// holds — so `array of strings` scans as a string setting — and is marked
 /// `is-array` for the rails that tell the two apart.
 pub fn type_class(schema: &Value) -> String {
+    let schema = denull(schema);
     match type_of(schema) {
         "array" => {
             let element = schema.get("items").map(scalar_class).unwrap_or("ty-other");

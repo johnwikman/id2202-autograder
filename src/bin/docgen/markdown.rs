@@ -28,7 +28,9 @@ pub fn escape(s: &str) -> String {
 }
 
 /// Renders inline formatting — `` `code` ``, `**bold**`, and `[text](url)`
-/// links — leaving all other text escaped.
+/// links — leaving all other text escaped. A code span is marked `doc-code`,
+/// which is what `docs.css` sets as a chip; a code block carries the classes
+/// [`crate::html::code_block`] gives it instead.
 pub fn inline(s: &str) -> String {
     let mut out = String::new();
     let bytes = s.as_bytes();
@@ -46,7 +48,7 @@ pub fn inline(s: &str) -> String {
         if let Some(inner) = rest.strip_prefix('`') {
             if let Some(end) = inner.find('`') {
                 flush!();
-                out.push_str("<code>");
+                out.push_str("<code class=\"doc-code\">");
                 out.push_str(&escape(&inner[..end]));
                 out.push_str("</code>");
                 i += 1 + end + 1;
@@ -200,6 +202,13 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
         out.push_str(&format!("<p>{}</p>\n", inline(&collapse_ws(&para))));
     }
     out
+}
+
+/// The text of an ATX heading line (`Warning` for `# Warning`), or `None` if
+/// the line is not one.
+pub fn heading_text(line: &str) -> Option<&str> {
+    let t = line.trim_end().trim_start();
+    heading_level(t).map(|_| t.trim_start_matches('#').trim_start())
 }
 
 fn heading_level(line: &str) -> Option<usize> {

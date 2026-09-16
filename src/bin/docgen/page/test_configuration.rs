@@ -18,7 +18,7 @@ use id2202_autograder::config::tests::{
 };
 
 use crate::html::{html_page, Body};
-use crate::page::common::{doc_table, name_heading, FieldDoc};
+use crate::page::common::{doc_table, FieldDoc};
 
 /// How an option key behaves beyond carrying a value. Written here rather than
 /// in the doc comments so that every kind phrases it the same way, and so that
@@ -42,7 +42,7 @@ fn testkind_section<T>(body: &mut Body, heading: &str, attrs: &[FieldAttrs])
 where
     T: Documented + DocumentedFields + JsonSchema,
 {
-    body.heading(3, &name_heading(heading));
+    body.name_heading(3, heading);
     body.markdown(T::DOCS);
 
     let schema = schema_for!(T);

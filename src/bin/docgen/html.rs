@@ -38,6 +38,10 @@ const ICONS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" class="d-none">
   <symbol id="sun-fill" viewBox="0 0 16 16"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"></path></symbol>
   <symbol id="moon-stars-fill" viewBox="0 0 16 16"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"></path><path d="M10.794 3.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387a1.734 1.734 0 0 0-1.097 1.097l-.387 1.162a.217.217 0 0 1-.412 0l-.387-1.162A1.734 1.734 0 0 0 9.31 6.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387a1.734 1.734 0 0 0 1.097-1.097l.387-1.162zM13.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.156 1.156 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.156 1.156 0 0 0-.732-.732l-.774-.258a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732L13.863.1z"></path></symbol>
   <symbol id="check2" viewBox="0 0 16 16"><path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"></path></symbol>
+  <!-- (https://icons.getbootstrap.com/icons/exclamation-triangle-fill/) -->
+  <symbol id="exclamation-triangle-fill" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5m.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2"></path></symbol>
+  <!-- (https://icons.getbootstrap.com/icons/info-circle-fill/) -->
+  <symbol id="info-circle-fill" viewBox="0 0 16 16"><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2"></path></symbol>
   <symbol id="lock-fill" viewBox="0 0 16 16"><path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2"></path></symbol>
 </svg>
 "##;
@@ -46,7 +50,7 @@ const ICONS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" class="d-none">
 /// rather than 🔒, which renders as a blank box wherever no emoji font is
 /// installed.
 pub const LOCK_ICON: &str =
-    r##"<svg class="bi" aria-hidden="true"><use href="#lock-fill"></use></svg>"##;
+    r##"<svg class="bi doc-icon-inline" aria-hidden="true"><use href="#lock-fill"></use></svg>"##;
 
 /// Opens the accordion item a `#fragment` points at, so a submenu link to an
 /// endpoint reveals it instead of landing on a collapsed row. Covers a click
@@ -69,11 +73,11 @@ const REVEAL_JS: &str = r##"(() => {
 /// The Light/Dark/Auto dropdown, driven by [`COLOR_SCHEME_JS`]. Sits at the
 /// bottom of the sidebar and opens upwards, so the menu stays on screen.
 const THEME_PICKER: &str = r##"<div class="dropup doc-theme mt-auto pt-2 border-top">
-      <button id="bd-theme" class="btn btn-link nav-link dropdown-toggle d-flex w-100 align-items-center justify-content-center" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" aria-label="Toggle theme (auto)">
+      <button id="bd-theme" class="doc-theme-btn btn btn-link nav-link dropdown-toggle d-flex w-100 align-items-center justify-content-center" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" aria-label="Toggle theme (auto)">
         <svg class="bi theme-icon-active" aria-hidden="true"><use href="#circle-half"></use></svg>
         <span class="ms-2" id="bd-theme-text">Toggle theme</span>
       </button>
-      <ul class="dropdown-menu" aria-labelledby="bd-theme-text">
+      <ul class="doc-theme-menu dropdown-menu" aria-labelledby="bd-theme-text">
         <li><button type="button" class="dropdown-item d-flex align-items-center" data-bs-theme-value="light" aria-pressed="false">
           <svg class="bi me-2 opacity-50" aria-hidden="true"><use href="#sun-fill"></use></svg>Light
           <svg class="bi ms-auto d-none" aria-hidden="true"><use href="#check2"></use></svg></button></li>
@@ -105,32 +109,38 @@ pub fn notched_box(title: &str, inner_html: &str) -> String {
 /// opened.
 pub fn details(summary: &str, inner_html: &str) -> String {
     format!(
-        "<details class=\"doc-details mb-3\"><summary>{}</summary>\n{inner_html}</details>\n",
+        "<details class=\"doc-details mb-3\">\
+         <summary class=\"doc-summary\">{}</summary>\n{inner_html}</details>\n",
         escape(summary)
     )
 }
 
 pub fn code_block(code: &str, lang: &str) -> String {
     format!(
-        "<pre class=\"border rounded p-3 bg-body-tertiary\"><code>{}</code></pre>\n",
+        "<pre class=\"doc-code-block\"><code>{}</code></pre>\n",
         highlight::highlight(code, lang)
     )
 }
 
 /// Builds a Bootstrap-styled HTML table. `headers` are plain text (escaped
-/// here); each cell in `rows` is expected to already be valid HTML.
+/// here); each cell in `rows` is expected to already be valid HTML. Every
+/// column but the last is marked `doc-cell-narrow`: they hold short labels,
+/// and the last one holds the prose the table is read for.
 pub fn html_table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    let mut out = String::from(
-        "<div class=\"table-responsive\">\n<table class=\"table table-sm\">\n<thead><tr>",
-    );
-    for h in headers {
-        out.push_str(&format!("<th>{}</th>", escape(h)));
+    let narrow = |i: usize, len: usize| match i + 1 < len {
+        true => " class=\"doc-cell-narrow\"",
+        false => "",
+    };
+    let mut out =
+        String::from("<div class=\"table-responsive\">\n<table class=\"table doc-table\">\n<thead><tr>");
+    for (i, h) in headers.iter().enumerate() {
+        out.push_str(&format!("<th{}>{}</th>", narrow(i, headers.len()), escape(h)));
     }
     out.push_str("</tr></thead>\n<tbody>\n");
     for row in rows {
         out.push_str("<tr>");
-        for cell in row {
-            out.push_str(&format!("<td>{cell}</td>"));
+        for (i, cell) in row.iter().enumerate() {
+            out.push_str(&format!("<td{}>{cell}</td>", narrow(i, row.len())));
         }
         out.push_str("</tr>\n");
     }
@@ -148,9 +158,10 @@ struct Heading {
 }
 
 /// A page body under construction. Headings go through [`Body::heading`] (or
-/// come out of [`Body::markdown`]), which gives each one an id, a link to
-/// itself, and an entry in the sidebar submenu — so the submenu is built from
-/// what the page actually wrote rather than by reading the finished HTML back.
+/// come out of [`Body::markdown`], bar the section headings it sets as callouts),
+/// which gives each one an id, a link to itself, and an entry in the sidebar
+/// submenu — so the submenu is built from what the page actually wrote rather
+/// than by reading the finished HTML back.
 #[derive(Default)]
 pub struct Body {
     html: String,
@@ -169,13 +180,23 @@ impl Body {
 
     /// A heading at `level`, whose inner HTML is inserted verbatim.
     pub fn heading(&mut self, level: usize, inner_html: &str) {
-        let html = self.heading_html(level, inner_html);
+        let html = self.heading_html(level, inner_html, "");
         self.html.push_str(&html);
     }
 
-    /// Markdown, whose own headings are treated as [`Body::heading`] does.
+    /// A heading at `level` that is nothing but the name of a thing — a TOML
+    /// table, a test kind — which `docs.css` sets apart from a heading that
+    /// only mentions one.
+    pub fn name_heading(&mut self, level: usize, name: &str) {
+        let inner = format!("<code class=\"doc-name\">{}</code>", escape(name));
+        let html = self.heading_html(level, &inner, " doc-heading-name");
+        self.html.push_str(&html);
+    }
+
+    /// Markdown, whose own headings are treated as [`Body::heading`] does,
+    /// bar the rustdoc sections [`doc_markdown`] boxes.
     pub fn markdown(&mut self, src: &str) {
-        let html = markdown::markdown(src, &mut |level, inner| self.heading_html(level, inner));
+        let html = doc_markdown(src, "", &mut |level, inner| self.heading_html(level, inner, ""));
         self.html.push_str(&html);
     }
 
@@ -185,9 +206,10 @@ impl Body {
         self.toc.push(Heading { level, id: id.to_string(), label: label.to_string() });
     }
 
-    /// The heading markup, with a unique id and the anchor link revealed on
-    /// hover, recording the submenu entry on the way.
-    fn heading_html(&mut self, level: usize, inner_html: &str) -> String {
+    /// The heading markup, with a unique id, the classes `docs.css` styles a
+    /// heading by (`extra_class` on top of them), and the anchor link revealed
+    /// on hover, recording the submenu entry on the way.
+    fn heading_html(&mut self, level: usize, inner_html: &str, extra_class: &str) -> String {
         let mut id = slug(inner_html);
         if id.is_empty() {
             id = format!("section-{}", self.toc.len() + 1);
@@ -196,13 +218,72 @@ impl Body {
             id.push('-');
         }
         let out = format!(
-            "<h{level} id=\"{id}\">{inner_html}\
+            "<h{level} id=\"{id}\" class=\"doc-heading doc-h{level}{extra_class}\">{inner_html}\
              <a class=\"doc-anchor\" href=\"#{id}\" aria-label=\"Link to this section\">#</a>\
              </h{level}>\n"
         );
         self.toc.push(Heading { level, id, label: inner_html.to_string() });
         out
     }
+}
+
+/// Markdown from a doc comment: a heading naming a rustdoc section (e.g.
+/// `# Warning` or `# Note`) is set, together with everything up to the next
+/// heading, as a callout box; every other heading is handed to `heading` as
+/// [`markdown::markdown`] does. `box_class` is put on every callout box, for a
+/// caller that needs them spaced differently from a page's own.
+pub fn doc_markdown(
+    src: &str,
+    box_class: &str,
+    heading: &mut dyn FnMut(usize, &str) -> String,
+) -> String {
+    let mut out = String::new();
+    let mut prose = String::new();
+    let mut lines = src.lines().peekable();
+    while let Some(line) = lines.next() {
+        let kind = markdown::heading_text(line).and_then(|t| Some((t, callout_kind(t)?)));
+        let Some((label, (class, icon))) = kind else {
+            prose.push_str(line);
+            prose.push('\n');
+            continue;
+        };
+        out.push_str(&markdown::markdown(&prose, &mut *heading));
+        prose.clear();
+        let mut section = String::new();
+        while let Some(next) = lines.next_if(|l| markdown::heading_text(l).is_none()) {
+            section.push_str(next);
+            section.push('\n');
+        }
+        let inner = markdown::markdown(&section, &mut *heading);
+        let classes = format!("{class} {box_class}");
+        out.push_str(&callout(label, classes.trim_end(), icon, &inner));
+    }
+    out.push_str(&markdown::markdown(&prose, heading));
+    out
+}
+
+/// The colour class and icon a rustdoc section heading is drawn with, or `None`
+/// for a heading that opens a section of the page and is left as one.
+fn callout_kind(label: &str) -> Option<(&'static str, &'static str)> {
+    match label.trim().to_lowercase().as_str() {
+        "panics" => Some(("cal-danger", "exclamation-triangle-fill")),
+        "warning" | "safety" => Some(("cal-warning", "exclamation-triangle-fill")),
+        "note" | "info" => Some(("cal-info", "info-circle-fill")),
+        "default" | "important" => Some(("cal-note", "info-circle-fill")),
+        _ => None,
+    }
+}
+
+/// A callout box (see `.doc-callout` in `docs.css`): a tinted bar carrying
+/// `icon` and `label`, with `inner_html` inserted verbatim below it.
+fn callout(label: &str, class: &str, icon: &str, inner_html: &str) -> String {
+    format!(
+        "<div class=\"doc-callout {class}\">\
+         <div class=\"doc-callout-label\">\
+         <svg class=\"bi\" aria-hidden=\"true\"><use href=\"#{icon}\"></use></svg>{}</div>\n\
+         <div class=\"doc-callout-body\">{inner_html}</div></div>\n",
+        escape(label)
+    )
 }
 
 /// Turns a heading's inner HTML into an anchor id: tags dropped, lowercased,
@@ -288,7 +369,7 @@ pub fn html_page(name: &str, title: &str, active_href: &str, body: Body) -> Stri
 {nav}    </ul>
     {THEME_PICKER}  </nav>
   <main class="doc-main flex-grow-1 py-4 px-3 px-lg-4">
-    <div class="container-xl">
+    <div class="doc-container container-xl">
 {body}
     </div>
   </main>

@@ -229,7 +229,8 @@ fn scheme_box(name: &str, scheme: &SecurityScheme, lead: &str) -> String {
         };
         if !header.is_empty() {
             inner.push_str(&format!(
-                "<p class=\"mb-0 mt-2\">Send <code>{header}</code> with the request.</p>\n"
+                "<p class=\"mb-0 mt-2\">Send <code class=\"doc-code\">{header}</code> \
+                 with the request.</p>\n"
             ));
         }
     } else {
@@ -280,7 +281,7 @@ fn params_table(op: &Operation, schemas: &BTreeMap<String, Value>) -> String {
             vec![
                 format!("<code>{}</code>", escape(&p.name)),
                 escape(&p.location),
-                type_badge(&p.schema, &defs),
+                type_badge(&p.schema, &defs, ""),
                 if p.required { "yes" } else { "no" }.to_string(),
                 inline(&p.description),
             ]
@@ -574,7 +575,7 @@ pub fn render(name: &str, spec: &Spec) -> String {
             body.raw(&format!("<div class=\"accordion-item\" id=\"{id}\">\n"));
             body.raw(&format!(
                 "<h2 class=\"accordion-header\">\
-                 <button class=\"accordion-button collapsed\" type=\"button\" \
+                 <button class=\"doc-api-btn accordion-button collapsed\" type=\"button\" \
                  data-bs-toggle=\"collapse\" data-bs-target=\"#c-{id}\" aria-expanded=\"false\">\
                  <span class=\"badge {bg} api-method\">{upper}</span>\
                  <strong class=\"api-path fs-5\"><code>{path}</code></strong>{sec}</button>\

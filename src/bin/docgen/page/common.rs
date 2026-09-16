@@ -9,28 +9,21 @@
 
 use serde_json::Value;
 
-use crate::html::html_table;
-use crate::markdown::{escape, inline, markdown};
+use crate::html::{doc_markdown, html_table};
+use crate::markdown::{escape, inline};
 use crate::schema::{self, Defs};
 
-/// A heading that is nothing but the verbatim name of a thing — a TOML table, a
-/// test kind. Marked so `docs.css` can set it apart from a heading that merely
-/// mentions one ("Root defaults (`[default]`)"), which CSS cannot tell apart on
-/// its own: `:first-child` ignores the text around the name.
-pub fn name_heading(name: &str) -> String {
-    format!("<code class=\"doc-name\">{}</code>", escape(name))
-}
-
-/// The type of a value, as the badge a documented setting or table row carries.
-/// Empty when the schema names no type, which is reported by the caller rather
-/// than rendered as an empty pill.
-pub fn type_badge<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> String {
+/// The type of a value, as the badge a documented setting or table row carries,
+/// with `extra_class` on it for a caller that spaces the badge itself. Empty
+/// when the schema names no type, which is reported by the caller rather than
+/// rendered as an empty pill.
+pub fn type_badge<'a>(schema: &'a Value, defs: Defs<'a, '_>, extra_class: &str) -> String {
     let name = schema::type_name(schema, defs);
     if name.is_empty() {
         return String::new();
     }
     format!(
-        "<span class=\"badge setting-type {}\">{}</span>",
+        "<span class=\"badge setting-type {} {extra_class}\">{}</span>",
         schema::type_class(schema),
         inline(&name)
     )
@@ -40,6 +33,16 @@ pub fn type_badge<'a>(schema: &'a Value, defs: Defs<'a, '_>) -> String {
 /// its badge blank. `context` names the section it appears in.
 pub fn warn_untyped(context: &str, name: &str) {
     eprintln!("warning: {context}: field `{name}` has no type in the schema");
+}
+
+/// The prose documenting one value — a setting or a field of an object — as
+/// the blocks its author wrote: paragraphs, lists, and the callouts
+/// [`doc_markdown`] boxes. A heading that is not one of those cannot be a
+/// section of the page here, so it is set as its own line of bold text.
+pub fn value_markdown(doc: &str) -> String {
+    doc_markdown(doc, "", &mut |_, inner| {
+        format!("<p class=\"mb-0\"><strong>{inner}</strong></p>\n")
+    })
 }
 
 /// The prose of one field: its description, and a note set under the field
@@ -68,7 +71,7 @@ pub fn doc_table<'a, D: Into<FieldDoc>>(
     let rows: Vec<Vec<String>> = schema::properties(schema)
         .into_iter()
         .map(|(name, prop)| {
-            let badge = type_badge(prop, defs);
+            let badge = type_badge(prop, defs, "");
             if badge.is_empty() {
                 warn_untyped(context, name);
             }
@@ -84,13 +87,7 @@ pub fn doc_table<'a, D: Into<FieldDoc>>(
                     format!("<code class=\"doc-field\">{}</code>", escape(name))
                 }
             };
-            // Block markdown, so a field's doc keeps the paragraphs and lists
-            // its author wrote. A heading has no place in a table cell, so it
-            // is set as its own line of bold text instead.
-            let desc = markdown(&field.doc, &mut |_, inner| {
-                format!("<p class=\"mb-0\"><strong>{inner}</strong></p>\n")
-            });
-            vec![name, badge, desc]
+            vec![name, badge, value_markdown(&field.doc)]
         })
         .collect();
     html_table(&["Field", "Type", "Description"], &rows)

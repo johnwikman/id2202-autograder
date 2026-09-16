@@ -3,6 +3,8 @@ The autograder originally created for the course ID2202 at KTH Royal Institute
 of Technology. This allows students to submit their solutions to be checked
 against a variety of test cases.
 
+See [johnwikman.github.io/id2202-autograder](https://johnwikman.github.io/id2202-autograder/) for documentation on autograder configuration and its REST API.
+
 This is intended to be run in a Linux-based container using Docker or Podman.
 See further down in the README for information about how to run it as a
 standalone application during development.
@@ -184,10 +186,10 @@ A diagram to illustrate the setup (entrypoint omitted):
 
 ```
    ┌──────────────────────────────────────────────────────────┐
-   │                       GitHub/GitLab                      │
+   │                   Direct/GitHub/GitLab                   │
    └──────────────────────────────────────────────────────────┘
       │            Ʌ                                    Ʌ
-[1. Push Hook]     │                                    │
+[1. API Hook]      │                                    │
       │     [3. Submit ACK]              [6. Send Submission Results]
       V            │                                    │
     ┌────────────────┐                     ┌─────────┐  │

@@ -68,15 +68,30 @@ impl<T: KnownInstanceSettings> KnownInstance for T {
 }
 
 /// The autograder is configured through a TOML settings file passed via the
-/// `-s` option on the entrypoint binary.
+/// `-s` option on the entrypoint binary. For example, to start the autograder
+/// with the example settings:
 ///
-/// All relative paths are resolved relative to the directory containing the
-/// settings file. Where an environment variable is listed, it takes precedence
-/// over the value in the TOML file.
+/// ```sh
+/// ./target/release/entrypoint -s example/settings.toml start
+/// ```
+///
+/// Almost all values in the settings TOML can be overridden using environment
+/// variables. If overridable, the environment variable is listed next to the
+/// settings value. Example of overriding the `log.verbose` value:
+///
+/// ```sh
+/// AUTOGRADER_LOG_VERBOSE=y ./target/release/entrypoint -s example/settings.toml start
+/// ```
+///
+/// All settings that specify a path on the host system (i.e. not a path in a
+/// podman grading container) will have their paths resolved relative to the
+/// directory containing the settings file. This also includes values
+/// overridden by environment variables.
 ///
 /// # Warning
 /// Every setting listed below is required with only a few exceptions. Failing
-/// to provide them will cause the startup of the autograder to fail.
+/// to provide them will cause the startup of the autograder to fail. A setting
+/// that may be omitted will explicitly state so.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct Settings {
     /// Name to use when responding to requests, creating commits, etc.
@@ -202,6 +217,9 @@ pub struct GitHubSettings {
     pub webhook_secret: String,
 
     /// Information for specific instances.
+    ///
+    /// # Default
+    /// No instances are configured if this is omitted.
     #[config(default = [])]
     pub known_instances: Vec<GitHubServerSettings>,
 }
@@ -270,6 +288,9 @@ pub struct GitLabSettings {
     pub webhook_secret: String,
 
     /// Information for specific instances.
+    ///
+    /// # Default
+    /// No instances are configured if this is omitted.
     #[config(default = [])]
     pub known_instances: Vec<GitLabServerSettings>,
 }
@@ -351,6 +372,13 @@ pub struct DirectSettings {
     pub max_unpacked_size: usize,
 
     /// Known domains that are allowed to make direct submission requests.
+    ///
+    /// If specified using the environment variable, multiple keys are be
+    /// separated by semicolons:
+    ///
+    /// ```sh
+    /// AUTOGRADER_SERVER_API_AUTH_TOKENS="domain1;domain2;domain3"
+    /// ```
     #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_ALLOWED_DOMAINS", parse_env = confique::env::parse::list_by_semicolon)]
     pub allowed_domains: Vec<String>,
 }
@@ -370,7 +398,7 @@ pub struct PostgresSettings {
     #[config(env = "AUTOGRADER_POSTGRES_HOST")]
     pub host: String,
 
-    /// The port used to connect to the postgres database (0–65535).
+    /// The port used to connect to the postgres database (`0-65535`).
     #[config(env = "AUTOGRADER_POSTGRES_PORT")]
     pub port: u16,
 }
@@ -382,11 +410,11 @@ pub struct ServerSettings {
     #[config(env = "AUTOGRADER_SERVER_ADDRESS")]
     pub address: String,
 
-    /// The port that the server binary will listen on (0–65535).
+    /// The port that the server binary will listen on (`0-65535`).
     #[config(env = "AUTOGRADER_SERVER_PORT")]
     pub port: u16,
 
-    /// Secrets used for client authentication
+    /// Secrets used for client authentication.
     #[config(nested)]
     pub secrets: ServerSecretsSettings,
 }
@@ -394,14 +422,24 @@ pub struct ServerSettings {
 /// Secrets used to authenticate clients of the REST API.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct ServerSecretsSettings {
-    /// API auth tokens that can be used to fetch submission
-    /// results over the REST API. Using the environment variable, multiple
-    /// tokens can be specified using `;` separators, e.g. `TOKEN1;TOKEN2;TOKEN3`.
+    /// API auth tokens that can be used to fetch submission results over the
+    /// REST API.
+    ///
+    /// If specified using the environment variable, multiple keys are be
+    /// separated by semicolons:
+    ///
+    /// ```sh
+    /// AUTOGRADER_SERVER_API_AUTH_TOKENS="token1;token2;token3"
+    /// ```
+    ///
+    /// # Important
+    /// The environment variable, if set, will discard any API tokens defined
+    /// in the TOML file.
     #[config(env = "AUTOGRADER_SERVER_API_AUTH_TOKENS", parse_env = confique::env::parse::list_by_semicolon)]
     pub api_auth_tokens: Vec<String>,
 }
 
-/// Settings for runner processes
+/// Settings for runner processes.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct RunnerSettings {
     /// How many runners to spawn.
@@ -425,14 +463,23 @@ pub struct RunnerSettings {
     #[config(env = "AUTOGRADER_RUNNER_TEST_CONFIG")]
     pub test_config: String,
 
-    /// SSH keys to try when fetching a submitted repository, in order. The
-    /// default SSH configuration is used when empty. **NOTE: an SSH server
-    /// commonly refuses a connection if none of the first 6 keys worked.**
+    /// Paths to SSH keys to try when fetching a submitted repository, in
+    /// order. The default SSH configuration is used when empty.
+    ///
+    /// If specified using the environment variable, multiple keys are be
+    /// separated by semicolons:
+    ///
+    /// ```sh
+    /// AUTOGRADER_RUNNER_SSH_KEYS="path_to_key1;path_to_key2;path_to_key3"
+    /// ```
+    ///
+    /// # Note
+    /// An SSH server commonly refuses a connection if none of the first 6 keys worked.
     #[config(env = "AUTOGRADER_RUNNER_SSH_KEYS", parse_env = confique::env::parse::list_by_semicolon)]
     pub ssh_keys: Vec<String>,
 
-    /// Known hosts file to use when fetching a submitted repository. This can
-    /// be populated by the `verify-ssh-hosts` entrypoint command.
+    /// Path to known hosts file to use when fetching a submitted repository.
+    /// This can be populated by the `verify-ssh-hosts` entrypoint command.
     #[config(env = "AUTOGRADER_RUNNER_SSH_KNOWN_HOSTS")]
     pub ssh_known_hosts: String,
 
@@ -450,6 +497,10 @@ pub struct PodmanSettings {
     pub network_prefix: String,
 
     /// Declarations of the available images to be used by the test specification.
+    ///
+    /// # Default
+    /// No images are configured if omitted. However, omitting this will break
+    /// the test configuration which requires at least one image to function.
     #[config(default = {})]
     pub images: BTreeMap<String, PodmanImageSettings>,
 }
@@ -457,13 +508,17 @@ pub struct PodmanSettings {
 /// Declaration and specification for specific podman images.
 #[serde_inline_default]
 #[derive(Deserialize, JsonSchema, Debug, Clone)]
+#[schemars(title = "Podman image")]
 pub struct PodmanImageSettings {
     /// The name of the image, formatted as `{repo}:{tag}`.
     pub image: String,
 
     /// Optional information about how to build this image if it does not
-    /// exist. If not specified, then the image is assumed to be fetchable
-    /// using `podman pull`.
+    /// exist.
+    ///
+    /// # Default
+    /// If not specified, then the image is assumed to be fetchable using
+    /// `podman pull`.
     pub build: Option<PodmanImageBuildSettings>,
 
     /// A directory inside the container that can be used as a tmp directory
@@ -474,14 +529,15 @@ pub struct PodmanImageSettings {
     #[serde_inline_default("/tmp".to_string())]
     pub tmpdir: String,
 
-    /// Where to mount the code that is going to be run inside the container.
+    /// Path inside the container where the code to run shall be mounted.
     ///
     /// # Default
     /// `/mnt/code` if not provided.
     #[serde_inline_default("/mnt/code".to_string())]
     pub mount_code: String,
 
-    /// Where to mount tests that are going to be run inside the container.
+    /// Path inside the container where the tests that are going to be run
+    /// shall be mounted.
     ///
     /// # Default
     /// `/mnt/tests` if not provided.
@@ -491,6 +547,7 @@ pub struct PodmanImageSettings {
 
 /// Information about how to build a podman image.
 #[derive(Deserialize, JsonSchema, Debug, Clone)]
+#[schemars(title = "Podman build")]
 pub struct PodmanImageBuildSettings {
     /// The path (or context) that the image should be built in.
     pub path: String,
@@ -547,15 +604,15 @@ pub struct ReportingMarkdownSettings {
     #[config(env = "AUTOGRADER_REPORTING_MD_SYMBOL_VOIDED")]
     pub symbol_voided: String,
 
-    /// Whether to show an indicator on the top header of the
-    /// submission results comment on GitHub, indicating whether all tags were
-    /// successful or not.
+    /// Whether to show an indicator on the top header of the submission
+    /// results comment on GitHub, indicating whether all tags were successful
+    /// or not.
     #[config(env = "AUTOGRADER_REPORTING_MD_SHOW_INDICATOR_SUBMISSION_HEADER", parse_env = parse_env_bool)]
     pub show_indicator_submission_header: bool,
 
-    /// Whether to show an indicator for each individual tag-result
-    /// header on the results comment on GitHub, indicating if this specific tag
-    /// was successful or not.
+    /// Whether to show an indicator for each individual tag-result header on
+    /// the results comment on GitHub, indicating if this specific tag was
+    /// successful or not.
     #[config(env = "AUTOGRADER_REPORTING_MD_SHOW_INDICATOR_TAG_HEADER", parse_env = parse_env_bool)]
     pub show_indicator_tag_header: bool,
 

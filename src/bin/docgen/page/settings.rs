@@ -18,8 +18,8 @@ use serde_json::Value;
 use id2202_autograder::config::settings::Settings;
 
 use crate::html::{code_block, details, html_page, slug, Body};
-use crate::markdown::{collapse_ws, escape, inline};
-use crate::page::common::{doc_table, name_heading, type_badge, warn_untyped};
+use crate::markdown::escape;
+use crate::page::common::{doc_table, type_badge, value_markdown, warn_untyped};
 use crate::schema::{self, Defs};
 
 /// The repository's example settings file, embedded at build time and shown on
@@ -98,13 +98,19 @@ fn setting(name: &str, env: Option<&str>, badge: &str, desc: &str) -> String {
         }
         None => String::new(),
     };
+    // The badge leads the description rather than taking a line of its own, so
+    // it goes inside the first block the doc renders to.
+    let rendered = value_markdown(desc);
+    let doc = match rendered.strip_prefix("<p>") {
+        Some(rest) => format!("<p>{badge}{rest}"),
+        None => format!("{badge}{rendered}"),
+    };
     format!(
         "<div class=\"setting\">\
          <div class=\"d-flex flex-wrap align-items-baseline gap-2\">\
          <code class=\"setting-name\">{}</code>{env}</div>\
-         <div class=\"setting-doc\">{badge}{}</div></div>\n",
-        escape(name),
-        inline(desc)
+         <div class=\"setting-doc\">{doc}</div></div>\n",
+        escape(name)
     )
 }
 
@@ -129,7 +135,7 @@ fn section<'a>(
             "General".to_string()
         }
         false => {
-            body.heading(heading_level(prefix), &name_heading(&table_name(prefix)));
+            body.name_heading(heading_level(prefix), &table_name(prefix));
             body.markdown(&resolve(&meta.doc.join("\n"), links));
             table_name(prefix)
         }
@@ -146,11 +152,11 @@ fn section<'a>(
             // A field the schema does not describe is one kept out of the file
             // format on purpose; it has no type to show and is not documented.
             let field = schema::field(root, &path, defs)?;
-            let badge = type_badge(field, defs);
+            let badge = type_badge(field, defs, "setting-badge");
             if badge.is_empty() {
                 warn_untyped(&context, f.name);
             }
-            let desc = resolve(&collapse_ws(&f.doc.join(" ")), links);
+            let desc = resolve(&f.doc.join("\n"), links);
             Some(setting(&path, env, &badge, &desc))
         })
         .collect();
@@ -168,14 +174,32 @@ fn section<'a>(
     }
 }
 
-/// The schema definitions used as the element type of an array — the object
-/// formats that `confique`'s metadata cannot reach — as `(name, title, schema)`.
+/// The schema definitions used as the type an array or a map holds — the object
+/// formats that `confique`'s metadata cannot reach — plus the ones those in turn
+/// hold in a field, as `(name, title, schema)`.
 fn object_types(root: &Value) -> Vec<(&str, &str, &Value)> {
     let mut referenced = BTreeSet::new();
     collect_item_refs(root, &mut referenced);
     let Some(defs) = root.get("$defs").and_then(Value::as_object) else {
         return Vec::new();
     };
+    // A type documented here lists its fields, so a type one of those fields
+    // holds needs a section of its own to link to. Only the fields of these
+    // types are followed: a nested settings struct is a TOML table with a
+    // section already, and pulling it in here would document it twice.
+    let mut pending: Vec<&str> = referenced.iter().copied().collect();
+    while let Some(name) = pending.pop() {
+        let Some(def) = defs.get(name) else {
+            continue;
+        };
+        let props = def.get("properties").and_then(Value::as_object);
+        for prop in props.into_iter().flat_map(serde_json::Map::values) {
+            let mut held = BTreeSet::new();
+            collect_refs(prop, &mut held);
+            pending.extend(held.difference(&referenced).copied().collect::<Vec<_>>());
+            referenced.extend(held);
+        }
+    }
     defs.iter()
         .filter(|(name, _)| referenced.contains(name.as_str()))
         .map(|(name, def)| {
@@ -185,22 +209,32 @@ fn object_types(root: &Value) -> Vec<(&str, &str, &Value)> {
         .collect()
 }
 
-/// Collects the names of every definition a schema references as an array's
-/// element type.
+/// Collects the names of every definition a schema references as the type an
+/// array holds (`items`) or a map holds (`additionalProperties`).
 fn collect_item_refs<'a>(schema: &'a Value, found: &mut BTreeSet<&'a str>) {
     match schema {
         Value::Object(map) => {
-            let item_ref = map
-                .get("items")
-                .and_then(|items| items.get("$ref"))
-                .and_then(Value::as_str)
-                .and_then(|reference| reference.rsplit('/').next());
-            if let Some(name) = item_ref {
-                found.insert(name);
-            }
+            let held = ["items", "additionalProperties"]
+                .iter()
+                .filter_map(|key| map.get(*key))
+                .filter_map(schema::ref_name);
+            found.extend(held);
             map.values().for_each(|v| collect_item_refs(v, found));
         }
         Value::Array(items) => items.iter().for_each(|v| collect_item_refs(v, found)),
+        _ => {}
+    }
+}
+
+/// Collects every definition a schema references at any depth — an optional
+/// field keeps its `$ref` inside an `anyOf`, so the whole subtree is searched.
+fn collect_refs<'a>(schema: &'a Value, found: &mut BTreeSet<&'a str>) {
+    match schema {
+        Value::Object(map) => {
+            found.extend(schema::ref_name(schema));
+            map.values().for_each(|v| collect_refs(v, found));
+        }
+        Value::Array(items) => items.iter().for_each(|v| collect_refs(v, found)),
         _ => {}
     }
 }
