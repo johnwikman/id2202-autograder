@@ -34,16 +34,23 @@ use crate::api::{
 /// https://docs.gitlab.com/user/project/integrations/webhook_events/#push-events
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct GitLabSubmission {
+    /// Head commit hash prior to this push event.
     before: String,
+
+    /// Head commit hash after this push event.
     after: String,
+
+    /// Login username of the pusher.
     user_username: String,
+
     project: GlsProject,
     commits: Vec<GlsCommit>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(title = "GitLab project")]
 struct GlsProject {
-    /// Full repository name (format: `{NAMESPACE}/{REPO}`)
+    /// Full repository name (expected format: `{NAMESPACE}/{REPO}`)
     path_with_namespace: String,
 
     /// Written out repository display name.
@@ -57,6 +64,7 @@ struct GlsProject {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(title = "GitLab commit")]
 struct GlsCommit {
     id: String,
     message: String,

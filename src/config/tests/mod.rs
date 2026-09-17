@@ -28,7 +28,7 @@ use tag::{BuildConfig, Tag, TagDefaults};
 /// ```
 ///
 /// A **test case** is a single verification step. Each test case has a **kind**
-/// that determines what it does — for example, running a binary and checking its
+/// that determines what it does, for example running a binary and checking its
 /// output, running a multi-stage assembly pipeline, or verifying that a file
 /// exists with a particular type. The available kinds are documented below.
 ///
@@ -37,11 +37,11 @@ use tag::{BuildConfig, Tag, TagDefaults};
 /// Test configuration lives in a directory tree rooted at a TOML file whose path
 /// is given by `runner.test_config` in the settings. Three file types are used:
 ///
-/// - **Root test configuration** — the top-level TOML file (any name). Defines
+/// - **Root test configuration**: the top-level TOML file (any name). Defines
 ///   global defaults (including per-test-kind defaults), tags, and tag groups.
-/// - **`config.toml`** — placed in a test directory. Sets shared configuration
+/// - **`config.toml`**: placed in a test directory. Sets shared configuration
 ///   for all test cases in that directory and its subdirectories.
-/// - **`*.test.toml`** — defines a single test case. The filename (minus the
+/// - **`*.test.toml`**: defines a single test case. The filename (minus the
 ///   `.test.toml` suffix) becomes the test name.
 ///
 /// Configuration is inherited hierarchically. A `.test.toml` file inherits from

@@ -3,7 +3,7 @@
 //! This lives in the `server` binary because the `#[utoipa::path]` annotations
 //! and the `paths(...)` list below reference the API handler functions, which
 //! are private to this crate. Its sole job is to produce the OpenAPI **spec** as
-//! JSON (via `server emit-openapi`); rendering that spec into the HTML
+//! JSON (via `server emit-openapi`). Rendering that spec into the HTML
 //! documentation page is done separately by the `docgen` binary.
 
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -14,7 +14,7 @@ use id2202_autograder::error::Error;
 use crate::api::{submission, submit_direct, submit_github, submit_gitlab, tag};
 
 /// The API operations, collected from the annotated handlers. Paths here are
-/// relative to the `/api` scope; the prefix is applied by [`ApiDoc`].
+/// relative to the `/api` scope, and the prefix is applied by [`ApiDoc`].
 #[derive(OpenApi)]
 #[openapi(
     paths(

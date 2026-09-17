@@ -1,51 +1,34 @@
-//! The tiny Markdown subset used in the crate's doc comments.
+//! The small Markdown subset the documented types' doc comments are written in.
 //!
-//! Deliberately not a full Markdown implementation: it handles only what the
-//! doc comments actually contain, so that user-facing prose can live on the
-//! types it documents rather than being hard-coded in the renderer.
+//! Not a full Markdown implementation: it handles only what those comments
+//! actually contain, and anything else is rendered as the text it is.
 
-use crate::html::{code_block, link};
+use maud::{html, Markup};
+
+use crate::components::widget::{callout, code_block, link};
 
 /// Collapses each run of whitespace into a single space.
 pub fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Escapes the five characters that are significant in HTML text/attributes.
-pub fn escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Renders inline formatting — `` `code` ``, `**bold**`, `[text](url)` links
-/// and bare `http(s)://` URLs — leaving all other text escaped. A code span is
-/// marked `doc-code`, which is what `docs.css` sets as a chip; a code block
-/// carries the classes [`crate::html::code_block`] gives it instead.
-pub fn inline(s: &str) -> String {
+/// Renders the inline formatting `` `code` ``, `**bold**`, `*italic*`,
+/// `[text](url)` links and bare `http(s)://` URLs, leaving all other text
+/// escaped. A code span is marked `doc-code`.
+pub fn inline(s: &str) -> Markup {
     inline_parts(s, true)
 }
 
-/// [`inline`], with bare URLs left as text when `linkify` is false — the text
-/// of a link cannot hold another one.
-fn inline_parts(s: &str, linkify: bool) -> String {
-    let mut out = String::new();
+/// [`inline`], with bare URLs left as text when `linkify` is false.
+fn inline_parts(s: &str, linkify: bool) -> Markup {
+    let mut out: Vec<Markup> = Vec::new();
     let bytes = s.as_bytes();
     let mut i = 0;
     // Plain text accumulates here and is flushed (escaped) on the next markup.
     let mut plain = String::new();
     macro_rules! flush {
         () => {{
-            out.push_str(&escape(&plain));
+            out.push(html! { (plain) });
             plain.clear();
         }};
     }
@@ -54,9 +37,7 @@ fn inline_parts(s: &str, linkify: bool) -> String {
         if let Some(inner) = rest.strip_prefix('`') {
             if let Some(end) = inner.find('`') {
                 flush!();
-                out.push_str("<code class=\"doc-code\">");
-                out.push_str(&escape(&inner[..end]));
-                out.push_str("</code>");
+                out.push(html! { code class="doc-code" { (&inner[..end]) } });
                 i += 1 + end + 1;
                 continue;
             }
@@ -64,9 +45,7 @@ fn inline_parts(s: &str, linkify: bool) -> String {
         if let Some(inner) = rest.strip_prefix("**") {
             if let Some(end) = inner.find("**") {
                 flush!();
-                out.push_str("<strong>");
-                out.push_str(&inline_parts(&inner[..end], linkify));
-                out.push_str("</strong>");
+                out.push(html! { strong { (inline_parts(&inner[..end], linkify)) } });
                 i += 2 + end + 2;
                 continue;
             }
@@ -80,9 +59,7 @@ fn inline_parts(s: &str, linkify: bool) -> String {
             if let (false, Some(end)) = (intraword, end) {
                 if !inner[end + 1..].chars().next().is_some_and(char::is_alphanumeric) {
                     flush!();
-                    out.push_str("<em>");
-                    out.push_str(&inline_parts(&inner[..end], linkify));
-                    out.push_str("</em>");
+                    out.push(html! { em { (inline_parts(&inner[..end], linkify)) } });
                     i += 1 + end + 1;
                     continue;
                 }
@@ -91,7 +68,8 @@ fn inline_parts(s: &str, linkify: bool) -> String {
         if rest.starts_with('[') {
             if let Some((text, url, len)) = parse_link(rest) {
                 flush!();
-                out.push_str(&link(url, &inline_parts(text, false)));
+                // The text of a link cannot hold another one.
+                out.push(link(url, inline_parts(text, false)));
                 i += len;
                 continue;
             }
@@ -99,7 +77,7 @@ fn inline_parts(s: &str, linkify: bool) -> String {
         if linkify {
             if let Some(url) = bare_url(rest) {
                 flush!();
-                out.push_str(&link(url, &escape(url)));
+                out.push(link(url, html! { (url) }));
                 i += url.len();
                 continue;
             }
@@ -109,7 +87,7 @@ fn inline_parts(s: &str, linkify: bool) -> String {
         i += ch.len_utf8();
     }
     flush!();
-    out
+    html! { @for part in out { (part) } }
 }
 
 /// The bare URL `s` starts with, taken as far as it runs. Punctuation that ends
@@ -123,7 +101,7 @@ fn bare_url(s: &str) -> Option<&str> {
     loop {
         let trimmed = url.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'']);
         // A URL may carry brackets, so one is only dropped when it closes
-        // nothing inside the URL itself — "(see https://example.com/a)".
+        // nothing inside the URL itself, as in "(see https://example.com/a)".
         let unopened = |open: char, close: char| {
             trimmed.ends_with(close)
                 && trimmed.matches(open).count() < trimmed.matches(close).count()
@@ -167,21 +145,17 @@ fn parse_link(s: &str) -> Option<(&str, &str, usize)> {
 
 /// Renders paragraphs, ATX headings, `-`/`*` bullet lists, ```` ``` ```` fenced
 /// code blocks (with an optional language for highlighting), and the inline
-/// formatting handled by [`inline`].
-///
-/// Headings are handed to `heading` (as their level and already-rendered inner
-/// HTML) rather than written out here, so the caller can give them ids and
-/// record them: a heading written in a doc comment reaches the sidebar submenu
-/// the same way one written by a page does.
-pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> String {
-    let mut out = String::new();
+/// formatting handled by [`inline`]. Each heading is replaced by whatever
+/// `heading` returns for it.
+pub fn blocks(text: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> Markup {
+    let mut out: Vec<Markup> = Vec::new();
     let mut lines = text.lines().peekable();
     while let Some(line) = lines.next() {
         let trimmed = line.trim_end();
 
         if let Some(level) = heading_level(trimmed) {
             let text = trimmed.trim_start().trim_start_matches('#').trim_start();
-            out.push_str(&heading(level, &inline(text)));
+            out.push(heading(level, &inline(text)));
             continue;
         }
 
@@ -193,19 +167,19 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
                     break;
                 }
                 // With `trim = false` doc comments, each line keeps the single
-                // conventional space after `///`; drop it so the block's own
-                // relative indentation starts at column zero.
+                // conventional space after `///`. Dropping it puts the block's
+                // own relative indentation at column zero.
                 code.push_str(body.strip_prefix(' ').unwrap_or(body));
                 code.push('\n');
             }
-            out.push_str(&code_block(&code, &lang));
+            out.push(code_block(&code, &lang));
             continue;
         }
 
         // Each bullet may wrap over following (non-blank, non-special) lines
         // until the next bullet or a blank line.
         if is_bullet(trimmed) {
-            out.push_str("<ul>\n");
+            let mut items: Vec<Markup> = Vec::new();
             let mut item = bullet_text(trimmed).to_string();
             while let Some(next) = lines.peek() {
                 let nt = next.trim_end();
@@ -214,7 +188,7 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
                     break;
                 }
                 if is_bullet(nt) {
-                    out.push_str(&format!("<li>{}</li>\n", inline(&collapse_ws(&item))));
+                    items.push(inline(&collapse_ws(&item)));
                     item = bullet_text(nt).to_string();
                 } else {
                     item.push(' ');
@@ -222,8 +196,8 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
                 }
                 lines.next();
             }
-            out.push_str(&format!("<li>{}</li>\n", inline(&collapse_ws(&item))));
-            out.push_str("</ul>\n");
+            items.push(inline(&collapse_ws(&item)));
+            out.push(html! { ul { @for item in items { li { (item) } } } });
             continue;
         }
 
@@ -241,9 +215,74 @@ pub fn markdown(text: &str, heading: &mut dyn FnMut(usize, &str) -> String) -> S
             para.push_str(nt.trim_start());
             lines.next();
         }
-        out.push_str(&format!("<p>{}</p>\n", inline(&collapse_ws(&para))));
+        out.push(html! { p { (inline(&collapse_ws(&para))) } });
     }
-    out
+    html! { @for part in out { (part) } }
+}
+
+/// Markdown from a doc comment: a heading naming a rustdoc section (e.g.
+/// `# Warning` or `# Note`) is set, together with everything up to the next
+/// heading, as a callout box. Every other heading is handed to `heading` as
+/// [`blocks`] does.
+pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> Markup {
+    let mut out: Vec<Markup> = Vec::new();
+    let mut prose = String::new();
+    let mut lines = src.lines().peekable();
+    while let Some(line) = lines.next() {
+        let kind = heading_text(line).and_then(|t| Some((t, callout_kind(t)?)));
+        let Some((label, (class, icon))) = kind else {
+            prose.push_str(line);
+            prose.push('\n');
+            continue;
+        };
+        out.push(blocks(&prose, &mut *heading));
+        prose.clear();
+        let mut section = String::new();
+        while let Some(next) = lines.next_if(|l| heading_text(l).is_none()) {
+            section.push_str(next);
+            section.push('\n');
+        }
+        let inner = blocks(&section, &mut *heading);
+        out.push(callout(label, class, icon, inner));
+    }
+    out.push(blocks(&prose, heading));
+    html! { @for part in out { (part) } }
+}
+
+/// The colour class and icon a rustdoc section heading is drawn with, or `None`
+/// for a heading that opens a section of the page and is left as one.
+fn callout_kind(label: &str) -> Option<(&'static str, &'static str)> {
+    match label.trim().to_lowercase().as_str() {
+        "panics" => Some(("cal-danger", "exclamation-triangle-fill")),
+        "warning" | "safety" => Some(("cal-warning", "exclamation-triangle-fill")),
+        "note" | "info" => Some(("cal-info", "info-circle-fill")),
+        "default" | "important" => Some(("cal-note", "info-circle-fill")),
+        _ => None,
+    }
+}
+
+/// The source of the paragraph `src` opens with, and everything after it.
+/// `None` when `src` opens with another kind of block, meaning a heading, a
+/// bullet list, or a fenced code block.
+pub fn split_paragraph(src: &str) -> Option<(&str, &str)> {
+    let mut start: Option<usize> = None;
+    let mut at = 0;
+    for line in src.split_inclusive('\n') {
+        let trimmed = line.trim();
+        let breaks = trimmed.is_empty()
+            || heading_level(trimmed).is_some()
+            || is_bullet(trimmed)
+            || trimmed.starts_with("```");
+        match start {
+            None if trimmed.is_empty() => {}
+            None if breaks => return None,
+            None => start = Some(at),
+            Some(from) if breaks => return Some((&src[from..at], &src[at..])),
+            Some(_) => {}
+        }
+        at += line.len();
+    }
+    start.map(|from| (&src[from..], ""))
 }
 
 /// The text of an ATX heading line (`Warning` for `# Warning`), or `None` if

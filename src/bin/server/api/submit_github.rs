@@ -44,6 +44,7 @@ pub struct GitHubSubmission {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(title = "GitHub repository")]
 struct GhsRepository {
     /// Full repository name (format: `{ORG}/{REPO}`)
     full_name: String,
@@ -63,11 +64,13 @@ struct GhsRepository {
     ssh_url: String,
 }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(title = "GitHub head commit")]
 struct GhsHeadCommit {
     id: String,
     message: String,
 }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(title = "GitHub pusher")]
 struct GhsPusher {
     name: String,
     email: String,

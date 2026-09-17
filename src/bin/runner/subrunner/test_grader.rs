@@ -151,7 +151,7 @@ fn base_report(
 }
 
 /// Turns a failure to run a command at all into a graded failure. A timeout or
-/// a flooded output stream is the student's fault; anything else is ours and
+/// a flooded output stream is the student's fault. Anything else is ours and
 /// propagates. `base` is the failure report to extend, or `None` when no report
 /// was asked for. `stage` names the pipeline step for the multi-stage kinds.
 fn report_execution_error(

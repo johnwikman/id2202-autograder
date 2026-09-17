@@ -50,6 +50,7 @@ pub struct TagDefaults {
     utoipa::ToSchema,
 )]
 #[patch(name = "_UntreatedRateLimit", attribute(derive(Deserialize, Default)))]
+#[schemars(title = "Rate limit")]
 pub struct RateLimit {
     /// Whether the limit applies. If false, this tag will not be rate-limited.
     pub enable: bool,
@@ -74,6 +75,7 @@ pub struct RateLimit {
     utoipa::ToSchema,
 )]
 #[patch(name = "_UntreatedBudget", attribute(derive(Deserialize, Default)))]
+#[schemars(title = "Budget")]
 pub struct Budget {
     /// Whether the budget applies. If false, this tag has no limit on the
     /// number of times it can be graded.

@@ -1,5 +1,5 @@
 //! Test groups and the test cases inside them. A group is one directory with a
-//! `config.toml`; a test case is one `*.test.toml` file.
+//! `config.toml`, and a test case is one `*.test.toml` file.
 
 use documented::{Documented, DocumentedFields};
 use schemars::JsonSchema;

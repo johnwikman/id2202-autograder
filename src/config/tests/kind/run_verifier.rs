@@ -9,7 +9,57 @@ use crate::error::Error;
 
 /// Execute a binary and hand its stdout, stderr and exit code to a
 /// course-provided verifier program, which decides whether the test passed.
+///
+/// It is common to define a verifier for its test group, and only specialize
+/// the parameters for a certain test case. For example given this test group:
+///
+/// ```text
+/// my-group/
+///   config.toml
+///   t01.test.toml
+///   t02.test.toml
+///   verifier.py
+/// ```
+///
+/// Then in `config.toml`:
+///
+/// ```toml
+/// # Test group metadata...
+/// [test]
+/// bin = "graded-bin"
+/// kind = "run_verifier"
+///
+/// [test.options]
+/// verifier_path = "./verifier.py"
+///
+/// [test.options.verifier_param_schema]
+/// min_value = {type = "int", default = 0}
+/// unbounded_max = {type = "bool", default = false}
+/// ```
+///
+/// In `t01.test.toml`:
+///
+/// ```toml
+/// # We set one custom parameter value to adjust the verifier for when running
+/// # the test case with this argument to the compiled binary. The other
+/// # `unbounded_max` argument will still be provided to the verifier, but
+/// # using its default value.
+/// [test.options]
+/// args = ["custom-arg1"]
+/// verifier_params.min_value = 1
+/// ```
+///
+/// ... and in `t02.test.toml`:
+///
+/// ```toml
+/// # Here we override both when grading output of `./graded-bin custom-arg2`.
+/// [test.options]
+/// args = ["custom-arg2"]
+/// verifier_params.min_value = 3
+/// verifier_params.unbounded_max = true
+/// ```
 #[derive(JsonSchema, Debug, Clone, Documented, DocumentedFields, TestKind)]
+#[documented(trim = false)]
 #[testkind(ident = "run_verifier")]
 pub struct RunVerifier {
     /// Binary to execute.
@@ -51,6 +101,7 @@ pub struct RunVerifier {
 /// the verifier, so the wire format stays trivially representable in JSON.
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(untagged)]
+#[schemars(title = "ParamValue")]
 pub enum ParamValue {
     Bool(bool),
     Int(i64),
@@ -70,6 +121,7 @@ impl ParamValue {
 /// The declaration of a single verifier parameter.
 #[derive(Deserialize, JsonSchema, Debug, Clone)]
 #[serde(deny_unknown_fields)]
+#[schemars(title = "ParamSpec")]
 pub struct ParamSpec {
     /// One of `bool`, `int` or `str`.
     #[serde(rename = "type")]

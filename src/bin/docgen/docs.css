@@ -7,7 +7,7 @@
 
 .doc-theme-btn { text-decoration: none; }
 /* Placed by CSS rather than Popper (`data-bs-display="static"`). */
-.doc-theme-menu { left: 50%; transform: translateX(-50%); }
+.doc-theme-menu[data-bs-popper] { left: 50%; transform: translateX(-50%); }
 
 .bi { width: 1em; height: 1em; fill: currentcolor; }
 .doc-icon-inline { vertical-align: -.125em; }
@@ -15,6 +15,15 @@
 .doc-code { padding: .1em .35em; border-radius: .25rem; background-color: var(--bs-tertiary-bg); }
 .doc-code-block { padding: 1rem; border: var(--bs-border-width) solid var(--bs-border-color);
                   border-radius: var(--bs-border-radius); background-color: var(--bs-tertiary-bg); }
+.doc-code-wrap { position: relative; }
+.doc-copy { position: absolute; top: .5rem; right: .5rem; padding: .3rem .4rem; line-height: 1;
+            border: var(--bs-border-width) solid var(--bs-border-color);
+            border-radius: var(--bs-border-radius); color: var(--bs-secondary-color);
+            background-color: var(--bs-body-bg); opacity: 0; transition: opacity .15s; }
+.doc-copy:hover { color: var(--bs-body-color); }
+.doc-code-wrap:hover .doc-copy, .doc-copy:focus-visible { opacity: 1; }
+/* A pointer that cannot hover never reveals the button, so it stays visible. */
+@media (hover: none) { .doc-copy { opacity: 1; } }
 
 .doc-heading { position: relative; }
 .doc-h2 { margin-top: 2.5rem; }

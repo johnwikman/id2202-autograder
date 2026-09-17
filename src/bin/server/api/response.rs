@@ -106,8 +106,8 @@ impl SubmitResponse {
             submission_id: None,
         }
     }
-    /// 201 with the new submission's location when one was registered; a plain
-    /// 200 acknowledgement when the webhook created nothing.
+    /// 201 with the new submission's location when one was registered, or a
+    /// plain 200 acknowledgement when the webhook created nothing.
     pub fn to_http(&self) -> HttpResponse {
         match self.submission_id {
             // The submission is served from the same scope this webhook is
@@ -189,7 +189,7 @@ pub struct SubmissionJobWithReportResponse<'a> {
     #[serde(flatten)]
     job: SubmissionJobResponse<'a>,
     /// Full grading report once available. Its structure is documented
-    /// separately; treated as an opaque object here.
+    /// separately, and treated as an opaque object here.
     #[schema(value_type = Option<Object>)]
     report: Option<&'a Report>,
 }

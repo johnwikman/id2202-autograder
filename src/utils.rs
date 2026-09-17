@@ -77,7 +77,7 @@ pub fn create_dir_if_not_exists<P: AsRef<Path>>(path: P) -> Result<(), Error> {
 }
 
 /// Writes the entire buffer, giving up if `timeout` elapses first. This bounds
-/// a file system that stops making progress; a single write that hangs inside
+/// a file system that stops making progress. A single write that hangs inside
 /// the kernel cannot be interrupted.
 pub fn write_all_timeout(
     f: &mut impl Write,

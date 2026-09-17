@@ -61,6 +61,7 @@ pub struct DirectSubmission {
 
 /// Sink for where to write back status about the submission.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(title = "Direct submission sink")]
 struct DirectSubmissionSink {
     /// The URL to send reports to. See `origin/direct` for more information
     /// about the format.

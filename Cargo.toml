@@ -45,6 +45,7 @@ id2202_autograder_macros = { path = "macros" }
 itertools = "0.15.0"
 json = "0.12.4"
 log = "0.4.33"
+maud = "0.27.0"
 mio = "1.2.1"
 num-derive = "0.4.2"
 num-traits = "0.2.19"

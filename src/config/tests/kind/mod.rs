@@ -1,9 +1,9 @@
 //! Test kinds.
 //!
 //! Adding a kind means a module under `kind/`, an entry in the `kinds!`
-//! invocation below, and a grader in the runner. Everything else — the
-//! identifier list, the defaults lookup, the construction from a TOML table —
-//! follows from that entry.
+//! invocation below, and a grader in the runner. Everything else follows from
+//! that entry: the identifier list, the defaults lookup, and the construction
+//! from a TOML table.
 
 use serde::Deserialize;
 
