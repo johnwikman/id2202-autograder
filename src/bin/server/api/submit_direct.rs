@@ -35,19 +35,36 @@ use crate::api::{
 /// as the definition of the interface for direct submissions.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct DirectSubmission {
-    /// The domain of the submitter.
+    /// The domain of the submitter. This must match one of the preconfigured
+    /// domains.
     domain: String,
 
-    /// Submitter entity (e.g. a user on the system).
+    /// Submitter entity (e.g. a user on the system). The string has to be
+    /// between 1-60 characters in length, and only contain characters in
+    /// the ranges `[0-9]`, `[A-Z]`, `[a-z]`, and any of the special
+    /// characters `.`, `_`, `-`, or `@`. However, it may not begin or end
+    /// with a special character.
+    ///
+    /// Example: `entity = "john.doe@course2202"`
+    ///
+    /// This string identifies who submitted something from the domain. The
+    /// entity string is used to ensure proper throttling behavior from the
+    /// submitter and for querying submission results.
     entity: String,
 
     /// The requested grading tags.
+    ///
+    /// # Important
+    /// This must be the grading tags as is, excluding any `#` or `%` prefix
+    /// that is used to specify grading tags in commit messages for other
+    /// git-based submission methods. E.g. `grading_tags = ["hello"]` to grade
+    /// the submission on the `hello` tag.
     grading_tags: Vec<String>,
 
-    /// Format of the archive. Allowed values are "zip" and "tar.gz".
+    /// Format of the archive. Allowed values are `zip` and `tar.gz`.
     archive: String,
 
-    /// The encoding of the data. Allowed values are "base64".
+    /// The encoding of the `data` field. Allowed values are `base64`.
     encoding: String,
 
     /// The encoded data representing the archive.
@@ -74,7 +91,7 @@ struct DirectSubmissionSink {
     secret_key: String,
 }
 
-/// Direct submissions as an archive sent in the header.
+/// Direct submissions as an archive sent in the JSON data.
 #[utoipa::path(
     tag = "Submissions",
     params(
@@ -83,7 +100,8 @@ struct DirectSubmissionSink {
     request_body = DirectSubmission,
     security(("direct_submission" = [])),
     responses(
-        (status = 201, description = "Submission created and registered in the database.", body = SubmitResponse),
+        (status = 201, body = SubmitResponse,
+         description = "Submission created and registered in the database. However, it is not guaranteed that the submission can be graded."),
         (status = 400, description = "Malformed payload or missing headers.", body = ErrorResponse),
         (status = 401, description = "Invalid submission secret or unrecognized domain.", body = ErrorResponse),
     ),

@@ -16,19 +16,17 @@ use crate::api::{submission, submit_direct, submit_github, submit_gitlab, tag};
 /// The API operations, collected from the annotated handlers. Paths here are
 /// relative to the `/api` scope, and the prefix is applied by [`ApiDoc`].
 #[derive(OpenApi)]
-#[openapi(
-    paths(
-        tag::get_taglist,
-        tag::get_tag,
-        tag::get_tag_task,
-        submission::get_submission,
-        submission::get_submission_job,
-        submission::get_submission_search,
-        submit_direct::direct_submission,
-        submit_github::github_submission,
-        submit_gitlab::gitlab_submit_webhook,
-    )
-)]
+#[openapi(paths(
+    tag::get_taglist,
+    tag::get_tag,
+    tag::get_tag_task,
+    submission::get_submission,
+    submission::get_submission_job,
+    submission::get_submission_search,
+    submit_direct::direct_submission,
+    submit_github::github_submission,
+    submit_gitlab::gitlab_submit_webhook,
+))]
 struct ApiEndpoints;
 
 /// Declares the security schemes referenced by name in the handler annotations.

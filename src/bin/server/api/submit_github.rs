@@ -39,6 +39,9 @@ use crate::api::{
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct GitHubSubmission {
     repository: GhsRepository,
+
+    /// The head commit specified here is the commit that (potentially) will be
+    /// graded.
     head_commit: GhsHeadCommit,
     pusher: GhsPusher,
 }
@@ -60,13 +63,17 @@ struct GhsRepository {
     /// Expected format: `https://{DOMAIN}/api/v3/repos/{ORG}/{REPO}`
     url: String,
 
-    /// URL for cloning the repository over SSH
+    /// URL for cloning the repository over SSH.
     ssh_url: String,
 }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[schema(title = "GitHub head commit")]
 struct GhsHeadCommit {
+    /// Commit hash of the head commit.
     id: String,
+
+    /// The commit message of the head commit. This will be used to extract
+    /// grading tags from.
     message: String,
 }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

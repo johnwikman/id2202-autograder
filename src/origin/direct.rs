@@ -50,12 +50,16 @@ impl DirectState {
     }
 }
 
-/// Checks that the entity name only contains accepted characters.
+/// Checks that the entity name only contains accepted characters, and that it
+/// does not start or end with a special character.
 pub fn is_valid_entity(entity: &str) -> bool {
     if !(1..=60).contains(&entity.len()) {
         return false;
     }
-    entity.chars().all(|c| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '-' | '_' | '@'))
+
+    entity.chars().all(|c| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '-' | '_' | '@' | '.'))
+        && (!entity.starts_with(|c| matches!(c, '-' | '_' | '@' | '.')))
+        && (!entity.ends_with(|c| matches!(c, '-' | '_' | '@' | '.')))
 }
 
 /// Prepares the sink message and the headers that needs to go along with it.

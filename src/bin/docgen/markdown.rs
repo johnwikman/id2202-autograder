@@ -5,7 +5,7 @@
 
 use maud::{html, Markup};
 
-use crate::components::widget::{callout, code_block, link};
+use crate::components::widget::{code_block, link, Callout};
 
 /// Collapses each run of whitespace into a single space.
 pub fn collapse_ws(s: &str) -> String {
@@ -229,8 +229,8 @@ pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) 
     let mut prose = String::new();
     let mut lines = src.lines().peekable();
     while let Some(line) = lines.next() {
-        let kind = heading_text(line).and_then(|t| Some((t, callout_kind(t)?)));
-        let Some((label, (class, icon))) = kind else {
+        let callout = heading_text(line).and_then(|t| Callout::from_label(t));
+        let Some(callout) = callout else {
             prose.push_str(line);
             prose.push('\n');
             continue;
@@ -243,22 +243,10 @@ pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) 
             section.push('\n');
         }
         let inner = blocks(&section, &mut *heading);
-        out.push(callout(label, class, icon, inner));
+        out.push(callout.to_markup(inner));
     }
     out.push(blocks(&prose, heading));
     html! { @for part in out { (part) } }
-}
-
-/// The colour class and icon a rustdoc section heading is drawn with, or `None`
-/// for a heading that opens a section of the page and is left as one.
-fn callout_kind(label: &str) -> Option<(&'static str, &'static str)> {
-    match label.trim().to_lowercase().as_str() {
-        "panics" => Some(("cal-danger", "exclamation-triangle-fill")),
-        "warning" | "safety" => Some(("cal-warning", "exclamation-triangle-fill")),
-        "note" | "info" => Some(("cal-info", "info-circle-fill")),
-        "default" | "important" => Some(("cal-note", "info-circle-fill")),
-        _ => None,
-    }
 }
 
 /// The source of the paragraph `src` opens with, and everything after it.

@@ -9,9 +9,8 @@ pub fn body(name: &str) -> Body {
     Body::new(html! {
         h1 { (name) " Documentation" }
         p {
-            "Reference documentation for operating the autograder, generated directly from the \
-             source so it stays in sync with the code. Use the navigation on the left, or the \
-             links below:"
+            "Reference documentation for using the autograder, generated directly from the \
+             source code. Use the navigation on the left, or the links below:"
         }
         ul {
             @for route in ROUTES {
@@ -19,6 +18,10 @@ pub fn body(name: &str) -> Body {
                     li { a href=(route.file) { (route.title) } " - " (description) }
                 }
             }
+        }
+        p {
+            "For development instructions, please see the README.md file in \
+             the root of the repository."
         }
     })
 }

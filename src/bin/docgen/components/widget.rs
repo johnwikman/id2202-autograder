@@ -93,16 +93,67 @@ pub fn html_table(headers: &[&str], rows: &[Vec<Markup>]) -> Markup {
     }
 }
 
-/// A callout box (see `.doc-callout` in `docs.css`): a tinted bar carrying
-/// `icon` and `label`, with `content` below it.
-pub fn callout(label: &str, class: &str, icon: &str, content: Markup) -> Markup {
-    html! {
-        div class={ "doc-callout " (class) } {
-            div class="doc-callout-label" {
-                svg class="bi" aria-hidden="true" { use href={ "#" (icon) } {} }
-                (label)
+/// Struct representing a callout box, the colour class and icon a rustdoc
+/// section heading is drawn with. I.e.:
+///
+/// ```plain
+/// ,--------------------,
+/// | ICON Callout Title |
+/// |--------------------|
+/// | Text withing the   |
+/// | callout box.       |
+/// '--------------------'
+/// ```
+pub struct Callout {
+    label: &'static str,
+    class: &'static str,
+    icon: &'static str,
+}
+
+impl Callout {
+    /// Constructs a callout box from a `label`, ideally a heading to some text
+    /// that follows. Returns `None` if the label is not representative of a
+    /// callout box.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label.trim().to_lowercase().as_str() {
+            "panics" => Some(Self {
+                label: "Panics",
+                class: "cal-danger",
+                icon: "exclamation-triangle-fill",
+            }),
+            "warning" => Some(Self {
+                label: "Warning",
+                class: "cal-warning",
+                icon: "exclamation-triangle-fill",
+            }),
+            "safety" => Some(Self {
+                label: "Safety",
+                class: "cal-warning",
+                icon: "exclamation-triangle-fill",
+            }),
+            "note" => Some(Self { label: "Note", class: "cal-note", icon: "journal-text" }),
+            "info" => Some(Self { label: "Info", class: "cal-info", icon: "info-circle-fill" }),
+            "important" => {
+                Some(Self { label: "Important", class: "cal-important", icon: "lightbulb" })
             }
-            div class="doc-callout-body" { (content) }
+            "default" => {
+                Some(Self { label: "Default", class: "cal-default", icon: "info-circle-fill" })
+            }
+            _ => None,
+        }
+    }
+
+    /// A callout box (see `.doc-callout` in `docs.css`): a tinted bar carrying
+    /// `self.icon` and `self.label`, with `inner` content below it.
+    pub fn to_markup(&self, inner: Markup) -> Markup {
+        html! {
+            div class={ "doc-callout " (self.class) } {
+                div class="doc-callout-label" {
+                    svg class="bi" aria-hidden="true" { use href={ "#" (self.icon) } {} }
+                    (self.label)
+                }
+                div class="doc-callout-body" { (inner) }
+            }
         }
     }
 }

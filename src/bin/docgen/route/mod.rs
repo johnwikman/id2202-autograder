@@ -48,7 +48,7 @@ pub const ROUTES: &[Route] = &[
         file: "settings.html",
         nav_label: "Settings",
         title: "Settings Reference",
-        description: Some("the TOML settings file."),
+        description: Some("the TOML settings file, general settings for the autograder."),
         render_body: |_| settings::body(),
     },
     Route {

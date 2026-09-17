@@ -166,6 +166,8 @@ struct SubmissionSearchFilterQuery {
 
 /// Searches for submissions in the database, using one or more specified
 /// filters to narrow the search space.
+///
+/// For example: `GET /api/submission?entity=foo&after=2023-03-23`
 #[utoipa::path(
     tag = "Submissions",
     params(SubmissionSearchFilterQuery),

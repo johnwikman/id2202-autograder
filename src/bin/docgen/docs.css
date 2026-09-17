@@ -48,7 +48,9 @@
 .cal-danger { --cal-bg: var(--bs-danger-bg-subtle); --cal-fg: var(--bs-danger-text-emphasis); --cal-border: var(--bs-danger-border-subtle); }
 .cal-warning { --cal-bg: var(--bs-warning-bg-subtle); --cal-fg: var(--bs-warning-text-emphasis); --cal-border: var(--bs-warning-border-subtle); }
 .cal-info { --cal-bg: var(--bs-info-bg-subtle); --cal-fg: var(--bs-info-text-emphasis); --cal-border: var(--bs-info-border-subtle); }
+.cal-important { --cal-bg: var(--bs-success-bg-subtle); --cal-fg: var(--bs-success-text-emphasis); --cal-border: var(--bs-success-border-subtle); }
 .cal-note { --cal-bg: var(--bs-secondary-bg); --cal-fg: var(--bs-body-color); --cal-border: var(--bs-border-color); }
+.cal-default { --cal-bg: var(--bs-secondary-bg); --cal-fg: var(--bs-body-color); --cal-border: var(--bs-border-color); }
 
 .setting-list { border-top: var(--bs-border-width) solid var(--bs-border-color); margin-bottom: 1rem; }
 .setting { padding: .45rem 0; border-bottom: var(--bs-border-width) solid var(--bs-border-color); }
