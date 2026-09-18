@@ -10,6 +10,11 @@ use crate::error::Error;
 /// Execute a binary and hand its stdout, stderr and exit code to a
 /// course-provided verifier program, which decides whether the test passed.
 ///
+/// # Note
+/// This adds noticeable runtime overhead compared to the other test kinds, and
+/// the defined scripts may introduce runtime bugs that cannot be checked by
+/// the autograder. It is recommended to use test kind `run` where possible.
+///
 /// It is common to define a verifier for its test group, and only specialize
 /// the parameters for a certain test case. For example given this test group:
 ///

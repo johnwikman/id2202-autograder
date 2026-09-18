@@ -220,9 +220,9 @@ pub fn blocks(text: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> 
     html! { @for part in out { (part) } }
 }
 
-/// Markdown from a doc comment: a heading naming a rustdoc section (e.g.
-/// `# Warning` or `# Note`) is set, together with everything up to the next
-/// heading, as a callout box. Every other heading is handed to `heading` as
+/// Markdown from a doc comment, which is a heading naming a rustdoc section
+/// (e.g. `# Warning` or `# Note`) is set, together with the following
+/// paragraph, as a callout box. Every other heading is handed to `heading` as
 /// [`blocks`] does.
 pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> Markup {
     let mut out: Vec<Markup> = Vec::new();
@@ -238,7 +238,9 @@ pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) 
         out.push(blocks(&prose, &mut *heading));
         prose.clear();
         let mut section = String::new();
-        while let Some(next) = lines.next_if(|l| heading_text(l).is_none()) {
+        // Skip any empty lines following the section header
+        while let Some(_) = lines.next_if(|l| l.trim().is_empty()) {}
+        while let Some(next) = lines.next_if(|l| !l.trim().is_empty() && heading_text(l).is_none()) {
             section.push_str(next);
             section.push('\n');
         }

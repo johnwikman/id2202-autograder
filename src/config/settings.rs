@@ -91,7 +91,7 @@ impl<T: KnownInstanceSettings> KnownInstance for T {
 /// # Warning
 /// Every setting listed below is required with only a few exceptions. Failing
 /// to provide them will cause the startup of the autograder to fail. A setting
-/// that may be omitted will explicitly state so.
+/// that may be omitted will explicitly state its default behavior.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct Settings {
     /// Name to use when responding to requests, creating commits, etc.
@@ -377,8 +377,12 @@ pub struct DirectSettings {
     /// separated by semicolons:
     ///
     /// ```sh
-    /// AUTOGRADER_SERVER_API_AUTH_TOKENS="domain1;domain2;domain3"
+    /// AUTOGRADER_SUBMISSION_DIRECT_ALLOWED_DOMAINS="domain1;domain2;domain3"
     /// ```
+    ///
+    /// # Important
+    /// The environment variable, if set, will discard any direct domains
+    /// defined in the TOML file.
     #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_ALLOWED_DOMAINS", parse_env = confique::env::parse::list_by_semicolon)]
     pub allowed_domains: Vec<String>,
 }
@@ -472,6 +476,10 @@ pub struct RunnerSettings {
     /// ```sh
     /// AUTOGRADER_RUNNER_SSH_KEYS="path_to_key1;path_to_key2;path_to_key3"
     /// ```
+    ///
+    /// # Important
+    /// The environment variable, if set, will discard any SSH key paths
+    /// defined in the TOML file.
     ///
     /// # Note
     /// An SSH server commonly refuses a connection if none of the first 6 keys worked.

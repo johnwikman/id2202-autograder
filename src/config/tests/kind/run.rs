@@ -5,7 +5,50 @@ use schemars::JsonSchema;
 use super::{discover_by_suffix, PostInit, PostInitCtx};
 use crate::error::Error;
 
-/// Execute a binary and check its output.
+/// Execute a binary and check its output against a set of predefined expected
+/// values.
+///
+/// For example, this can test configuration be used to test a solution on
+/// `./n_primes 10` against an expected output:
+///
+/// ```toml
+/// [test]
+/// kind = "run"
+///
+/// [test.options]
+/// bin = "n_primes"
+/// args = ["10"]
+///
+/// # This specifies that the run program must exit with code 0.
+/// code = [0]
+///
+/// # There is only allowed value, and stdout must match that. But we don't
+/// # care about any whitespaces that the program outputs.
+/// stdout = ["2,3,5,7,11,13,17,19,23,29"]
+/// stdout_strip_whitespace = true
+///
+/// # Also don't care about stderr, any text there is accepted
+/// stderr = []
+/// ```
+///
+/// Example of checking whether output matches one of predefined outputs:
+///
+/// ```toml
+/// [test]
+/// kind = "run"
+///
+/// [test.options]
+/// bin = "randint"
+/// args = ["4"]
+///
+/// # Don't care about return code or stderr here
+/// code = []
+/// stderr = []
+///
+/// # `./randint 4` should generate a random integer in the range [0,4)
+/// stdout = ["0", "1", "2", "3"]
+/// stdout_trim = true
+/// ```
 #[derive(JsonSchema, Debug, Clone, Documented, DocumentedFields, TestKind)]
 #[testkind(ident = "run")]
 pub struct Run {
@@ -16,13 +59,18 @@ pub struct Run {
     /// Optional text to write on stdin.
     #[testkind(ignorable)]
     pub stdin: Option<String>,
-    /// Acceptable exit codes.
+    /// Acceptable exit codes. If an empty list is provided, then any exit
+    /// code is allowed.
     pub code: Vec<i32>,
-    /// Expected stdout lines.
+    /// Expected texts on stdout, checking that captured stdout matches any of
+    /// the provided values. If an empty list is provided, then any text on
+    /// stdout is allowed.
     pub stdout: Vec<String>,
-    /// Trim whitespace from each line before comparing.
+    /// Trim whitespace from captured stdout before comparing against the
+    /// expected values in the `stdout` list.
     pub stdout_trim: bool,
-    /// Strip all whitespace before comparing.
+    /// Remove all whitespace characters from captured stdout before comparing
+    /// against the expected values in the `stdout` list.
     pub stdout_strip_whitespace: bool,
     /// Expected stderr lines.
     pub stderr: Vec<String>,

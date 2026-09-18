@@ -137,7 +137,7 @@ impl Callout {
                 Some(Self { label: "Important", class: "cal-important", icon: "lightbulb" })
             }
             "default" => {
-                Some(Self { label: "Default", class: "cal-default", icon: "info-circle-fill" })
+                Some(Self { label: "Default", class: "cal-default", icon: "arrow-repeat" })
             }
             _ => None,
         }
