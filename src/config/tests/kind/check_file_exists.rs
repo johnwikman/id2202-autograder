@@ -5,7 +5,36 @@ use schemars::JsonSchema;
 use super::{PostInit, PostInitCtx};
 use crate::error::Error;
 
-/// Verify that a file exists, optionally checking its MIME type.
+/// Simple test kind for verifying that a file exists in the submitted
+/// solution, optionally checking some of its properties.
+///
+/// This example test verifies that a file `description.pdf` exists under
+/// `solutions/file-example`, and that it is a valid PDF file:
+///
+/// ```toml
+/// [test]
+/// kind = "check_file_exists"
+///
+/// [test.options]
+/// path = "solutions/file-example/description.pdf"
+/// mimetype_prefix = "application/pdf"
+/// ```
+///
+/// To just check that a file `test.cpp` exists without looking at what it
+/// actually contains, the `mimetype_prefix` option can be ignored:
+///
+/// ```toml
+/// [test]
+/// kind = "check_file_exists"
+///
+/// [test.options]
+/// path = "solutions/file-example/test.cpp"
+/// mimetype_prefix_ignore = true
+/// ```
+///
+/// Note that the `mimetype_prefix` is usually ignored by default, but can be
+/// disabled this way if a parent `config.toml` specified a specific MIME type
+/// to check file.
 #[derive(JsonSchema, Debug, Clone, Documented, DocumentedFields, TestKind)]
 #[testkind(ident = "check_file_exists")]
 pub struct CheckFileExists {

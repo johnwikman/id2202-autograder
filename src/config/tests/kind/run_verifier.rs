@@ -31,10 +31,10 @@ use crate::error::Error;
 /// ```toml
 /// # Test group metadata...
 /// [test]
-/// bin = "graded-bin"
 /// kind = "run_verifier"
 ///
 /// [test.options]
+/// bin = "graded-bin"
 /// verifier_path = "./verifier.py"
 ///
 /// [test.options.verifier_param_schema]
@@ -62,6 +62,45 @@ use crate::error::Error;
 /// args = ["custom-arg2"]
 /// verifier_params.min_value = 3
 /// verifier_params.unbounded_max = true
+/// ```
+///
+/// The `verifier.py` script should ideally use the `autograder_verifier_tools`
+/// package to read input and provide output. This wraps the underlying mode of
+/// interaction between the runner and the verifier.
+///
+/// Once the graded execution (e.g. `./graded-bin custom-arg2`) has exited, the
+/// autograder will provide a JSON object on standard input to the verifier
+/// script:
+///
+/// ```json
+/// {
+///     "cmd": ["./graded-bin", "custom-arg2"],
+///     "code": 0,
+///     "stdout": {"enc": "utf8", "data": "the text on stdout"},
+///     "stderr": {"enc": "utf8", "data": ""},
+///     "files": {},
+///     "params": {
+///         "min_value": 3,
+///         "unbounded_max": true
+///     }
+/// }
+/// ```
+///
+/// The autograder then expects the verifier to write its verdict as a JSON
+/// object on standard output and exit with code 0. Example verdict from the
+/// verifier when the test case was accepted:
+///
+/// ```json
+/// {"accepted": true, "reason": null}
+/// ```
+///
+/// If the verifier rejected the output from the graded program:
+///
+/// ```json
+/// {
+///     "accepted": false,
+///     "reason": "The decoded value is below the allowed minimum."
+/// }
 /// ```
 #[derive(JsonSchema, Debug, Clone, Documented, DocumentedFields, TestKind)]
 #[documented(trim = false)]
