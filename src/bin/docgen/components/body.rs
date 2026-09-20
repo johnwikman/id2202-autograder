@@ -127,8 +127,16 @@ impl Body {
             true => format!("section-{}", self.toc.len() + 1),
             false => base,
         };
-        while self.ids.contains(&id) {
-            id.push('-');
+        // Numbered rather than suffixed with a dash, so that a duplicate cannot
+        // collide with a heading whose own slug ends in one.
+        if self.ids.contains(&id) {
+            let base = id.clone();
+            for n in 2.. {
+                id = format!("{base}-{n}");
+                if !self.ids.contains(&id) {
+                    break;
+                }
+            }
         }
         self.ids.push(id.clone());
         Anchor(id)

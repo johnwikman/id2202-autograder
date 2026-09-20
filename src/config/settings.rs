@@ -162,8 +162,8 @@ pub struct MonitorSettings {
 /// General settings for timeout related operations within the autograder
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct TimeoutSettings {
-    /// Timeout (in milliseconds) for polling the notification file, to
-    /// make sure that a process does not freeze due to polling.
+    /// Timeout (in milliseconds) when waiting on the PostgreSQL notification
+    /// channel, to make sure that a process does not freeze due to polling.
     #[config(env = "AUTOGRADER_TIMEOUT_NOTIFY_POLL_MILLISEC")]
     pub notify_poll_millisec: u16,
 
@@ -182,8 +182,8 @@ pub struct TimeoutSettings {
 /// Settings for incoming submissions
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct SubmissionSettings {
-    /// Maximum length of the concatenated tags that can be inserted
-    /// into the database.
+    /// The concatenated grading tags of a submission must be strictly shorter
+    /// than this many bytes.
     #[config(env = "AUTOGRADER_SUBMISSION_MAX_TAG_LENGTH")]
     pub max_tag_length: usize,
 
@@ -191,7 +191,8 @@ pub struct SubmissionSettings {
     #[config(env = "AUTOGRADER_SUBMISSION_MAX_PAYLOAD")]
     pub max_payload: usize,
 
-    /// A signature to place at the end of every comment made on GitLab.
+    /// A signature to place at the end of every comment the autograder makes on
+    /// GitHub or GitLab.
     #[config(env = "AUTOGRADER_SUBMISSION_COMMENT_SIGNATURE")]
     pub comment_signature: String,
 
@@ -226,9 +227,10 @@ pub struct GitHubSettings {
 
 /// Object format for each entry of `submission.github.known_instances`. These
 /// per-instance settings cannot be provided through environment variables,
-/// except that the `auth_token` of an already-defined instance may be overridden
-/// via `AUTOGRADER_GITHUB_AUTH_TOKENS`, which holds semicolon-separated
-/// `domain=token` pairs. See [GitHubSettings] for settings that apply to all
+/// except that the `auth_token` and `outbound_host` of an already-defined
+/// instance may be overridden via `AUTOGRADER_GITHUB_AUTH_TOKENS` and
+/// `AUTOGRADER_GITHUB_OUTBOUND_HOSTS`, which each hold semicolon-separated
+/// `domain=value` pairs. See [GitHubSettings] for settings that apply to all
 /// GitHub servers.
 #[derive(Deserialize, JsonSchema, Debug, Clone)]
 #[schemars(title = "GitHub instance")]
@@ -297,9 +299,10 @@ pub struct GitLabSettings {
 
 /// Object format for each entry of `submission.gitlab.known_instances`. These
 /// per-instance settings cannot be provided through environment variables,
-/// except that the `auth_token` of an already-defined instance may be overridden
-/// via `AUTOGRADER_GITLAB_AUTH_TOKENS`, which holds semicolon-separated
-/// `domain=token` pairs. See [GitLabSettings] for settings that apply to all
+/// except that the `auth_token` and `outbound_host` of an already-defined
+/// instance may be overridden via `AUTOGRADER_GITLAB_AUTH_TOKENS` and
+/// `AUTOGRADER_GITLAB_OUTBOUND_HOSTS`, which each hold semicolon-separated
+/// `domain=value` pairs. See [GitLabSettings] for settings that apply to all
 /// GitLab servers.
 #[derive(Deserialize, JsonSchema, Debug, Clone)]
 #[schemars(title = "GitLab instance")]
@@ -367,7 +370,8 @@ pub struct DirectSettings {
     #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_STORAGE_DIR")]
     pub storage_dir: String,
 
-    /// The maximum allowed size of an archive after it has been unpacked.
+    /// The maximum allowed size of an archive after it has been unpacked, in
+    /// bytes.
     #[config(env = "AUTOGRADER_SUBMISSION_DIRECT_MAX_UNPACKED_SIZE")]
     pub max_unpacked_size: usize,
 
@@ -568,8 +572,8 @@ pub struct PodmanImageBuildSettings {
 /// Settings controlling how grading results are reported.
 #[derive(Config, Deserialize, JsonSchema, Debug, Clone)]
 pub struct ReportingSettings {
-    /// Maximum number of failed test cases revealed to the student in a single
-    /// submission.
+    /// Maximum number of failed test cases for which detailed output is
+    /// collected and shown to the student in a single submission.
     #[config(env = "AUTOGRADER_REPORTING_SHOWN_FAILURES")]
     pub shown_failures: usize,
 

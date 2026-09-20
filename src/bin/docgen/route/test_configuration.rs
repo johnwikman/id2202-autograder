@@ -26,14 +26,25 @@ use crate::components::{doc_table, warn_untyped, Body, FieldDoc};
 fn behaviour(f: &FieldAttrs) -> String {
     let mut out = String::new();
     if f.is_relpath {
-        out.push_str(" Resolved against the directory of the file that sets it.");
+        out.push_str(
+            " Resolved against the directory of the `config.toml` or `*.test.toml` \
+             that sets it. A value set in the root test configuration is used as \
+             written.",
+        );
     }
     if !f.clears.is_empty() {
         let cleared: Vec<String> = f.clears.iter().map(|c| format!("`{c}`")).collect();
-        out.push_str(&format!(" Setting this key resets {} to the default.", cleared.join(", ")));
+        out.push_str(&format!(
+            " Setting this key discards any inherited {}, unless this file sets \
+             them itself.",
+            cleared.join(", ")
+        ));
     }
     if f.deep_merge {
-        out.push_str(" Inherited entries are merged key by key, not replaced wholesale.");
+        out.push_str(
+            " Inherited entries are merged key by key, not replaced wholesale. A \
+             child cannot remove an inherited key.",
+        );
     }
     out
 }

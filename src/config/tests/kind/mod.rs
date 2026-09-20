@@ -37,7 +37,7 @@ pub trait PostInit {
 /// Context for applying one configuration file's option overrides.
 pub struct ApplyCtx<'a> {
     /// Absolute path to the directory holding the file that wrote the
-    /// overrides, which `#[testkind(path)]` fields resolve against.
+    /// overrides, which `#[testkind(relpath)]` fields resolve against.
     pub dir: &'a str,
 }
 
@@ -50,8 +50,8 @@ pub struct FieldAttrs {
     /// Key that masks this field, from `#[testkind(ignorable)]`.
     pub ignore_key: Option<&'static str>,
 
-    /// `#[testkind(relpath)]`: resolved against the file the TOML file that
-    /// specified it.
+    /// `#[testkind(relpath)]`: resolved against the directory of the TOML file
+    /// that set it.
     pub is_relpath: bool,
 
     /// `#[testkind(clears(..))]`: fields reset whenever this one is set.
@@ -107,7 +107,7 @@ macro_rules! kinds {
             }
         }
 
-        /// The `[default.kind]` table: one complete set of option values per
+        /// The `[default.test.kinds]` table: one complete set of option values per
         /// kind, which a test case's own options are merged into. The field
         /// name is the key used in the TOML.
         #[derive(Deserialize, Debug, Clone)]

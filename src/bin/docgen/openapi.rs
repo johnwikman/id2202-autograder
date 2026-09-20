@@ -138,10 +138,16 @@ impl RequestBody {
     }
 }
 
-/// The schema `content` states for `application/json`, or `None` when it has no
-/// such entry or that entry carries no schema.
+/// The schema `content` states for a JSON body, or `None` when it has no such
+/// entry or that entry carries no schema. A media type with a `+json` suffix
+/// counts, so that an error body sent as `application/problem+json` is
+/// documented like any other.
 fn json_schema(content: &BTreeMap<String, MediaType>) -> Option<&Value> {
-    content.get("application/json").map(|media| &media.schema).filter(|schema| !schema.is_null())
+    content
+        .iter()
+        .find(|(name, _)| *name == "application/json" || name.ends_with("+json"))
+        .map(|(_, media)| &media.schema)
+        .filter(|schema| !schema.is_null())
 }
 
 #[derive(Deserialize)]

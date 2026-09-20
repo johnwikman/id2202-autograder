@@ -61,7 +61,7 @@ pub struct DirectSubmission {
     /// the submission on the `hello` tag.
     grading_tags: Vec<String>,
 
-    /// Format of the archive. Allowed values are `zip` and `tar.gz`.
+    /// Format of the archive. Allowed values are `zip`, `tar.gz` and `targz`.
     archive: String,
 
     /// The encoding of the `data` field. Allowed values are `base64`.
@@ -80,7 +80,8 @@ pub struct DirectSubmission {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[schema(title = "Direct submission sink")]
 struct DirectSubmissionSink {
-    /// The URL to send reports to. See `origin/direct` for more information
+    /// The URL to send reports to. Its host and port must equal the `domain`
+    /// field of the submission. See `origin/direct` for more information
     /// about the format.
     url: String,
 
@@ -101,9 +102,11 @@ struct DirectSubmissionSink {
     security(("direct_submission" = [])),
     responses(
         (status = 201, body = SubmitResponse,
-         description = "Submission created and registered in the database. However, it is not guaranteed that the submission can be graded."),
-        (status = 400, description = "Malformed payload or missing headers.", body = ErrorResponse),
-        (status = 401, description = "Invalid submission secret or unrecognized domain.", body = ErrorResponse),
+         headers(("Location" = String, description = "Path of the created submission.")),
+         description = "Submission created and registered in the database. However, it is not guaranteed that the submission can be graded. Resubmitting the same tag from the same origin supersedes that origin's earlier pending job."),
+        (status = 400, description = "Malformed payload, missing headers, a request body over `submission.max_payload`, or an archive that unpacks past `submission.direct.max_unpacked_size`.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Invalid submission secret or unrecognized domain.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[post("/submit/direct")]

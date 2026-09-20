@@ -159,6 +159,18 @@ fn kind_ident(input: &DeriveInput) -> Result<LitStr> {
     ident.ok_or_else(|| Error::new_spanned(&input.ident, "missing `#[testkind(ident = \"...\")]`"))
 }
 
+/// Whether `ty` is a `Vec<..>`, which a `relpath` field resolves entry by
+/// entry rather than whole.
+fn is_vec(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|last| last.ident == "Vec")
+}
+
 /// One field of a test kind options struct.
 struct KindField {
     name: Ident,
@@ -169,7 +181,7 @@ struct KindField {
     ignore_key: Option<String>,
 
     /// `#[testkind(relpath)]`: resolve the value against the directory of the file
-    /// that wrote it.
+    /// that wrote it. A `Vec<String>` field has each of its entries resolved.
     is_relpath: bool,
 
     /// `#[testkind(clears(a, b))]`: reset these fields whenever this one is set.
@@ -248,7 +260,7 @@ impl KindField {
                         } else {
                             return Err(meta.error(format!(
                                 "unknown `testkind` option `{}`, expected one of \
-                             `ignorable`, `path`, `clears`, `merge`",
+                                 `ignorable`, `relpath`, `clears`, `merge`",
                                 meta.path.to_token_stream()
                             )));
                         }
@@ -291,11 +303,21 @@ impl KindField {
                 }
             }
         } else if self.is_relpath {
-            let resolved = quote! {
-                {
-                    let raw: String = #convert;
-                    crate::utils::path_absolute_join(ctx.dir, raw)?
-                }
+            let resolved = match is_vec(&self.ty) {
+                true => quote! {
+                    {
+                        let raw: Vec<String> = #convert;
+                        raw.into_iter()
+                            .map(|p| crate::utils::path_absolute_join(ctx.dir, p))
+                            .collect::<Result<Vec<String>, _>>()?
+                    }
+                },
+                false => quote! {
+                    {
+                        let raw: String = #convert;
+                        crate::utils::path_absolute_join(ctx.dir, raw)?
+                    }
+                },
             };
             match self.ignore_key {
                 Some(_) => quote!(self.#n = Some(#resolved);),

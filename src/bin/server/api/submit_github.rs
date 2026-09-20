@@ -97,9 +97,11 @@ struct GhsPusher {
     security(("github_webhook" = [])),
     responses(
         (status = 200, description = "Webhook was accepted, but no submission was registered.", body = SubmitResponse),
-        (status = 201, description = "Submission created and registered in the database.", body = SubmitResponse),
-        (status = 400, description = "Malformed webhook payload.", body = ErrorResponse),
-        (status = 401, description = "Invalid webhook signature.", body = ErrorResponse),
+        (status = 201, headers(("Location" = String, description = "Path of the created submission.")),
+         description = "Submission created and registered in the database. However, it is not guaranteed that the submission can be graded. Resubmitting the same tag from the same origin supersedes that origin's earlier pending job.", body = SubmitResponse),
+        (status = 400, description = "Malformed webhook payload.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Invalid webhook signature.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[post("/submit/github")]

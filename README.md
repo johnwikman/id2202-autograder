@@ -116,12 +116,10 @@ sudo docker compose run --rm --no-deps autograder \
     /autograder/target/release/entrypoint --settings /mnt/example/settings.toml verify-ssh-hosts
 
 # Fetch the grading image and build the verifier image ahead of time. The
-# autograder will not start if there images are absent. The `pull-image`
-# command takes a while (~10 minutes).
+# autograder will not start if these images are absent, and it never fetches
+# them itself. This takes a while (~10 minutes).
 sudo docker compose run --rm --no-deps autograder \
-    /autograder/target/release/entrypoint --settings /mnt/example/settings.toml pull-image
-sudo docker compose run --rm --no-deps autograder \
-    /autograder/target/release/entrypoint --settings /mnt/example/settings.toml build-image
+    /autograder/target/release/entrypoint --settings /mnt/example/settings.toml setup-images
 
 # Start the postgres instance
 sudo docker compose up -d postgres

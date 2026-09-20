@@ -33,7 +33,7 @@ pub struct TagDefaults {
     /// Default rate limits for tags.
     pub rate_limit: RateLimit,
 
-    /// Default budged of tags.
+    /// Default budget of tags.
     pub budget: Budget,
 }
 
@@ -99,7 +99,8 @@ pub struct Budget {
 )]
 #[patch(name = "_UntreatedBuildConfig", attribute(derive(Deserialize, Default)))]
 pub struct BuildConfig {
-    /// The source directory that contains the files to build.
+    /// The source directory that contains the files to build, relative to the
+    /// root of the submitted repository.
     pub srcdir: String,
 
     /// The command used for building the project once located in the project

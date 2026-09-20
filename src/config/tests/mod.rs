@@ -37,23 +37,32 @@ use tag::{BuildConfig, Tag, TagDefaults};
 /// Test configuration lives in a directory tree rooted at a TOML file whose path
 /// is given by `runner.test_config` in the settings. Three file types are used:
 ///
-/// - **Root test configuration**: the top-level TOML file (any name). Defines
-///   global defaults (including per-test-kind defaults), tags, and tag groups.
-/// - **`config.toml`**: placed in a test directory. Sets shared configuration
-///   for all test cases in that directory and its subdirectories.
+/// - **Root test configuration**: the top-level TOML file (any name). Must
+///   define a complete set of root defaults, meaning every key of
+///   `[default.tag]`, `[default.build]` and `[default.test]` and every option
+///   of every test kind, plus `[tags]` and `[tag_groups]`, which may be empty.
+/// - **`config.toml`**: required in every test directory, including nested
+///   ones, and must set `title`. Sets shared configuration for all test cases
+///   in that directory and its subdirectories.
 /// - **`*.test.toml`**: defines a single test case. The filename (minus the
 ///   `.test.toml` suffix) becomes the test name.
 ///
 /// Configuration is inherited hierarchically. A `.test.toml` file inherits from
 /// the `config.toml` in the same directory, which inherits from the
-/// `config.toml` in its parent directory, and so on up to the global defaults in
-/// the root test configuration. Only explicitly set values override inherited
-/// ones. Each directory containing a `config.toml` forms a **test group**, and a
-/// directory nested under it forms a sub-group.
+/// `config.toml` in its parent directory, up to the directory a tag names in
+/// its `dirs`, which inherits from the root defaults. A `config.toml` above
+/// that directory is not read. Only explicitly set values override inherited
+/// ones. Each such directory forms a **test group**, and a directory nested
+/// under it forms a _sub-group_ (which itself is also a test group).
+///
+/// Within a group the sub-groups run first, then the group's own test cases.
+/// Both are ordered by filename as text. It is recommended to numerically
+/// with zero-padding (e.g. `01`, `02`, etc.) to control the order that tests
+/// are run in.
 ///
 /// ```text
 /// tests/
-///   tests.toml          # [default.kind.run] sets bin = "mybin", stdout_trim = true
+///   tests.toml          # [default.test.kinds.run] sets bin = "mybin"
 ///   hello/
 ///     config.toml       # title = "Hello", [test] sets kind = "run"
 ///     basic.test.toml   # [test.options] sets stdout = ["Hello"]

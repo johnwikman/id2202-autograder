@@ -16,7 +16,8 @@ use crate::api::response::{ErrorResponse, TagListResponse, TagResponse};
     security(("api_token" = [])),
     responses(
         (status = 200, description = "Returned an object specifying all available grading tags and tag groups.", body = TagListResponse),
-        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[get("/tag")]
@@ -39,14 +40,17 @@ pub async fn get_taglist(
     Ok(TagListResponse::new(&req, &tc).to_http())
 }
 
-/// Fetches a single grading tags (or an alias of many) and some of its metadata.
+/// Fetches a single grading tag, or every tag in a tag group, and some of its
+/// metadata.
 #[utoipa::path(
     tag = "Tags",
     params(("tagname" = String, Path, description = "Tag name, or a tag-group alias")),
     security(("api_token" = [])),
     responses(
         (status = 200, description = "Details for the tag, or every tag in the group (if the tag was an alias for many tags).", body = TagResponse),
-        (status = 404, description = "No such tag or tag group.", body = ErrorResponse),
+        (status = 404, description = "No such tag or tag group.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[get("/tag/{tagname}")]
@@ -82,8 +86,10 @@ pub async fn get_tag(
     security(("api_token" = [])),
     responses(
         (status = 200, description = "The task description file returned in an opaque format (`application/octet-stream`).", content_type = "application/octet-stream"),
-        (status = 400, description = "Name refers to a multi-tag group.", body = ErrorResponse),
-        (status = 404, description = "Tag does not exist or has no task file.", body = ErrorResponse),
+        (status = 400, description = "Name refers to a multi-tag group.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 404, description = "Tag does not exist or has no task file.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[get("/tag/{tagname}/task")]

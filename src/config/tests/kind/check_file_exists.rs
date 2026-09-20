@@ -8,15 +8,19 @@ use crate::error::Error;
 /// Simple test kind for verifying that a file exists in the submitted
 /// solution, optionally checking some of its properties.
 ///
-/// This example test verifies that a file `description.pdf` exists under
-/// `solutions/file-example`, and that it is a valid PDF file:
+/// # Note
+/// This test kind does not use the `timeout` or `max_output` test case
+/// settings since it does not execute a student's program.
+///
+/// This example test verifies that a file `description.pdf` exists in the
+/// tag's build source directory, and that it is a valid PDF file:
 ///
 /// ```toml
 /// [test]
 /// kind = "check_file_exists"
 ///
 /// [test.options]
-/// path = "solutions/file-example/description.pdf"
+/// path = "description.pdf"
 /// mimetype_prefix = "application/pdf"
 /// ```
 ///
@@ -28,20 +32,21 @@ use crate::error::Error;
 /// kind = "check_file_exists"
 ///
 /// [test.options]
-/// path = "solutions/file-example/test.cpp"
+/// path = "test.cpp"
 /// mimetype_prefix_ignore = true
 /// ```
 ///
-/// Note that the `mimetype_prefix` is usually ignored by default, but can be
-/// disabled this way if a parent `config.toml` specified a specific MIME type
-/// to check file.
+/// The second form is what to write when the root configuration or a parent
+/// `config.toml` set a MIME type to check for, and this test case only needs
+/// to know that the file is there.
 #[derive(JsonSchema, Debug, Clone, Documented, DocumentedFields, TestKind)]
 #[testkind(ident = "check_file_exists")]
 pub struct CheckFileExists {
-    /// Path to the file (relative to the repository root).
+    /// Path to the file, relative to the tag's build source directory
+    /// (`build.srcdir`). A directory counts as existing, and symlinks are
+    /// followed.
     pub path: String,
-    /// Required MIME type prefix, e.g. `application/pdf`. Set
-    /// `mimetype_prefix_ignore = true` instead to skip the check.
+    /// Required MIME type prefix, e.g. `application/pdf`.
     #[testkind(ignorable)]
     pub mimetype_prefix: Option<String>,
 }

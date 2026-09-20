@@ -30,8 +30,10 @@ use crate::api::response::{
     security(("api_token" = [])),
     responses(
         (status = 200, description = "Submission info, including the grading report once finished", body = SubmissionResponse),
-        (status = 400, description = "Malformed submission ID", body = ErrorResponse),
-        (status = 404, description = "No submission with that ID", body = ErrorResponse),
+        (status = 400, description = "Malformed submission ID", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 404, description = "No submission with that ID", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[get("/submission/{id}")]
@@ -80,8 +82,10 @@ pub async fn get_submission(
     security(("api_token" = [])),
     responses(
         (status = 200, description = "The job, including its grading report once finished", body = SubmissionJobWithReportResponse),
-        (status = 400, description = "Malformed submission ID", body = ErrorResponse),
-        (status = 404, description = "No submission with that ID, or it has no job for that tag", body = ErrorResponse),
+        (status = 400, description = "Malformed submission ID", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 404, description = "No submission with that ID, or it has no job for that tag", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[get("/submission/{id}/job/{tag}")]
@@ -174,7 +178,9 @@ struct SubmissionSearchFilterQuery {
     security(("api_token" = [])),
     responses(
         (status = 200, description = "Submission info, including the grading report once finished", body = SubmissionSearchResponse),
-        (status = 400, description = "Incorrect formatting of query keys, or invalid source kind.", body = ErrorResponse),
+        (status = 400, description = "Incorrect formatting of query keys, or invalid source kind.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 401, description = "Missing or invalid API token.", body = ErrorResponse, content_type = "application/problem+json"),
+        (status = 500, description = "Unexpected autograder failure.", body = ErrorResponse, content_type = "application/problem+json"),
     ),
 )]
 #[get("/submission")]

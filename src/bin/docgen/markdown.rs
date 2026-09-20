@@ -16,11 +16,13 @@ pub fn collapse_ws(s: &str) -> String {
 /// `[text](url)` links and bare `http(s)://` URLs, leaving all other text
 /// escaped. A code span is marked `doc-code`.
 pub fn inline(s: &str) -> Markup {
-    inline_parts(s, true)
+    inline_parts(s, false)
 }
 
-/// [`inline`], with bare URLs left as text when `linkify` is false.
-fn inline_parts(s: &str, linkify: bool) -> Markup {
+/// [`inline`], for text that is already inside a link when `in_link` is set.
+/// Nothing there may become a link of its own, which keeps the markup valid and
+/// bounds the recursion.
+fn inline_parts(s: &str, in_link: bool) -> Markup {
     let mut out: Vec<Markup> = Vec::new();
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -45,7 +47,7 @@ fn inline_parts(s: &str, linkify: bool) -> Markup {
         if let Some(inner) = rest.strip_prefix("**") {
             if let Some(end) = inner.find("**") {
                 flush!();
-                out.push(html! { strong { (inline_parts(&inner[..end], linkify)) } });
+                out.push(html! { strong { (inline_parts(&inner[..end], in_link)) } });
                 i += 2 + end + 2;
                 continue;
             }
@@ -59,22 +61,21 @@ fn inline_parts(s: &str, linkify: bool) -> Markup {
             if let (false, Some(end)) = (intraword, end) {
                 if !inner[end + 1..].chars().next().is_some_and(char::is_alphanumeric) {
                     flush!();
-                    out.push(html! { em { (inline_parts(&inner[..end], linkify)) } });
+                    out.push(html! { em { (inline_parts(&inner[..end], in_link)) } });
                     i += 1 + end + 1;
                     continue;
                 }
             }
         }
-        if rest.starts_with('[') {
+        if rest.starts_with('[') && !in_link {
             if let Some((text, url, len)) = parse_link(rest) {
                 flush!();
-                // The text of a link cannot hold another one.
-                out.push(link(url, inline_parts(text, false)));
+                out.push(link(url, inline_parts(text, true)));
                 i += len;
                 continue;
             }
         }
-        if linkify {
+        if !in_link {
             if let Some(url) = bare_url(rest) {
                 flush!();
                 out.push(link(url, html! { (url) }));
@@ -175,12 +176,12 @@ pub fn blocks(text: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> 
             let common = body
                 .iter()
                 .filter(|line| !line.trim().is_empty())
-                .map(|line| line.len() - line.trim_start().len())
+                .map(|line| line.chars().take_while(|c| c.is_whitespace()).count())
                 .min()
                 .unwrap_or(0);
             let mut code = String::new();
             for line in body {
-                code.push_str(line.get(common..).unwrap_or(""));
+                code.extend(line.chars().skip(common));
                 code.push('\n');
             }
             out.push(code_block(&code, &lang));
@@ -247,8 +248,17 @@ pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) 
     let mut out: Vec<Markup> = Vec::new();
     let mut prose = String::new();
     let mut lines = src.lines().peekable();
+    let mut fenced = false;
     while let Some(line) = lines.next() {
-        let callout = heading_text(line).and_then(|t| Callout::from_label(t));
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+        // A comment inside a code block can name a section, and cutting the
+        // block there would scatter the code across a callout and two halves.
+        let callout = match fenced {
+            true => None,
+            false => heading_text(line).and_then(Callout::from_label),
+        };
         let Some(callout) = callout else {
             prose.push_str(line);
             prose.push('\n');
@@ -259,7 +269,13 @@ pub fn doc_blocks(src: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) 
         let mut section = String::new();
         // Skip any empty lines following the section header
         while let Some(_) = lines.next_if(|l| l.trim().is_empty()) {}
-        while let Some(next) = lines.next_if(|l| !l.trim().is_empty() && heading_text(l).is_none()) {
+        let mut in_fence = false;
+        while let Some(next) =
+            lines.next_if(|l| in_fence || (!l.trim().is_empty() && heading_text(l).is_none()))
+        {
+            if next.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+            }
             section.push_str(next);
             section.push('\n');
         }

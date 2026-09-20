@@ -36,12 +36,23 @@ pub fn details(summary: &str, content: Markup) -> Markup {
 /// A link. An address that leaves the documentation opens in a tab of its own,
 /// meaning one carrying a scheme (`https:`, `mailto:`), one beginning `//`, and
 /// an absolute path. A relative path and a fragment stay in the current tab.
+///
+/// A scheme that is not one a document links with, `javascript:` above all,
+/// renders as its own text rather than as a link.
 pub fn link(href: &str, content: Markup) -> Markup {
-    let scheme = href.split_once(':').is_some_and(|(scheme, _)| {
+    let scheme = href.split_once(':').filter(|(scheme, _)| {
         scheme.starts_with(|c: char| c.is_ascii_alphabetic())
             && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
     });
-    let leaves = scheme || href.starts_with('/');
+    if let Some((scheme, _)) = scheme {
+        let known = ["http", "https", "mailto"];
+        if !known.contains(&scheme.to_ascii_lowercase().as_str()) {
+            // The text is what the author wrote, so it is kept. Only the
+            // address is dropped.
+            return content;
+        }
+    }
+    let leaves = scheme.is_some() || href.starts_with('/');
     html! {
         a href=(href) target=[leaves.then_some("_blank")]
             rel=[leaves.then_some("noopener noreferrer")] {

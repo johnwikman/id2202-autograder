@@ -6,7 +6,7 @@
 
 use maud::{html, Markup, PreEscaped};
 
-use crate::components::body::{slug, Body};
+use crate::components::body::Body;
 use crate::highlight;
 
 /// The relative directory (under the output dir) that the cached CDN assets are
@@ -130,22 +130,18 @@ pub struct NavItem<'a> {
 
 struct NavGroup<'a> {
     label: &'a str,
-    panel: String,
-    open: bool,
     members: Vec<&'a NavItem<'a>>,
 }
 
 /// In the order `nav` first names them.
-fn nav_groups<'a>(nav: &'a [NavItem], active: &str) -> Vec<NavGroup<'a>> {
+fn nav_groups<'a>(nav: &'a [NavItem]) -> Vec<NavGroup<'a>> {
     let mut out: Vec<NavGroup> = Vec::new();
     for item in nav {
         let Some(label) = item.group else { continue };
         if !out.iter().any(|group| group.label == label) {
-            let panel = format!("nav-{}", slug(label));
-            out.push(NavGroup { label, panel, open: false, members: Vec::new() });
+            out.push(NavGroup { label, members: Vec::new() });
         }
         let group = out.iter_mut().find(|group| group.label == label).expect("just inserted");
-        group.open |= item.file == active;
         group.members.push(item);
     }
     out
@@ -169,7 +165,7 @@ fn nav_link(item: &NavItem, active: bool, submenu: &Markup) -> Markup {
 pub fn html_page(name: &str, title: &str, nav: &[NavItem], active: &str, body: Body) -> Markup {
     let submenu = body.submenu();
     let body = body.into_html();
-    let groups = nav_groups(nav, active);
+    let groups = nav_groups(nav);
 
     // maud's own `DOCTYPE` is upper-case, and the site has always emitted the
     // lower-case spelling.
@@ -213,20 +209,10 @@ pub fn html_page(name: &str, title: &str, nav: &[NavItem], active: &str, body: B
                             @for item in nav.iter().filter(|item| item.group.is_none()) {
                                 (nav_link(item, item.file == active, &submenu))
                             }
-                            @if !groups.is_empty() {
-                                li class="nav-item" aria-hidden="true" { hr class="my-2 mx-3"; }
-                            }
                             @for group in &groups {
                                 li class="nav-item doc-nav-group" {
-                                    a class="nav-link" data-bs-toggle="collapse"
-                                        href={ "#" (group.panel) } role="button"
-                                        aria-expanded=(group.open) aria-controls=(group.panel) {
-                                        (group.label)
-                                    }
-                                    ul id=(group.panel) class={
-                                        "nav flex-column ms-3 collapse"
-                                        @if group.open { " show" }
-                                    } {
+                                    div class="doc-nav-label" { (group.label) }
+                                    ul class="nav flex-column" {
                                         @for item in &group.members {
                                             (nav_link(item, item.file == active, &submenu))
                                         }
