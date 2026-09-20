@@ -3,7 +3,8 @@ The autograder originally created for the course ID2202 at KTH Royal Institute
 of Technology. This allows students to submit their solutions to be checked
 against a variety of test cases.
 
-See [johnwikman.github.io/id2202-autograder](https://johnwikman.github.io/id2202-autograder/) for documentation on autograder configuration and its REST API.
+See [johnwikman.github.io/id2202-autograder](https://johnwikman.github.io/id2202-autograder/)
+for documentation on autograder configuration and its REST API.
 
 This is intended to be run in a Linux-based container using Docker or Podman.
 See further down in the README for information about how to run it as a
@@ -36,6 +37,7 @@ For development (in addition to _deployment_ and _testing_ dependencies):
  * `git`
  * `podman`
  * [`file`](https://www.darwinsys.com/file/)
+ * [`griffe`](https://github.com/mkdocstrings/griffe)
 
 
 ## Testing: Getting Started
@@ -163,6 +165,26 @@ just gen-docs
 If successful, the generated documentation will be placed under
 `./target/docs/site`. Open `./target/docs/site/index.html` in your web browser
 to view the documentation.
+
+The origin of the generated documentation lives together with its source code.
+Each generated HTML file contents originates from these files and directories:
+
+```
+settings.html:
+  src/config/settings.rs
+
+tests.html:
+  src/config/tests/mod.rs      high-level docs
+  src/config/tests/tag.rs      [default.tag] and [default.build]
+  src/config/tests/group.rs    [default.test]
+  src/config/tests/kind/       one file per test kind
+
+api.html:
+  src/bin/server/api/          utoipa attributes on each endpoint
+
+autograder-verifier-tools.html:
+  example/container/verifier/lib/autograder_verifier_tools/
+```
 
 ## Runtime Structure
 The autograder is structured into 3 binaries: `entrypoint`, `runner`, and `server`.

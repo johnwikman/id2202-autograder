@@ -1,5 +1,5 @@
 //! Generates the static HTML documentation site (settings, test configuration,
-//! and the REST API).
+//! the REST API and the verifier tools).
 
 use std::path::Path;
 
@@ -8,6 +8,7 @@ use clap::Parser;
 use id2202_autograder::{config::Settings, error::Error};
 
 mod components;
+mod griffe;
 mod highlight;
 mod markdown;
 mod openapi;
@@ -36,6 +37,12 @@ struct Args {
     /// page is rendered from it.
     #[arg(long)]
     openapi: String,
+
+    /// Path to the JSON produced by `griffe dump` for the
+    /// `autograder_verifier_tools` package. The verifier tools page is
+    /// rendered from it.
+    #[arg(long)]
+    griffe: String,
 }
 
 fn main() -> Result<(), Error> {
@@ -52,7 +59,12 @@ fn main() -> Result<(), Error> {
     let spec: openapi::Spec = serde_json::from_str(&raw)
         .map_err(|e| Error::runtime(format!("could not parse OpenAPI spec: {e}")))?;
 
-    let options = route::RenderOptions { name: &cfg.name, spec: &spec };
+    let raw = std::fs::read_to_string(&args.griffe)
+        .map_err(|e| Error::fs("reading griffe dump", &args.griffe).with_cause(Box::new(e)))?;
+    let dump: griffe::Dump = serde_json::from_str(&raw)
+        .map_err(|e| Error::runtime(format!("could not parse griffe dump: {e}")))?;
+
+    let options = route::RenderOptions { name: &cfg.name, spec: &spec, dump: &dump };
     for (page, contents) in route::render_all(&options) {
         let contents = contents.into_string();
         components::warn_dangling_fragments(page, &contents);

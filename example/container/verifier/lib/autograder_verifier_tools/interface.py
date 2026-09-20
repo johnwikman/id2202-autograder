@@ -33,9 +33,11 @@ class Encoded:
     raw: bytes
 
     def as_bytes(self) -> bytes:
+        """Get the encoded data as raw bytes."""
         return self.raw
 
     def is_utf8(self) -> bool:
+        """Checks whether the raw bytes is a valid UTF-8 encoding."""
         try:
             self.raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -43,13 +45,17 @@ class Encoded:
         return True
 
     def as_utf8(self) -> str:
-        """Raises `UnicodeDecodeError` if the bytes are not valid UTF-8."""
+        """Decodes the raw bytes as UTF-8 into a text string.
+
+        Raises `UnicodeDecodeError` if the bytes are not valid UTF-8."""
         return self.raw.decode("utf-8")
 
 
 @dataclass(frozen=True)
 class Run:
-    """One execution of the student's program."""
+    """One execution of the student's program.
+
+    This is the decoded JSON data returned by `read_stdin()`."""
 
     cmd: list[str]
     code: int
@@ -80,7 +86,7 @@ def _encoded(value: object, where: str) -> Encoded:
 
 
 def read_stdin() -> Run:
-    """Reads and validates what the autograder writes on stdin."""
+    """Reads and decodes the JSON that the autograder writes on stdin."""
     incoming = _object(json.load(sys.stdin), "input")
 
     cmd = incoming.get("cmd")
@@ -116,7 +122,7 @@ def read_stdin() -> Run:
 
 
 def write_verdict(accepted: bool, reason: str | None) -> NoReturn:
-    """Writes the verdict and exits, so nothing after it runs."""
+    """Writes the verdict to stdout and exits."""
     verdict: dict[str, object] = {"accepted": accepted}
     if reason is not None:
         verdict["reason"] = reason

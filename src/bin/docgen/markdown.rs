@@ -161,15 +161,26 @@ pub fn blocks(text: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> 
 
         if let Some(lang) = trimmed.trim_start().strip_prefix("```") {
             let lang = lang.trim().to_string();
-            let mut code = String::new();
-            for body in lines.by_ref() {
-                if body.trim_start().starts_with("```") {
+            let mut body: Vec<&str> = Vec::new();
+            for line in lines.by_ref() {
+                if line.trim_start().starts_with("```") {
                     break;
                 }
-                // With `trim = false` doc comments, each line keeps the single
-                // conventional space after `///`. Dropping it puts the block's
-                // own relative indentation at column zero.
-                code.push_str(body.strip_prefix(' ').unwrap_or(body));
+                body.push(line);
+            }
+            // With `trim = false` doc comments, every line keeps the single
+            // conventional space after `///`. Dropping what all of them share
+            // puts the block's own relative indentation at column zero, and
+            // leaves a source that carries no common indent alone.
+            let common = body
+                .iter()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| line.len() - line.trim_start().len())
+                .min()
+                .unwrap_or(0);
+            let mut code = String::new();
+            for line in body {
+                code.push_str(line.get(common..).unwrap_or(""));
                 code.push('\n');
             }
             out.push(code_block(&code, &lang));

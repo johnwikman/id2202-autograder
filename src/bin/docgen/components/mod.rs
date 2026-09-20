@@ -6,10 +6,10 @@ pub mod field;
 pub mod shell;
 pub mod widget;
 
-pub use body::{slug, Body};
+pub use body::{slug, Anchor, Body};
 pub use field::{
     doc_table, field_table, type_badge, value_markdown, value_markdown_with_lead, warn_untyped,
     FieldDoc,
 };
-pub use shell::{html_page, warn_dangling_fragments, VENDOR_DIR};
+pub use shell::{html_page, warn_dangling_fragments, NavItem, VENDOR_DIR};
 pub use widget::{code_block, details, html_table, notched_box, LOCK_ICON};

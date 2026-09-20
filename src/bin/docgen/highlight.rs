@@ -44,9 +44,9 @@ fn scoped(css: &str, scope: &str) -> String {
     out
 }
 
-/// The CSS rules for the highlighting classes. Both palettes are emitted:
-/// [`LIGHT_THEME`] unconditionally, and [`DARK_THEME`] scoped to dark mode,
-/// where it overrides the light rules.
+/// The CSS rules for the highlighting classes, one palette per colour mode.
+/// The scopes exclude one another because a light rule naming more classes than
+/// its dark counterpart would otherwise win in dark mode.
 pub fn stylesheet() -> String {
     let themes = ThemeSet::load_defaults();
     let light = css_for_theme_with_class_style(&themes.themes[LIGHT_THEME], CLASS_STYLE)
@@ -55,14 +55,9 @@ pub fn stylesheet() -> String {
     let dark =
         css_for_theme_with_class_style(extra.get(DARK_THEME), CLASS_STYLE).unwrap_or_default();
     // Bootstrap's colour-mode attribute, set on `<html>` by `color-scheme.js`.
-    let scope = "[data-bs-theme=\"dark\"]";
-    // The light rules stay in force in dark mode wherever the dark theme sets no
-    // rule of its own, so emphasis leaks across (InspiredGitHub italicises
-    // comments, Coldark-Dark does not). This resets it just above the light
-    // rules' specificity and just below the dark ones'.
-    let reset =
-        format!("{scope} [class*=\"hl-\"] {{ font-style: normal; font-weight: normal; }}\n");
-    format!("{light}\n{reset}{}", scoped(&dark, scope))
+    let light = scoped(&light, ":root:not([data-bs-theme=\"dark\"])");
+    let dark = scoped(&dark, ":root[data-bs-theme=\"dark\"]");
+    format!("{light}\n{dark}")
 }
 
 /// Highlights `code` as `lang` (e.g. `"json"`, `"toml"`), returning HTML with

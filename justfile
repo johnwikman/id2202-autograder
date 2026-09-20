@@ -25,7 +25,12 @@ gen-docs settings="example/settings.toml" output_dir="target/docs/site":
     rm -rf "{{output_dir}}"
     mkdir -p "{{output_dir}}"
     ./target/debug/server -s "{{settings}}" emit-openapi "{{output_dir}}/openapi.json"
-    ./target/debug/docgen -s "{{settings}}" --out "{{output_dir}}" --openapi "{{output_dir}}/openapi.json"
+    griffe dump autograder_verifier_tools \
+        -s example/container/verifier/lib \
+        -o "{{output_dir}}/autograder-verifier-tools.json"
+    ./target/debug/docgen -s "{{settings}}" --out "{{output_dir}}" \
+        --openapi "{{output_dir}}/openapi.json" \
+        --griffe "{{output_dir}}/autograder-verifier-tools.json"
     @echo "Documentation generated. Open {{output_dir}}/index.html"
 
 # Run the basic test suite: Unit tests + make sure that clippy does not complain.

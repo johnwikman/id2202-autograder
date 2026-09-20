@@ -91,12 +91,57 @@
 .doc-details[open] .doc-summary::before { transform: rotate(90deg); }
 .doc-details .doc-code-block { border-width: 0; border-radius: 0; margin-bottom: 0; }
 
+/* An entry documented by its signature: what it is in dim italics, its name in
+   bold, its parameters in italics, and what it answers with after the arrow. */
+.doc-sig { font-size: .95rem; }
+.doc-sig-name { font-weight: 700; color: var(--bs-body-color); }
+.doc-sig-owner { color: var(--bs-secondary-color); }
+.doc-sig-role { font-style: italic; color: var(--bs-secondary-color); margin-right: .45rem; }
+.doc-sig-param { font-style: italic; }
+.doc-sig-punct, .doc-sig-arrow { color: var(--bs-secondary-color); }
+.doc-sig-type { color: inherit; text-decoration-color: var(--bs-border-color); }
+.doc-heading-sig { border-left: .25rem solid var(--bs-primary); padding-left: .6rem; }
+.doc-heading-sig .doc-sig { font-size: 1.05rem; }
+
+/* `position` and the matching font size put the hanging `#` beside a member's
+   signature rather than above it, as on every other heading. */
+.doc-dl { margin: 0 0 .85rem; }
+.doc-entry { position: relative; font-weight: 400; font-size: .95rem; margin-top: .9rem; }
+.doc-entry:hover .doc-anchor, .doc-entry .doc-anchor:focus { opacity: 1; }
+.doc-entry-body { margin: .35rem 0 0 1.6rem; }
+.doc-entry-body > :last-child { margin-bottom: 0; }
+
+/* The members of a class, held together by a rule down their left. The padding
+   is what keeps the hanging `#` off it. */
+.doc-members { border-left: .2rem solid var(--bs-border-color); padding-left: 1.4rem;
+               margin: .75rem 0 1rem .1rem; }
+.doc-members > :last-child { margin-bottom: 0; }
+.doc-members-label { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                     letter-spacing: .06em; color: var(--bs-secondary-color); margin-bottom: .5rem; }
+
+/* The disclosure triangle, which Bootstrap draws for a dropdown but not for a
+   collapse. Same shape `.doc-summary` uses. */
+.doc-nav-group > .nav-link { display: flex; align-items: center; gap: .4rem; }
+.doc-nav-group > .nav-link::before, .doc-toc-caret::before { content: ""; display: inline-block;
+    border: .35em solid transparent; border-left-color: currentColor;
+    transition: transform .15s ease; }
+.doc-nav-group > .nav-link[aria-expanded="true"]::before,
+.doc-toc-caret[aria-expanded="true"]::before { transform: rotate(90deg); }
+/* The caret takes the indent the label would have had, so the label still lines
+   up with its caret-less siblings. */
+.doc-toc-caret::before { border-width: .3em; }
+.doc-toc-caret { padding-left: .65rem; padding-right: .3rem; }
+.doc-toc-group > div > .nav-link:not(.doc-toc-caret) { flex: 1 1 auto; padding-left: .25rem; }
+
 .doc-toc { font-size: .875rem; border-left: 2px solid var(--bs-border-color); }
 .doc-toc code { color: inherit; }
 .doc-toc .nav-link { padding-left: .5rem; }
 .doc-toc .nav-link.lvl-3 { padding-left: 1.5rem; }
 .doc-toc .nav-link.lvl-4 { padding-left: 2.5rem; }
 .doc-toc .nav-link.lvl-5 { padding-left: 3.5rem; }
+/* A nested entry is indented by its nesting rather than by a level class, so
+   it has to follow the rules it overrides. */
+.doc-toc-sub .nav-link { padding-left: 2.5rem; }
 .api-toc { display: flex; align-items: baseline; gap: .4rem; }
 .api-toc .badge { flex-shrink: 0; width: 2.75rem; padding: .2em 0; font-size: .625rem; }
 .api-toc code { font-size: .8125rem; }

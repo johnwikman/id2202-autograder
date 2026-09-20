@@ -24,12 +24,14 @@ impl Anchor {
 
 /// An entry in the sidebar submenu, recorded as the body is written.
 struct Heading {
-    /// 2..=5, where each level past the first is indented one step in the
-    /// submenu.
+    /// Each level past 2 is indented a further step in the submenu. Zero for
+    /// an entry indented by its nesting instead.
     level: usize,
     anchor: Anchor,
     /// Inner HTML, reused as the submenu label.
     label: Markup,
+    /// Hidden behind a caret in the submenu.
+    children: Vec<Heading>,
 }
 
 /// A page body under construction. A heading written through it is given an id,
@@ -80,9 +82,29 @@ impl Body {
         self.mint(base.to_string())
     }
 
+    /// A heading for an id [`Body::anchor`] minted earlier, whose content is
+    /// the signature of what it documents. The submenu lists it as `label`,
+    /// since a whole signature makes an unreadable entry there.
+    pub fn sig_heading(&mut self, level: usize, anchor: &Anchor, sig: Markup, label: Markup) {
+        let html = self.heading_markup(level, anchor, &sig, Some("doc-heading-sig"));
+        self.html.push(html);
+        self.toc.push(Heading { level, anchor: anchor.clone(), label, children: Vec::new() });
+    }
+
     /// A submenu entry for something that is not a heading.
     pub fn entry(&mut self, level: usize, anchor: &Anchor, label: Markup) {
-        self.toc.push(Heading { level, anchor: anchor.clone(), label });
+        self.toc.push(Heading { level, anchor: anchor.clone(), label, children: Vec::new() });
+    }
+
+    /// A submenu entry listed under the heading `parent` records. Falls back
+    /// to the top level when `parent` is not a heading of its own, since the
+    /// lookup does not descend.
+    pub fn nested_entry(&mut self, parent: &Anchor, anchor: &Anchor, label: Markup) {
+        let entry = Heading { level: 0, anchor: anchor.clone(), label, children: Vec::new() };
+        match self.toc.iter_mut().find(|h| h.anchor.id() == parent.id()) {
+            Some(parent) => parent.children.push(entry),
+            None => self.toc.push(entry),
+        }
     }
 
     /// The `<ul>` linking to everything recorded, for the sidebar. Empty when
@@ -91,19 +113,7 @@ impl Body {
         if self.toc.is_empty() {
             return Markup::default();
         }
-        html! {
-            ul class="nav flex-column doc-toc ms-3" {
-                @for h in &self.toc {
-                    @let indent = match h.level > 2 {
-                        true => format!(" lvl-{}", h.level),
-                        false => String::new(),
-                    };
-                    li class="nav-item" {
-                        a class={ "nav-link py-1" (indent) } href=(h.anchor.href()) { (h.label) }
-                    }
-                }
-            }
-        }
+        html! { ul class="nav flex-column doc-toc ms-3" { (submenu_items(&self.toc)) } }
     }
 
     pub fn into_html(self) -> Markup {
@@ -134,7 +144,22 @@ impl Body {
         extra_class: Option<&str>,
     ) -> (Anchor, Markup) {
         let anchor = self.mint(slug(&content.0));
-        let id = anchor.id().to_string();
+        let out = self.heading_markup(level, &anchor, content, extra_class);
+        let entry =
+            Heading { level, anchor: anchor.clone(), label: content.clone(), children: Vec::new() };
+        self.toc.push(entry);
+        (anchor, out)
+    }
+
+    /// One heading, carrying `anchor` as its id and a link to itself.
+    fn heading_markup(
+        &self,
+        level: usize,
+        anchor: &Anchor,
+        content: &Markup,
+        extra_class: Option<&str>,
+    ) -> Markup {
+        let id = anchor.id();
         let class = match extra_class {
             Some(extra) => format!("doc-heading doc-h{level} {extra}"),
             None => format!("doc-heading doc-h{level}"),
@@ -145,16 +170,45 @@ impl Body {
         };
         // An element name has to be a literal in `html!`, so each level is spelt
         // out rather than interpolated.
-        let out = match level {
+        match level {
             2 => html! { h2 id=(id) class=(class) { (inner) } },
             3 => html! { h3 id=(id) class=(class) { (inner) } },
             4 => html! { h4 id=(id) class=(class) { (inner) } },
             5 => html! { h5 id=(id) class=(class) { (inner) } },
             6 => html! { h6 id=(id) class=(class) { (inner) } },
             _ => html! { h1 id=(id) class=(class) { (inner) } },
-        };
-        self.toc.push(Heading { level, anchor: anchor.clone(), label: content.clone() });
-        (anchor, out)
+        }
+    }
+}
+
+/// An entry with children becomes a caret that reveals them.
+fn submenu_items(headings: &[Heading]) -> Markup {
+    html! {
+        @for h in headings {
+            @let indent = match h.level > 2 {
+                true => format!(" lvl-{}", h.level),
+                false => String::new(),
+            };
+            @let link = html! {
+                a class={ "nav-link py-1" (indent) } href=(h.anchor.href()) { (h.label) }
+            };
+            @if h.children.is_empty() {
+                li class="nav-item" { (link) }
+            } @else {
+                @let panel = format!("toc-{}", h.anchor.id());
+                li class="nav-item doc-toc-group" {
+                    div class="d-flex align-items-center" {
+                        a class="doc-toc-caret nav-link py-1" data-bs-toggle="collapse"
+                            href={ "#" (panel) } role="button" aria-expanded="false"
+                            aria-controls=(panel) aria-label="Show members" {}
+                        (link)
+                    }
+                    ul class="nav flex-column collapse doc-toc-sub" id=(panel) {
+                        (submenu_items(&h.children))
+                    }
+                }
+            }
+        }
     }
 }
 
