@@ -58,8 +58,8 @@ pub fn is_valid_entity(entity: &str) -> bool {
     }
 
     entity.chars().all(|c| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '-' | '_' | '@' | '.'))
-        && (!entity.starts_with(|c| matches!(c, '-' | '_' | '@' | '.')))
-        && (!entity.ends_with(|c| matches!(c, '-' | '_' | '@' | '.')))
+        && (!entity.starts_with(['-', '_', '@', '.']))
+        && (!entity.ends_with(['-', '_', '@', '.']))
 }
 
 /// Prepares the sink message and the headers that needs to go along with it.
