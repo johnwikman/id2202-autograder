@@ -7,9 +7,9 @@ I/O boilerplate and the type annotations for both ends of that exchange.
 Note about terminology:
 
  * `assert` means the verifier (or the autograder config) itself is broken,
-   which aborts grading for the entire tag.
- * `expect` means the student is wrong, which fails the test case, but proceeds
-   to grade the next test case.
+   which aborts grading procedure for the entire tag.
+ * `expect` means the student is wrong, which fails this test case, but
+   proceeds to grade the next test case.
 
 Example usage:
 

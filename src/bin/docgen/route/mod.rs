@@ -2,11 +2,11 @@
 //! returns its content. [`ROUTES`] lists them in sidebar order, and
 //! [`render_all`] renders every one into a finished page.
 
+pub mod autograder_verifier_tools;
 pub mod index;
 pub mod rest_api;
 pub mod settings;
 pub mod test_configuration;
-pub mod autograder_verifier_tools;
 
 use maud::Markup;
 
@@ -81,7 +81,7 @@ pub const ROUTES: &[Route] = &[
         file: "autograder-verifier-tools.html",
         nav_label: "Autograder Verifier Tools",
         title: "Autograder Verifier Tools Reference",
-        description: Some("the optional Python helper library for run_verifier verifiers."),
+        description: None,
         group: Some("Misc"),
         render_body: |opts| autograder_verifier_tools::body(opts.dump),
     },

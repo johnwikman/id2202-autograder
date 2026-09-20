@@ -143,7 +143,7 @@ fn parse_link(s: &str) -> Option<(&str, &str, usize)> {
     Some((text, url, close + 1 + paren + 1))
 }
 
-/// Renders paragraphs, ATX headings, `-`/`*` bullet lists, ```` ``` ```` fenced
+/// Renders paragraphs, ATX headings, `-`/`*` and numbered lists, ```` ``` ```` fenced
 /// code blocks (with an optional language for highlighting), and the inline
 /// formatting handled by [`inline`]. Each heading is replaced by whatever
 /// `heading` returns for it.
@@ -187,28 +187,36 @@ pub fn blocks(text: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> 
             continue;
         }
 
-        // Each bullet may wrap over following (non-blank, non-special) lines
-        // until the next bullet or a blank line.
-        if is_bullet(trimmed) {
+        // Each item may wrap over following (non-blank, non-special) lines
+        // until the next item or a blank line. A list of the other kind ends
+        // this one rather than joining it.
+        if let Some((marker, first)) = list_item(trimmed) {
             let mut items: Vec<Markup> = Vec::new();
-            let mut item = bullet_text(trimmed).to_string();
+            let mut item = first.to_string();
             while let Some(next) = lines.peek() {
                 let nt = next.trim_end();
                 let nts = nt.trim_start();
                 if nts.is_empty() || heading_level(nt).is_some() || nts.starts_with("```") {
                     break;
                 }
-                if is_bullet(nt) {
-                    items.push(inline(&collapse_ws(&item)));
-                    item = bullet_text(nt).to_string();
-                } else {
-                    item.push(' ');
-                    item.push_str(nts);
+                match list_item(nt) {
+                    Some((other, _)) if other != marker => break,
+                    Some((_, text)) => {
+                        items.push(inline(&collapse_ws(&item)));
+                        item = text.to_string();
+                    }
+                    None => {
+                        item.push(' ');
+                        item.push_str(nts);
+                    }
                 }
                 lines.next();
             }
             items.push(inline(&collapse_ws(&item)));
-            out.push(html! { ul { @for item in items { li { (item) } } } });
+            out.push(match marker {
+                Marker::Bullet => html! { ul { @for item in items { li { (item) } } } },
+                Marker::Number => html! { ol { @for item in items { li { (item) } } } },
+            });
             continue;
         }
 
@@ -219,7 +227,7 @@ pub fn blocks(text: &str, heading: &mut dyn FnMut(usize, &Markup) -> Markup) -> 
         let mut para = String::from(trimmed.trim_start());
         while let Some(next) = lines.peek() {
             let nt = next.trim_end();
-            if nt.is_empty() || is_bullet(nt) || nt.trim_start().starts_with("```") {
+            if nt.is_empty() || list_item(nt).is_some() || nt.trim_start().starts_with("```") {
                 break;
             }
             para.push(' ');
@@ -272,7 +280,7 @@ pub fn split_paragraph(src: &str) -> Option<(&str, &str)> {
         let trimmed = line.trim();
         let breaks = trimmed.is_empty()
             || heading_level(trimmed).is_some()
-            || is_bullet(trimmed)
+            || list_item(trimmed).is_some()
             || trimmed.starts_with("```");
         match start {
             None if trimmed.is_empty() => {}
@@ -303,11 +311,21 @@ fn heading_level(line: &str) -> Option<usize> {
     }
 }
 
-fn is_bullet(line: &str) -> bool {
-    let t = line.trim_start();
-    t.starts_with("- ") || t.starts_with("* ")
+/// What a list is marked with, and so which element it is set in.
+#[derive(PartialEq, Clone, Copy)]
+enum Marker {
+    Bullet,
+    Number,
 }
 
-fn bullet_text(line: &str) -> &str {
-    line.trim_start()[2..].trim_start()
+/// The marker `line` opens a list item with, and the text after it. `None`
+/// unless the line opens one.
+fn list_item(line: &str) -> Option<(Marker, &str)> {
+    let t = line.trim_start();
+    if let Some(text) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+        return Some((Marker::Bullet, text.trim_start()));
+    }
+    let digits = t.bytes().take_while(u8::is_ascii_digit).count();
+    let text = (digits > 0).then(|| t[digits..].strip_prefix(". "))??;
+    Some((Marker::Number, text.trim_start()))
 }

@@ -72,9 +72,10 @@ pub struct Run {
     /// Remove all whitespace characters from captured stdout before comparing
     /// against the expected values in the `stdout` list.
     pub stdout_strip_whitespace: bool,
-    /// Expected stderr lines.
+    /// Allowed output on stderr. Empty list means that all outputs on stderr
+    /// are allowed, similar to `stdout`.
     pub stderr: Vec<String>,
-    /// Trim whitespace from each stderr line.
+    /// Trim whitespace from each stderr output.
     pub stderr_trim: bool,
     /// Strip all whitespace from stderr.
     pub stderr_strip_whitespace: bool,
