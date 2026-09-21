@@ -37,7 +37,7 @@ For development (in addition to _deployment_ and _testing_ dependencies):
  * `git`
  * `podman`
  * [`file`](https://www.darwinsys.com/file/)
- * [`griffe`](https://github.com/mkdocstrings/griffe)
+ * [`griffe`](https://github.com/mkdocstrings/griffe) (1.0 or later)
 
 
 ## Testing: Getting Started
