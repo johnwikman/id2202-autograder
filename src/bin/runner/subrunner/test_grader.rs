@@ -29,6 +29,8 @@ pub enum FailureCause {
     OutputMismatch,
     Timeout(Duration),
     OutputLimitExceeded { limit: usize },
+    MemoryLimitExceeded { limit: usize },
+    DiskSpaceLimitExceeded { limit: usize },
 }
 
 /// Treats stdout and stderr to the format that we expect.

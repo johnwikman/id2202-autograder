@@ -8,7 +8,7 @@ use serde_value::Value as SerdeValue;
 use std::{collections::BTreeMap, time::Duration};
 use struct_patch::Patch;
 
-use super::{group::TestGroup, Defaults, TestsLoadingOptions};
+use super::{super::types::ByteSize, group::TestGroup, Defaults, TestsLoadingOptions};
 use crate::{
     config::{
         settings::{PodmanImageSettings, Settings},
@@ -26,6 +26,16 @@ pub struct TagDefaults {
 
     /// Default podman image to use for running the solution being graded.
     pub solution_image: String,
+
+    /// Amount of RAM memory that is available to the container where students
+    /// solutions run in. Formatted using `k`, `m`, `G` suffixes, e.g. `256m`
+    /// or `2G`.
+    pub solution_limit_ram: ByteSize,
+
+    /// Amount of disk space that is available to the container where students
+    /// solutions run in. Formatted using `k`, `m`, `G` suffixes, e.g. `256m`
+    /// or `2G`.
+    pub solution_limit_disk: ByteSize,
 
     /// Default podman image to use when running a verifier.
     pub verifier_image: String,
@@ -152,6 +162,16 @@ pub struct Tag {
     /// tag.
     pub solution_image: PodmanImageSettings,
 
+    /// Amount of RAM memory that is available to the container where students
+    /// solutions run in. Formatted using `k`, `m`, `G` suffixes, e.g. `256m`
+    /// or `2G`.
+    pub solution_limit_ram: ByteSize,
+
+    /// Amount of disk space that is available to the container where students
+    /// solutions run in. Formatted using `k`, `m`, `G` suffixes, e.g. `256m`
+    /// or `2G`.
+    pub solution_limit_disk: ByteSize,
+
     /// The podman image to use when running a verifier for this tag.
     pub verifier_image: PodmanImageSettings,
 
@@ -171,6 +191,8 @@ struct _UntreatedTag {
     dirs: Vec<String>,
     build: _UntreatedBuildConfig,
     solution_image: Option<String>,
+    solution_limit_ram: Option<ByteSize>,
+    solution_limit_disk: Option<ByteSize>,
     verifier_image: Option<String>,
     metadata: Option<BTreeMap<String, SerdeValue>>,
     task_file: Option<String>,
@@ -262,6 +284,8 @@ impl Tag {
                                     test_groups: vec![],
                                     build: extended.build.to_owned(),
                                     solution_image: extended.solution_image.to_owned(),
+                                    solution_limit_ram: extended.solution_limit_ram,
+                                    solution_limit_disk: extended.solution_limit_disk,
                                     verifier_image: extended.verifier_image.to_owned(),
                                     rate_limit: extended
                                         .rate_limit
@@ -302,6 +326,8 @@ impl Tag {
                                         )).path(config_path)
                                     })?
                                     .clone(),
+                                solution_limit_ram: utg.solution_limit_ram.unwrap_or(defaults.tag.solution_limit_ram),
+                                solution_limit_disk: utg.solution_limit_disk.unwrap_or(defaults.tag.solution_limit_disk),
                                 verifier_image: settings
                                     .runner
                                     .podman

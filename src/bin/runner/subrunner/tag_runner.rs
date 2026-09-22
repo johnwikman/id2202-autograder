@@ -38,6 +38,12 @@ pub enum BuildResult {
     OutputLimitExceeded {
         limit: usize,
     },
+    MemoryLimitExceeded {
+        limit: usize,
+    },
+    DiskSpaceLimitExceeded {
+        limit: usize,
+    },
     ProhibitedFiles {
         /// A list of found files in the build dir which are prohibited.
         found_files: Vec<MIMETypeInfo>,
@@ -206,6 +212,8 @@ impl<'a> TagRunner<'a> {
             Some(BuildResult::Failed { .. }) => true,
             Some(BuildResult::Timeout { .. }) => true,
             Some(BuildResult::OutputLimitExceeded { .. }) => true,
+            Some(BuildResult::MemoryLimitExceeded { .. }) => true,
+            Some(BuildResult::DiskSpaceLimitExceeded { .. }) => true,
         }
     }
 
@@ -217,6 +225,12 @@ impl<'a> TagRunner<'a> {
             Some(BuildResult::OutputLimitExceeded { .. }) => {
                 Some(JobStatus::BuildOutputLimitExceeded)
             }
+            Some(BuildResult::MemoryLimitExceeded { .. }) => {
+                Some(JobStatus::BuildMemoryLimitExceeded)
+            }
+            Some(BuildResult::DiskSpaceLimitExceeded { .. }) => {
+                Some(JobStatus::BuildDiskSpaceLimitExceeded)
+            }
             None
             | Some(BuildResult::SourceNotFound { .. })
             | Some(BuildResult::ProhibitedFiles { .. })
@@ -226,6 +240,12 @@ impl<'a> TagRunner<'a> {
                 Some(FailureCause::Timeout(_)) => Some(JobStatus::TestCasesTimedOut),
                 Some(FailureCause::OutputLimitExceeded { .. }) => {
                     Some(JobStatus::TestOutputLimitExceeded)
+                }
+                Some(FailureCause::MemoryLimitExceeded { .. }) => {
+                    Some(JobStatus::TestMemoryLimitExceeded)
+                }
+                Some(FailureCause::DiskSpaceLimitExceeded { .. }) => {
+                    Some(JobStatus::TestDiskSpaceLimitExceeded)
                 }
                 None => None,
             },
@@ -301,6 +321,28 @@ impl<'a> TagRunner<'a> {
                 Some(DetailsBuildFailure {
                     msg: format!(
                         "Build failed due to exceeding the output limit of {} bytes on standard output or standard error.",
+                        limit
+                    ),
+                    cmd: Some(self.build_conf.cmd.join(" ")),
+                    srcdir: Some(self.build_conf.srcdir.clone()),
+                    ..DetailsBuildFailure::default()
+                })
+            },
+            Some(BuildResult::MemoryLimitExceeded { limit }) => {
+                Some(DetailsBuildFailure {
+                    msg: format!(
+                        "Build failed due to exceeding the memory usage limit of {} bytes.",
+                        limit
+                    ),
+                    cmd: Some(self.build_conf.cmd.join(" ")),
+                    srcdir: Some(self.build_conf.srcdir.clone()),
+                    ..DetailsBuildFailure::default()
+                })
+            },
+            Some(BuildResult::DiskSpaceLimitExceeded { limit }) => {
+                Some(DetailsBuildFailure {
+                    msg: format!(
+                        "Build failed due to exceeding the disk space usage limit of {} bytes.",
                         limit
                     ),
                     cmd: Some(self.build_conf.cmd.join(" ")),
@@ -685,6 +727,14 @@ impl<'a> TagRunner<'a> {
                     }
                     FailureCause::OutputLimitExceeded { limit } => {
                         log::debug!("Test output exceeded {} bytes", limit);
+                        self.bad_test_behavior.replace(cause.clone());
+                    }
+                    FailureCause::MemoryLimitExceeded { limit } => {
+                        log::debug!("Test memory usage exceeded {} bytes", limit);
+                        self.bad_test_behavior.replace(cause.clone());
+                    }
+                    FailureCause::DiskSpaceLimitExceeded { limit } => {
+                        log::debug!("Test disk space usage exceeded {} bytes", limit);
                         self.bad_test_behavior.replace(cause.clone());
                     }
                 }

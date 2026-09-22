@@ -1,6 +1,7 @@
 //! Modules related to configuration of the autograder.
 pub mod settings;
 pub mod tests;
+pub mod types;
 pub mod utils;
 
 pub use settings::{

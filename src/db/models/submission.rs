@@ -363,10 +363,14 @@ pub enum JobStatus {
     BuildError = 470,
     BuildTimedOut = 471,
     BuildOutputLimitExceeded = 472,
+    BuildMemoryLimitExceeded = 473,
+    BuildDiskSpaceLimitExceeded = 474,
 
     TestCasesFailed = 480,
     TestCasesTimedOut = 481,
     TestOutputLimitExceeded = 482,
+    TestMemoryLimitExceeded = 483,
+    TestDiskSpaceLimitExceeded = 484,
 
     /// Internal failure by the autograder. Note that this can also be set as
     /// a status for voided jobs, if it was voided due to an internal failure.
@@ -424,9 +428,13 @@ impl std::fmt::Display for JobStatus {
             Self::BuildError => write!(f, "Build Error"),
             Self::BuildTimedOut => write!(f, "Build Timed Out"),
             Self::BuildOutputLimitExceeded => write!(f, "Build Output Limit Exceeded"),
+            Self::BuildMemoryLimitExceeded => write!(f, "Build Memory Limit Exceeded"),
+            Self::BuildDiskSpaceLimitExceeded => write!(f, "Build Disk Space Limit Exceeded"),
             Self::TestCasesFailed => write!(f, "Test Cases Failed"),
             Self::TestCasesTimedOut => write!(f, "Test Cases Timed Out"),
             Self::TestOutputLimitExceeded => write!(f, "Test Output Limit Exceeded"),
+            Self::TestMemoryLimitExceeded => write!(f, "Test Memory Limit Exceeded"),
+            Self::TestDiskSpaceLimitExceeded => write!(f, "Test Disk Space Limit Exceeded"),
             Self::AutograderFailure => write!(f, "Autograder Failure"),
         }
     }

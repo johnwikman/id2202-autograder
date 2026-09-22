@@ -24,6 +24,7 @@ For deployment:
 
  * Docker
  * SSH
+ * [FUSE](https://github.com/libfuse/libfuse)
  * [`just`](https://github.com/casey/just) _(only used to run predefined commands within the `justfile`)_
 
 For testing (in addition to _deployment_ dependencies):
