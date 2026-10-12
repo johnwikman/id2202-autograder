@@ -18,7 +18,7 @@ use id2202_autograder::{
     error::Error,
     podman,
     reporting::{MetaReport, Report, ReportMessage},
-    utils::path_absolute_join,
+    utils::{clean_dir_if_exists, path_absolute_join},
 };
 
 mod setup;
@@ -39,6 +39,7 @@ struct Args {
 enum Commands {
     Start,
     ValidateSettings(testing::ValidateSettingsArgs),
+    ValidateSystem,
     CheckDatabase(testing::CheckDatabaseArgs),
     TestPodman(testing::TestPodmanArgs),
     TestSyscommand(testing::TestSyscommandArgs),
@@ -56,10 +57,13 @@ fn main() -> Result<(), Error> {
         .as_deref()
         .ok_or_else(|| Error::runtime("missing required option --settings <SETTINGS>"))?;
     let s = Settings::load(settings)?;
-    s.setup_logging("entrypoint")?;
+    if !matches!(args.command, Commands::ValidateSystem) {
+        s.setup_logging("entrypoint")?;
+    }
     match args.command {
         Commands::Start => start(&s),
         Commands::ValidateSettings(a) => testing::validate_settings(s, a),
+        Commands::ValidateSystem => testing::validate_system(&s),
         Commands::CheckDatabase(a) => testing::check_database(s, a),
         Commands::TestPodman(a) => testing::test_podman(s, a),
         Commands::TestSyscommand(a) => testing::test_syscommand(s, a),
@@ -71,6 +75,10 @@ fn main() -> Result<(), Error> {
 /// Starts the autograder, spawning the web API server process and the job
 /// runner processes.
 fn start(s: &Settings) -> Result<(), Error> {
+    // First, do a non-intrusive system validatation, checking that the system
+    // supports the functionality we need in order to run the autograder.
+    testing::validate_system(s)?;
+
     let entrypoint_bin = std::env::current_exe()?;
     let binary_dir = entrypoint_bin
         .parent()
@@ -81,6 +89,11 @@ fn start(s: &Settings) -> Result<(), Error> {
     log::debug!("Entrypoint binary: {}", entrypoint_bin.to_str().unwrap());
     log::debug!("Server binary: {}", server_bin.to_str().unwrap());
     log::debug!("Runner binary: {}", runner_bin.to_str().unwrap());
+
+    // Ensure we have a clean workspace before starting any runners. There
+    // should not be any containers running at this point, so this should
+    // work without a problem.
+    clean_dir_if_exists(&s.runner.workspace_dir)?;
 
     // Ensure that runtime directories exist before proceeding.
     let crucial_dirs: Vec<&str> = vec![
@@ -119,14 +132,10 @@ fn start(s: &Settings) -> Result<(), Error> {
         }
     }
 
-    log::debug!("Ensuring that the podman networks exists for each runner");
-    let podnets = podman::networks().unwrap();
-    for runner_id in 0..s.runner.n_runners {
-        let expected_net = format!("{}{}", s.runner.podman.network_prefix, runner_id);
-        if !podnets.contains(&expected_net) {
-            podman::create_network(&expected_net).unwrap();
-        }
-    }
+    let graph_root = podman::graph_root()?;
+    podman::prune_owned_networks(
+        &podman::SHARED.with_network_config_dir(podman::network_config_dir(&graph_root)),
+    )?;
 
     // Clean up any pending submissions that will never be picked up by a
     // runner. (The scope is to ensure drop of conn)

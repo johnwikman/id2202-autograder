@@ -22,7 +22,7 @@ use id2202_autograder::{
 
 mod shadow;
 mod subrunner;
-use subrunner::SubmissionRunnerHandle;
+use subrunner::{container::GradingContainer, SubmissionRunnerHandle};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -92,6 +92,19 @@ fn main() -> Result<(), Error> {
             return Err(e);
         }
     }
+
+    // This runner's own workspace. The sweep below removes grading containers
+    // left behind by a previous run.
+    let workspace =
+        id2202_autograder::utils::path_absolute_join(&settings.runner.workspace_dir, &logname)?;
+
+    // NOTE: The sweep is performed outside the std::fs::exists check since
+    // that is the only way to allocate a new ScratchSlot.
+    let scratch_slot = GradingContainer::sweep(&workspace)?;
+    if std::fs::exists(&workspace)? {
+        std::fs::remove_dir_all(&workspace)?;
+    }
+    std::fs::create_dir_all(&workspace)?;
 
     // Message channels from threads -> main thread
     let (msg_send, msg_recv) = std::sync::mpsc::channel();
@@ -250,6 +263,9 @@ fn main() -> Result<(), Error> {
 
             let mut conn = DatabaseConnection::connect(&settings)?;
 
+            // Check that our slot for scratch space is available before
+            // attempting to grab a submission is free.
+            scratch_slot.check_available()?;
             if let Some(claim) = conn.try_claim_submission(args.runner_id)? {
                 log::info!("Claimed submission: {:#?}", claim.claimed);
 
@@ -258,7 +274,13 @@ fn main() -> Result<(), Error> {
                 let mut claimed = claim.claimed.clone();
                 let start_msg = claim_message(&claimed.jobs, &claim.deferred);
 
-                match SubmissionRunnerHandle::new(&settings, claim.claimed, args.runner_id) {
+                match SubmissionRunnerHandle::new(
+                    &settings,
+                    claim.claimed,
+                    args.runner_id,
+                    &workspace,
+                    &scratch_slot,
+                ) {
                     Ok(handle) => {
                         // Posted as markdown rather than as a report: the tag
                         // names in it are code spans, which the report

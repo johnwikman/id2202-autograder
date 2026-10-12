@@ -16,7 +16,7 @@ use id2202_autograder::{
 };
 
 use crate::subrunner::{
-    container::{self, ContainerInfo},
+    container::{self, GradingContainer},
     verifier,
 };
 
@@ -210,6 +210,17 @@ pub enum GradingResult {
     },
 }
 
+impl GradingResult {
+    /// Turns the grading result into a failure with the specified `cause`,
+    /// preserving the report if the result already was a failure.
+    pub fn with_cause(self, cause: FailureCause) -> GradingResult {
+        match self {
+            GradingResult::Success => GradingResult::Failure { cause, report: None },
+            GradingResult::Failure { report, .. } => GradingResult::Failure { cause, report },
+        }
+    }
+}
+
 /// What the output of one command is checked against. An empty list of allowed
 /// values means that the stream is ignored.
 #[derive(Debug, Clone, Default)]
@@ -291,7 +302,7 @@ pub mod grade {
     pub fn run(
         kind: &TestkindRun,
         test: &Test,
-        container: &ContainerInfo,
+        container: &GradingContainer,
         include_report: bool,
     ) -> Result<GradingResult, Error> {
         let infiles = container::InputFile::assign(&kind.input_files, &container.tests_dir)?;
@@ -347,7 +358,7 @@ pub mod grade {
         settings: &Settings,
         kind: &TestkindGenASMAndRun,
         test: &Test,
-        container: &ContainerInfo,
+        container: &GradingContainer,
         include_report: bool,
     ) -> Result<GradingResult, Error> {
         const STATUS_ASSEMBLING: &str = "assembling the generated assembly program";
@@ -538,7 +549,7 @@ pub mod grade {
     /// exists, and optionally some properties of that file.
     pub fn check_file_exists(
         kind: &TestkindCheckFileExists,
-        container: &ContainerInfo,
+        container: &GradingContainer,
         include_report: bool,
     ) -> Result<GradingResult, Error> {
         let check_path = path_absolute_join(&container.solution_dir.host_path, &kind.path)?;
@@ -599,7 +610,7 @@ pub mod grade {
     pub fn run_verifier(
         kind: &TestkindRunVerifier,
         test: &Test,
-        container: &ContainerInfo,
+        container: &GradingContainer,
         verifier: &verifier::Verifier,
         script: &str,
         include_report: bool,

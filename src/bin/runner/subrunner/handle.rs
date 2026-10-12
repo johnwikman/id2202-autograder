@@ -16,7 +16,10 @@ use id2202_autograder::{
 
 use crate::{
     shadow::ShadowRepo,
-    subrunner::tag_runner::{TagRunner, TagRunnerOptions},
+    subrunner::{
+        container::ScratchSlot,
+        tag_runner::{TagRunner, TagRunnerOptions},
+    },
 };
 
 static ERRMSG_INTERNAL_ERROR: &str = "Internal error when starting job. Contact course staff.";
@@ -64,7 +67,13 @@ impl<'a> SubmissionRunnerHandle<'a> {
     /// Creates a new handle, or returns an error message to be shown to the
     /// user. Internal error messages should be presented as log messages only,
     /// using map_err or inspect_err.
-    pub fn new(settings: &'a Settings, sub: Submission, runner_id: i32) -> Result<Self, Report> {
+    pub fn new(
+        settings: &'a Settings,
+        sub: Submission,
+        runner_id: i32,
+        runner_workspace: &str,
+        scratch_slot: &ScratchSlot,
+    ) -> Result<Self, Report> {
         // Convenient for reporting internal errors
         fn internal_error_report() -> Report {
             Report::Message(ReportMessage { msg: ERRMSG_INTERNAL_ERROR.to_string() })
@@ -78,14 +87,12 @@ impl<'a> SubmissionRunnerHandle<'a> {
                 })?;
 
         // Step 1: Set up the workspace and information about the directories within.
-        let workspace_dir = path_absolute_join(
-            &settings.runner.workspace_dir,
-            format!("runner{runner_id}_{:08x}", rand::random::<u32>()),
-        )
-        .map_err(|e| {
-            log::error!("Could not join workspace_dir path: {e}");
-            internal_error_report()
-        })?;
+        let workspace_dir =
+            path_absolute_join(runner_workspace, format!("{:08x}", rand::random::<u32>()))
+                .map_err(|e| {
+                    log::error!("Could not join workspace_dir path: {e}");
+                    internal_error_report()
+                })?;
         match std::fs::exists(&workspace_dir) {
             // Expected case
             Ok(false) => {}
@@ -155,6 +162,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
                     runner_id,
                     tag,
                     job,
+                    scratch_slot,
                     source_dir: &source_dir,
                     solution_dir: &solution_dir,
                     verifier_dir: &verifier_dir,
@@ -202,7 +210,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
     /// Returns `true` if every job of this batch has reached a terminal
     /// status. In which case, the results can be collected.
     pub fn is_finished(&self) -> bool {
-        self.tag_runners.iter().all(|tr| tr.status.is_finished())
+        self.tag_runners.iter().all(|tr| tr.status().is_finished())
     }
 
     /// Fails every tag that has not finished, for when the runner itself is
@@ -215,20 +223,18 @@ impl<'a> SubmissionRunnerHandle<'a> {
                 .to_string(),
         });
 
-        // From the tag being graded onwards. Everything before it has written
-        // its result already, and the current one is included even when it
-        // reached a status of its own, since the write that would have
-        // recorded it is what failed.
-        let from = self.next_tag_index;
+        // Every tag that has not yet reached a terminal status is interrupted.
         self.next_tag_index = self.tag_runners.len();
-
-        let pending = &mut self.tag_runners[from..];
+        let mut pending: Vec<&mut TagRunner> =
+            self.tag_runners.iter_mut().filter(|tr| tr.job.terminal_at().is_none()).collect();
         for tr in pending.iter_mut() {
-            tr.status = JobStatus::AutograderFailure;
+            if let Err(e) = tr.interrupt() {
+                log::warn!("could not compile report for tag \"{}\": {e}", tr.job.tag);
+            }
         }
 
         let (mut started, mut unstarted): (Vec<_>, Vec<_>) =
-            pending.iter_mut().partition(|tr| tr.job.started_at.is_some());
+            pending.into_iter().partition(|tr| tr.job.started_at.is_some());
 
         SubmissionJobPlain::set_all_as_voided(
             unstarted.iter_mut().map(|tr| &mut tr.job),
@@ -325,7 +331,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
             }
         }
 
-        if tag_runner.status.is_finished() {
+        if tag_runner.status().is_finished() {
             tag_runner.record_to_shadow(&self.shadow)?;
 
             let report = Report::tag_grading(
@@ -339,7 +345,7 @@ impl<'a> SubmissionRunnerHandle<'a> {
                     })?
                     .clone(),
             );
-            let status = tag_runner.status;
+            let status = tag_runner.status();
 
             let mut conn = DatabaseConnection::connect(self.settings)?;
             tag_runner.job.set_as_finished(&mut conn, status, Some(&report))?;

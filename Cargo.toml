@@ -2,13 +2,13 @@
 members = ["macros"]
 
 [workspace.package]
-version = "2.0.0-dev6"
+version = "2.0.0-dev7"
 
 [package]
 name = "id2202_autograder"
 version.workspace = true
 edition = "2021"
-rust-version = "1.96" # minimum version
+rust-version = "1.98" # minimum version
 
 [features]
 # Enables the `docgen` binary and its (heavy) syntax-highlighting dependencies.

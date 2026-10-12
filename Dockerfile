@@ -4,7 +4,7 @@ SHELL [ "/bin/bash", "-c" ]
 WORKDIR /root
 
 # Install rust
-RUN dnf -y install gcc libpq-devel git file \
+RUN dnf -y install gcc libpq-devel git file e2fsprogs \
     && curl -Lo rustup.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && chmod +x rustup.sh \
     && ./rustup.sh -y \

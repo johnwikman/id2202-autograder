@@ -1678,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "id2202_autograder"
-version = "2.0.0-dev6"
+version = "2.0.0-dev7"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "id2202_autograder_macros"
-version = "2.0.0-dev6"
+version = "2.0.0-dev7"
 dependencies = [
  "proc-macro2",
  "quote",

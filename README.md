@@ -15,8 +15,8 @@ is provided in the docker compose file `compose.yaml`. While docker compose is
 optional, it simplifies the setup with the database.
 
 **NOTE: The autograder assumes a Linux-based OS and the existence of common
-user space programs. Certain aspects of the autograder might break if running
-on a different OS.**
+user space programs. Certain aspects of the autograder are likely to break if
+running on a different OS.**
 
 ## Dependencies
 
@@ -37,6 +37,8 @@ For development (in addition to _deployment_ and _testing_ dependencies):
  * `cargo` (Rust build system)
  * `git`
  * `podman`
+ * [`fuse2fs` and `e2fsprogs`](http://e2fsprogs.sourceforge.net)
+ * [`fuse-overlayfs`](https://github.com/containers/fuse-overlayfs)
  * [`file`](https://www.darwinsys.com/file/)
  * [`griffe`](https://github.com/mkdocstrings/griffe) (1.0 or later)
 
@@ -308,6 +310,12 @@ until curl -sf -o /dev/null http://localhost:8929/users/sign_in; do sleep 5 && e
 
 # Setup root account and autograder account
 just setup-gitlab
+```
+
+As a sanity check, verify that your system is capable to run the autograder:
+
+```sh
+dotenv run ./target/debug/entrypoint -s example/settings.toml validate-system
 ```
 
 Also make sure that the `known_hosts` file for the autograder is properly

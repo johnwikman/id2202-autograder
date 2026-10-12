@@ -35,6 +35,10 @@ pub struct TagDefaults {
     /// Amount of disk space that is available to the container where students
     /// solutions run in. Formatted using `k`, `m`, `G` suffixes, e.g. `256m`
     /// or `2G`.
+    ///
+    /// # Note
+    /// The effective disk space will be slightly below the specified limit. It
+    /// is recommended to not be too tight on the margins.
     pub solution_limit_disk: ByteSize,
 
     /// Default podman image to use when running a verifier.
@@ -170,6 +174,10 @@ pub struct Tag {
     /// Amount of disk space that is available to the container where students
     /// solutions run in. Formatted using `k`, `m`, `G` suffixes, e.g. `256m`
     /// or `2G`.
+    ///
+    /// # Note
+    /// The effective disk space will be slightly below the specified limit. It
+    /// is recommended to not be too tight on the margins.
     pub solution_limit_disk: ByteSize,
 
     /// The podman image to use when running a verifier for this tag.
@@ -214,6 +222,8 @@ struct _UntreatedExtensibleTag {
     rate_limit: Option<_UntreatedRateLimit>,
     budget: Option<_UntreatedBudget>,
     timeout_total: Option<u32>,
+    solution_limit_ram: Option<ByteSize>,
+    solution_limit_disk: Option<ByteSize>,
 }
 
 impl Tag {
@@ -284,8 +294,12 @@ impl Tag {
                                     test_groups: vec![],
                                     build: extended.build.to_owned(),
                                     solution_image: extended.solution_image.to_owned(),
-                                    solution_limit_ram: extended.solution_limit_ram,
-                                    solution_limit_disk: extended.solution_limit_disk,
+                                    solution_limit_ram: uetg
+                                        .solution_limit_ram
+                                        .unwrap_or(extended.solution_limit_ram),
+                                    solution_limit_disk: uetg
+                                        .solution_limit_disk
+                                        .unwrap_or(extended.solution_limit_disk),
                                     verifier_image: extended.verifier_image.to_owned(),
                                     rate_limit: extended
                                         .rate_limit

@@ -152,6 +152,17 @@ extends = "hello"
 dirs = []
 budget = {enable = true, max_runs = 3}
 
+# Resource-limited copies of `hello` for the itest suite
+[tags.hello-limit-disk]
+extends = "hello"
+dirs = []
+solution_limit_disk = "64m"
+
+[tags.hello-limit-memory]
+extends = "hello"
+dirs = []
+solution_limit_ram = "64m"
+
 # "Alias" tags which can be used to run invoke multiple tags
 # (Intentionally excluded `hello-extra-more` here.)
 [tag_groups]

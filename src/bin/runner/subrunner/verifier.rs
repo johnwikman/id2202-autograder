@@ -18,7 +18,7 @@ use id2202_autograder::{
         TestGroup,
     },
     error::Error,
-    podman::{self, Mount, PodmanContainer},
+    podman::{self, Teardown},
     utils::{path_absolute_join, SyscommandSettings},
 };
 use serde::{Deserialize, Serialize};
@@ -67,10 +67,10 @@ pub struct Verdict {
 /// The verifier programs, and the container they are run in.
 #[derive(Debug)]
 pub struct Verifier {
-    pub container: PodmanContainer,
+    pub container: podman::Container,
 
     /// The mounting location of where verifier scripts.
-    mount: Mount,
+    mount: podman::Mount,
 
     /// Paths to the verifiers that will be used by this verifier.
     host_paths: BTreeSet<String>,
@@ -88,7 +88,7 @@ impl Verifier {
         host_verifier_dir: &str,
         test_groups: &[TestGroup],
     ) -> Self {
-        let mount = Mount {
+        let mount = podman::Mount {
             host_path: host_verifier_dir.to_string(),
             container_path: pis.mount_code.clone(),
             writable: false,
@@ -110,7 +110,8 @@ impl Verifier {
             collect_from_group(group, &mut host_paths);
         }
 
-        let mut container = PodmanContainer::new(pis.image.clone(), container_name);
+        let mut container =
+            podman::Container::new(pis.image.clone(), container_name, podman::SHARED);
         container.mounts = vec![mount.clone()];
         container.read_only = true;
         container.drop_privileges = true;
@@ -168,10 +169,10 @@ impl Verifier {
                 .insert(p.clone(), path_absolute_join(&self.mount.container_path, &name)?);
         }
 
-        let running_containers = podman::ps_names()?;
-        if running_containers.contains(&self.container.name) {
+        let running_containers = podman::ps_names(self.container.store())?;
+        if running_containers.iter().any(|name| name == self.container.name()) {
             log::warn!("Removing dangling verifier container from a previous run");
-            podman::force_rm(&self.container.name)?;
+            podman::force_rm(self.container.store(), self.container.name())?;
         }
 
         self.container.start()
@@ -179,7 +180,9 @@ impl Verifier {
 
     /// Stops the running verifier container, but does not perform any cleanup.
     pub fn stop(&mut self) {
-        self.container.stop();
+        self.container
+            .teardown()
+            .unwrap_or_else(|e| log::error!("could not tear down the verifier container: {e}"));
     }
 
     /// The path inside the container for a verifier's path on the host.

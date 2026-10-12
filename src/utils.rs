@@ -46,6 +46,13 @@ pub fn path_join<A: AsRef<Path>, B: AsRef<Path>>(a: A, b: B) -> Result<String, E
         .ok_or_else(|| Error::convert("path to string"))
 }
 
+/// Returns the absolute path of `path` as a `String`.
+pub fn path_absolute(path: impl AsRef<Path>) -> Result<String, Error> {
+    std::path::absolute(path.as_ref())?
+        .into_string()
+        .map_err(|pb| Error::fs("invalid utf-8 absolute path", pb.to_string_lossy()))
+}
+
 /// Joins two file system paths together and returns the absolute path of the
 /// result.
 pub fn path_absolute_join<A: AsRef<Path>, B: AsRef<Path>>(a: A, b: B) -> Result<String, Error> {
@@ -72,6 +79,38 @@ pub fn path_absolute_parent<P: AsRef<Path>>(path: P) -> Result<String, Error> {
 pub fn create_dir_if_not_exists<P: AsRef<Path>>(path: P) -> Result<(), Error> {
     if !std::fs::exists(path.as_ref())? {
         std::fs::create_dir_all(path.as_ref())?;
+    }
+    Ok(())
+}
+
+/// Cleans the directory at `dir` if it exists. Returns an error if something
+/// within `dir` could not be cleaned up.
+pub fn clean_dir_if_exists(dir: impl AsRef<Path>) -> Result<(), Error> {
+    if std::fs::exists(dir.as_ref())? {
+        for entry in std::fs::read_dir(dir.as_ref())? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let path = entry.path();
+
+            // NOTE: Using `file_type` to avoid following symlinks.
+            if file_type.is_dir() {
+                std::fs::remove_dir_all(&path).map_err(|e| {
+                    Error::fs(
+                        format!("could not remove dir from {}", dir.as_ref().to_string_lossy()),
+                        path.to_string_lossy(),
+                    )
+                    .with_cause(e)
+                })?;
+            } else {
+                std::fs::remove_file(&path).map_err(|e| {
+                    Error::fs(
+                        format!("could not remove file from {}", dir.as_ref().to_string_lossy()),
+                        path.to_string_lossy(),
+                    )
+                    .with_cause(e)
+                })?;
+            }
+        }
     }
     Ok(())
 }

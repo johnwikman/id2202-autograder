@@ -8,9 +8,9 @@ use id2202_autograder::{
     config::{tests::kind::Kind as Testkind, BuildConfig, Settings, Tag, Test, TestGroup},
     db::models::{JobStatus, SubmissionJobPlain},
     error::{Error, ErrorKind, SyscommandError},
-    podman::{self, Mount, PodmanContainer},
+    podman,
     reporting::{DetailsBuildFailure, DetailsTagGradingGroup, MIMETypeInfo, ReportTagGrading},
-    utils::{self, path_absolute_join, syscommand_timeout, SyscommandSettings},
+    utils::{self, path_absolute_join},
 };
 use num_traits::ToPrimitive;
 use walkdir::WalkDir;
@@ -18,7 +18,7 @@ use walkdir::WalkDir;
 use crate::{
     shadow::ShadowRepo,
     subrunner::{
-        container::ContainerInfo,
+        container::{ExecOptions, GradingContainer, GradingContainerOptions, ScratchSlot},
         test_grader::{FailureCause, GradingResult},
         verifier::Verifier,
     },
@@ -56,11 +56,26 @@ pub enum BuildResult {
     },
 }
 
+/// Reason why grading of a tag stopped before finishing its last test case.
+#[derive(Debug, Clone)]
+enum StopReason {
+    /// A test case failed in a way that makes it inappropriate to continue
+    /// grading further test cases.
+    Test(FailureCause),
+
+    /// The tag's total time budget ran out.
+    Deadline,
+
+    /// An internal error in the autograder occurred.
+    Interrupted,
+}
+
 pub struct TagRunnerOptions<'a, 'tmp> {
     pub settings: &'a Settings,
     pub runner_id: i32,
     pub tag: &'tmp Tag,
     pub job: SubmissionJobPlain,
+    pub scratch_slot: &'tmp ScratchSlot,
     pub source_dir: &'tmp str,
     pub solution_dir: &'tmp str,
     pub verifier_dir: &'tmp str,
@@ -75,9 +90,13 @@ pub struct TagRunner<'a> {
     /// Program settings, passed on to the test kinds that need them.
     pub settings: &'a Settings,
 
-    /// Information about the container that the tag runner will use to build
-    /// the project and grade the tests container within this tag.
-    pub container: ContainerInfo,
+    /// What the container is created from once the tag starts.
+    container_options: GradingContainerOptions,
+
+    /// The container that the tag runner will use to build the project and
+    /// grade the tests within this tag. Created by `build`, removed by
+    /// `cleanup`.
+    pub container: Option<GradingContainer>,
 
     /// The job this tag runner is grading, which is also where its tag name
     /// and the names it was requested as come from.
@@ -103,16 +122,15 @@ pub struct TagRunner<'a> {
     /// Number of failed test cases
     testfail_count: usize,
 
-    /// The result from a test case that means that the entire grading process
-    /// should be interrupted.
-    bad_test_behavior: Option<FailureCause>,
+    /// Why grading of this tag stopped early (if Some).
+    stopped: Option<StopReason>,
 
     /// Number of reports that have been collected for test cases
     pub collected_reports: usize,
 
     /// How far this tag has got. Grading of the tag is over once this is
     /// terminal, whether it succeeded or not.
-    pub status: JobStatus,
+    status: JobStatus,
 
     /// The report for this tag, once `generate_report` has compiled it.
     generated_report: Option<ReportTagGrading>,
@@ -136,30 +154,29 @@ impl<'a> TagRunner<'a> {
         Ok(TagRunner {
             settings: opts.settings,
             job: opts.job,
-            container: ContainerInfo {
-                podman: {
-                    let mut c = PodmanContainer::new(
-                        s_img.image.clone(),
-                        format!("id2202_runner{}", opts.runner_id),
-                    );
-                    c.network = Some(format!(
-                        "{}{}",
-                        opts.settings.runner.podman.network_prefix, opts.runner_id
-                    ));
-                    c
-                },
+            container_options: GradingContainerOptions {
+                scratch_slot: opts.scratch_slot.clone(),
+                image: s_img.image.clone(),
+                container_name: format!("id2202_runner{}", opts.runner_id),
+                network_name: format!(
+                    "{}{}",
+                    opts.settings.runner.podman.network_prefix, opts.runner_id
+                ),
+                disk: opts.tag.solution_limit_disk,
+                memory: opts.tag.solution_limit_ram,
                 internal_build_dir: path_absolute_join(&s_img.tmpdir, "graded_solution")?,
-                solution_dir: Mount {
+                solution_dir: podman::Mount {
                     host_path: opts.solution_dir.to_string(),
                     container_path: s_img.mount_code.clone(),
                     writable: false,
                 },
-                tests_dir: Mount {
+                tests_dir: podman::Mount {
                     host_path: opts.tests_dir.to_string(),
                     container_path: s_img.mount_tests.clone(),
                     writable: false,
                 },
             },
+            container: None,
             build_conf: opts.tag.build.to_owned(),
             verifier: Verifier::new(
                 v_img,
@@ -175,7 +192,7 @@ impl<'a> TagRunner<'a> {
             build_result: None,
             source_dir: opts.source_dir.to_string(),
             testfail_count: 0,
-            bad_test_behavior: None,
+            stopped: None,
             collected_reports: 0,
             status: JobStatus::NotStarted,
             generated_report: None,
@@ -192,6 +209,12 @@ impl<'a> TagRunner<'a> {
     /// deadline.
     fn exceeded_deadline(&self) -> bool {
         self.status != JobStatus::NotStarted && SystemTime::now() >= self.deadline
+    }
+
+    /// The status of the tag grading. If the status is terminal, then the
+    /// grading is over (successful or not).
+    pub fn status(&self) -> JobStatus {
+        self.status
     }
 
     /// Returns true if the solution for this project has been built.
@@ -220,42 +243,45 @@ impl<'a> TagRunner<'a> {
     /// Returns a job status IF the tag runner has experienced some bad
     /// behavior and that the grading of this tag should stop.
     pub fn experienced_bad_behavior(&self) -> Option<JobStatus> {
-        match &self.build_result {
-            Some(BuildResult::Timeout { .. }) => Some(JobStatus::BuildTimedOut),
-            Some(BuildResult::OutputLimitExceeded { .. }) => {
-                Some(JobStatus::BuildOutputLimitExceeded)
+        use BuildResult as BR;
+        use FailureCause as FC;
+        use JobStatus as JS;
+        use StopReason as SR;
+        match (&self.build_result, &self.stopped) {
+            (_, Some(StopReason::Interrupted)) => Some(JS::AutograderFailure),
+            (Some(BR::Timeout { .. }), _) => Some(JS::BuildTimedOut),
+            (Some(BR::OutputLimitExceeded { .. }), _) => Some(JS::BuildOutputLimitExceeded),
+            (Some(BR::MemoryLimitExceeded { .. }), _) => Some(JS::BuildMemoryLimitExceeded),
+            (Some(BR::DiskSpaceLimitExceeded { .. }), _) => Some(JS::BuildDiskSpaceLimitExceeded),
+            (Some(BR::Ok), Some(SR::Deadline)) => Some(JobStatus::JobTimedOut),
+            // Note: `FC::OutputMismatch` is usually not a stop condition, but
+            // including it here for completeness.
+            (Some(BR::Ok), Some(SR::Test(FC::OutputMismatch))) => Some(JS::TestCasesFailed),
+            (Some(BR::Ok), Some(SR::Test(FC::Timeout(_)))) => Some(JS::TestCasesTimedOut),
+            (Some(BR::Ok), Some(SR::Test(FC::OutputLimitExceeded { .. }))) => {
+                Some(JS::TestOutputLimitExceeded)
             }
-            Some(BuildResult::MemoryLimitExceeded { .. }) => {
-                Some(JobStatus::BuildMemoryLimitExceeded)
+            (Some(BR::Ok), Some(SR::Test(FC::MemoryLimitExceeded { .. }))) => {
+                Some(JS::TestMemoryLimitExceeded)
             }
-            Some(BuildResult::DiskSpaceLimitExceeded { .. }) => {
-                Some(JobStatus::BuildDiskSpaceLimitExceeded)
+            (Some(BR::Ok), Some(SR::Test(FC::DiskSpaceLimitExceeded { .. }))) => {
+                Some(JS::TestDiskSpaceLimitExceeded)
             }
-            None
-            | Some(BuildResult::SourceNotFound { .. })
-            | Some(BuildResult::ProhibitedFiles { .. })
-            | Some(BuildResult::Failed { .. }) => None,
-            Some(BuildResult::Ok) => match self.bad_test_behavior {
-                Some(FailureCause::OutputMismatch) => Some(JobStatus::TestCasesFailed),
-                Some(FailureCause::Timeout(_)) => Some(JobStatus::TestCasesTimedOut),
-                Some(FailureCause::OutputLimitExceeded { .. }) => {
-                    Some(JobStatus::TestOutputLimitExceeded)
-                }
-                Some(FailureCause::MemoryLimitExceeded { .. }) => {
-                    Some(JobStatus::TestMemoryLimitExceeded)
-                }
-                Some(FailureCause::DiskSpaceLimitExceeded { .. }) => {
-                    Some(JobStatus::TestDiskSpaceLimitExceeded)
-                }
-                None => None,
-            },
+            (Some(BR::Ok), None) => None,
+            // All other build statuses are not bad behavior
+            (
+                None
+                | Some(BR::SourceNotFound { .. })
+                | Some(BR::ProhibitedFiles { .. })
+                | Some(BR::Failed { .. }),
+                _,
+            ) => None,
         }
     }
 
     /// Compiles the report on the tests within this tag group, and keeps it
-    /// for `get_report`. This ends grading of the tag, settling its status
-    /// unless one was already reached. Errors if the report has already been
-    /// compiled.
+    /// for `get_report`. This ends grading of the tag and settles its status.
+    /// Errors if the report has already been compiled.
     pub fn generate_report(&mut self) -> Result<&ReportTagGrading, Error> {
         if self.generated_report.is_some() {
             return Error::err_runtime(format!(
@@ -265,7 +291,7 @@ impl<'a> TagRunner<'a> {
         }
 
         let build_failure = match &self.build_result {
-            None => Some(DetailsBuildFailure { msg: "Never attempted to build the project.".to_string(), ..DetailsBuildFailure::default() }),
+            None => Some(DetailsBuildFailure { msg: "The autograder stopped before the project was built.".to_string(), ..DetailsBuildFailure::default() }),
             Some(BuildResult::Ok) => None, // ok
             Some(BuildResult::SourceNotFound { expected_dir }) => {
                 Some(DetailsBuildFailure {
@@ -329,22 +355,18 @@ impl<'a> TagRunner<'a> {
                 })
             },
             Some(BuildResult::MemoryLimitExceeded { limit }) => {
+                log::info!("Build exceeded the memory limit of {limit} bytes");
                 Some(DetailsBuildFailure {
-                    msg: format!(
-                        "Build failed due to exceeding the memory usage limit of {} bytes.",
-                        limit
-                    ),
+                    msg: "Build failed due to exceeding the memory usage limit.".to_string(),
                     cmd: Some(self.build_conf.cmd.join(" ")),
                     srcdir: Some(self.build_conf.srcdir.clone()),
                     ..DetailsBuildFailure::default()
                 })
             },
             Some(BuildResult::DiskSpaceLimitExceeded { limit }) => {
+                log::info!("Build exceeded the disk space limit of {limit} bytes");
                 Some(DetailsBuildFailure {
-                    msg: format!(
-                        "Build failed due to exceeding the disk space usage limit of {} bytes.",
-                        limit
-                    ),
+                    msg: "Build failed due to exceeding the disk space usage limit.".to_string(),
                     cmd: Some(self.build_conf.cmd.join(" ")),
                     srcdir: Some(self.build_conf.srcdir.clone()),
                     ..DetailsBuildFailure::default()
@@ -361,8 +383,7 @@ impl<'a> TagRunner<'a> {
             }
         }
 
-        // A status reached earlier, such as a timeout, says more about how the
-        // tag ended than the results do, so it is left alone.
+        // Make sure that informative statuses assigned earlier are preserved.
         if !self.status.is_finished() {
             self.status = self.experienced_bad_behavior().unwrap_or(if ok {
                 JobStatus::Success
@@ -376,12 +397,24 @@ impl<'a> TagRunner<'a> {
         let report = ReportTagGrading {
             tag_name: self.job.tag.clone(),
             derived_from: self.job.requested_as.clone(),
-            premature_exit_reason: match self.status {
-                JobStatus::JobTimedOut => Some("Grading of this tag timed out.".to_string()),
-                JobStatus::AutograderFailure => {
+            premature_exit_reason: match self.stopped {
+                Some(StopReason::Deadline) => Some("Grading of this tag timed out.".to_string()),
+                Some(StopReason::Interrupted) => {
                     Some("Grading process was interrupted. Contact course staff.".to_string())
                 }
-                _ => None,
+                Some(StopReason::Test(FailureCause::MemoryLimitExceeded { .. })) => Some(
+                    "Grading process was interrupted due to an exceeded memory limit.".to_string(),
+                ),
+                Some(StopReason::Test(FailureCause::DiskSpaceLimitExceeded { .. })) => Some(
+                    "Grading process was interrupted due to an exceeded disk space limit."
+                        .to_string(),
+                ),
+                Some(StopReason::Test(
+                    FailureCause::OutputMismatch
+                    | FailureCause::Timeout(_)
+                    | FailureCause::OutputLimitExceeded { .. },
+                ))
+                | None => None,
             },
             build_failure,
             ok,
@@ -389,6 +422,25 @@ impl<'a> TagRunner<'a> {
         };
 
         Ok(self.generated_report.insert(report))
+    }
+
+    /// Stops the grading process for this tag and compiles a report of what
+    /// has been done so far. If a report has already been created, then
+    /// nothing is changed in the tag runner and the existing report is
+    /// returned.
+    pub fn interrupt(&mut self) -> Result<&ReportTagGrading, Error> {
+        match self.generated_report {
+            Some(ref r) => {
+                log::warn!(
+                    "attempted to interrupt the tag runner after a report had been generated"
+                );
+                Ok(r)
+            }
+            None => {
+                self.stopped.replace(StopReason::Interrupted);
+                self.generate_report()
+            }
+        }
     }
 
     /// The report for this tag, if `generate_report` has compiled it.
@@ -405,12 +457,17 @@ impl<'a> TagRunner<'a> {
             // stoppage of podman containers.
             return Ok(());
         }
-        self.container.podman.stop();
+
+        // Dropping the container will also clean up its network and storage.
+        if let Some(container) = self.container.take() {
+            drop(container);
+        }
         self.verifier.stop();
 
-        if std::fs::exists(&self.container.solution_dir.host_path)? {
+        let solution_dir = &self.container_options.solution_dir.host_path;
+        if std::fs::exists(solution_dir)? {
             log::debug!("Removing the build directory used for grading \"{}\"", self.job.tag);
-            std::fs::remove_dir_all(&self.container.solution_dir.host_path)?;
+            std::fs::remove_dir_all(solution_dir)?;
         }
 
         self.attempted_cleanup = true;
@@ -449,19 +506,15 @@ impl<'a> TagRunner<'a> {
             self.build_conf.srcdir
         );
 
-        let running_containers = podman::ps_names()?;
-        if running_containers.contains(&self.container.podman.name) {
-            log::warn!("Removing dangling container from the previous run");
-            podman::force_rm(&self.container.podman.name)?;
-        }
-
-        if std::fs::exists(&self.container.solution_dir.host_path)? {
+        let solution_host_dir = self.container_options.solution_dir.host_path.clone();
+        if std::fs::exists(&solution_host_dir)? {
             // Remove the old build dir
-            std::fs::remove_dir_all(&self.container.solution_dir.host_path)?;
+            std::fs::remove_dir_all(&solution_host_dir)?;
         }
-        if !std::fs::exists(&self.container.tests_dir.host_path)? {
+        let tests_host_dir = &self.container_options.tests_dir.host_path;
+        if !std::fs::exists(tests_host_dir)? {
             // Ensure that the test directory exists outside the container
-            std::fs::create_dir_all(&self.container.tests_dir.host_path)?;
+            std::fs::create_dir_all(tests_host_dir)?;
         }
 
         // Copy the solution directory to the <workspace>/build
@@ -474,15 +527,14 @@ impl<'a> TagRunner<'a> {
             return Ok(false);
         }
 
-        // Create the directory `self.container.solution_dir.host_path` which
-        // will be mounted into the container.
-        dircpy::copy_dir(&solution_dir, &self.container.solution_dir.host_path)?;
+        // Create the directory which will be mounted into the container.
+        dircpy::copy_dir(&solution_dir, &solution_host_dir)?;
 
         // Check for forbidden binary files inside the solution directory
         let mut forbidden_files: Vec<MIMETypeInfo> = vec![];
         if self.build_conf.prohibit_binary_files {
             log::debug!("Checking for prohibited files.");
-            let scan_root = &self.container.solution_dir.host_path;
+            let scan_root = &solution_host_dir;
             for entry in WalkDir::new(scan_root) {
                 let entry = entry.inspect_err(|e| {
                     log::error!("Error when scanning for prohibited files: {e}")
@@ -540,58 +592,77 @@ impl<'a> TagRunner<'a> {
             .inspect_err(|e| log::error!("Could not start the verifier container: {e}"))?;
 
         log::debug!("Starting podman container");
-        self.container.podman.mounts =
-            vec![self.container.solution_dir.clone(), self.container.tests_dir.clone()];
-        self.container.podman.start()?;
-
-        // Wait for the containers to start
         let limit = Duration::from_secs(5);
+        let created = GradingContainer::create(&self.container_options, limit)
+            .inspect_err(|e| log::error!("could not create the grading container: {e}"))?;
+        let container = self.container.insert(created);
+
         self.verifier.container.block_until_started(limit).inspect_err(|e| {
-            log::error!("Error checking whether verifier container had started: {e}")
-        })?;
-        self.container.podman.block_until_started(limit).inspect_err(|e| {
-            log::error!("Error checking whether tag_runner container had started: {e}")
+            log::error!("error checking whether verifier container had started: {e}")
         })?;
 
-        let checked = SyscommandSettings {
+        let checked = ExecOptions {
+            workdir: "/",
+            cmd: &[],
+            infiles: &[],
+            stdin: None,
             expected_code: Some(0),
-            max_stderr_length: Some(128 * 1024),
-            ..Default::default()
+            max_output: 128 * 1024,
+            timeout: 60,
         };
 
         // Double-check that the target repo doesn't exist
-        self.container.podman.exec(
-            None,
-            ["test", "!", "-d", &self.container.internal_build_dir],
-            checked.clone(),
-        )?;
+        container.exec(&ExecOptions {
+            cmd: &["test", "!", "-d", &container.internal_build_dir],
+            ..checked
+        })?;
 
-        // Now copy the solution to the root repository
-        self.container.podman.exec(
-            None,
-            [
+        // Now copy the solution to the root repository, which fails for a
+        // solution larger than the disk limit.
+        let copied = container.exec(&ExecOptions {
+            cmd: &[
                 "cp",
                 "-r",
-                &self.container.solution_dir.container_path,
-                &self.container.internal_build_dir,
+                &container.solution_dir.container_path,
+                &container.internal_build_dir,
             ],
-            checked,
-        )?;
+            ..checked
+        });
+        if copied.is_err() && container.disk_full()? {
+            self.build_result
+                .replace(BuildResult::DiskSpaceLimitExceeded { limit: container.disk_limit()? });
+            return Ok(false);
+        }
+        copied?;
 
         let build_cmd: Vec<&str> = self.build_conf.cmd.iter().map(String::as_str).collect();
 
         log::info!("Starting build {build_cmd:?}");
 
-        match self.container.podman.exec(
-            Some(&self.container.internal_build_dir),
-            build_cmd.as_slice(),
-            SyscommandSettings {
-                max_stdout_length: Some(self.build_conf.max_output),
-                max_stderr_length: Some(self.build_conf.max_output),
-                timeout: Duration::from_secs(self.build_conf.timeout.into()),
-                ..Default::default()
-            },
-        ) {
+        let build_output = container.exec(&ExecOptions {
+            workdir: &container.internal_build_dir,
+            cmd: build_cmd.as_slice(),
+            infiles: &[],
+            stdin: None,
+            expected_code: None,
+            max_output: self.build_conf.max_output,
+            timeout: self.build_conf.timeout,
+        });
+
+        // A limit that was hit takes precedence over whatever the command
+        // reported, since exceeding one aborts the whole tag.
+        if container.disk_full()? {
+            self.build_result
+                .replace(BuildResult::DiskSpaceLimitExceeded { limit: container.disk_limit()? });
+            return Ok(false);
+        }
+        if container.memory_exceeded()? {
+            self.build_result
+                .replace(BuildResult::MemoryLimitExceeded { limit: container.memory_limit()? });
+            return Ok(false);
+        }
+
+        match build_output {
             Ok(output) => {
                 if output.code == 0 {
                     self.build_result.replace(BuildResult::Ok);
@@ -631,17 +702,7 @@ impl<'a> TagRunner<'a> {
         }
         log::info!("Build finished. Disconnecting network from container.");
 
-        // Now disconnect the container from the network
-        syscommand_timeout(
-            [
-                "podman",
-                "network",
-                "disconnect",
-                self.container.podman.network.as_deref().unwrap_or("none"),
-                &self.container.podman.name,
-            ],
-            SyscommandSettings { expected_code: Some(0), ..Default::default() },
-        )?;
+        container.disconnect_network()?;
 
         log::info!("Proceeding to run test cases.");
 
@@ -663,7 +724,7 @@ impl<'a> TagRunner<'a> {
         // timeouts. It is spent between test cases rather than during one.
         if self.exceeded_deadline() {
             log::info!("Grading of tag \"{}\" timed out", self.job.tag);
-            self.status = JobStatus::JobTimedOut;
+            self.stopped.replace(StopReason::Deadline);
             return Ok(false);
         }
 
@@ -694,22 +755,46 @@ impl<'a> TagRunner<'a> {
             }
         };
 
-        let result = match &test.kind {
-            Testkind::Run(conf) => grade::run(conf, test, &self.container, include_report)?,
+        let container = self.container.as_ref().ok_or_else(|| {
+            Error::runtime(format!(
+                "Attempted to run a test case for tag \"{}\" without a container",
+                self.job.tag
+            ))
+        })?;
+
+        let graded = match &test.kind {
+            Testkind::Run(conf) => grade::run(conf, test, container, include_report),
             Testkind::GenASMAndRun(conf) => {
-                grade::gen_asm_and_run(self.settings, conf, test, &self.container, include_report)?
+                grade::gen_asm_and_run(self.settings, conf, test, container, include_report)
             }
             Testkind::CheckFileExists(conf) => {
-                grade::check_file_exists(conf, &self.container, include_report)?
+                grade::check_file_exists(conf, container, include_report)
             }
             Testkind::RunVerifier(conf) => grade::run_verifier(
                 conf,
                 test,
-                &self.container,
+                container,
                 &self.verifier,
                 self.verifier.container_path(&conf.verifier_path)?,
                 include_report,
-            )?,
+            ),
+        };
+
+        // A limit that was hit takes precedence over whatever the test case
+        // reported, since exceeding one aborts the whole tag. The commands
+        // grading relies on can themselves fail once the disk is full.
+        let limit_hit = if container.disk_full()? {
+            Some(FailureCause::DiskSpaceLimitExceeded { limit: container.disk_limit()? })
+        } else if container.memory_exceeded()? {
+            Some(FailureCause::MemoryLimitExceeded { limit: container.memory_limit()? })
+        } else {
+            None
+        };
+        let result = match (graded, limit_hit) {
+            (Ok(result), None) => result,
+            (Ok(result), Some(cause)) => result.with_cause(cause),
+            (Err(_), Some(cause)) => GradingResult::Failure { cause, report: None },
+            (Err(e), None) => return Err(e),
         };
 
         match &result {
@@ -723,27 +808,28 @@ impl<'a> TagRunner<'a> {
                     FailureCause::OutputMismatch => {}
                     FailureCause::Timeout(d) => {
                         log::debug!("Test timed out after {} seconds", d.as_secs());
-                        self.bad_test_behavior.replace(cause.clone());
+                        self.stopped.replace(StopReason::Test(cause.clone()));
                     }
                     FailureCause::OutputLimitExceeded { limit } => {
-                        log::debug!("Test output exceeded {} bytes", limit);
-                        self.bad_test_behavior.replace(cause.clone());
+                        log::info!("Test output exceeded {limit} bytes");
+                        self.stopped.replace(StopReason::Test(cause.clone()));
                     }
                     FailureCause::MemoryLimitExceeded { limit } => {
-                        log::debug!("Test memory usage exceeded {} bytes", limit);
-                        self.bad_test_behavior.replace(cause.clone());
+                        log::info!("Test memory usage exceeded {limit} bytes");
+                        self.stopped.replace(StopReason::Test(cause.clone()));
                     }
                     FailureCause::DiskSpaceLimitExceeded { limit } => {
-                        log::debug!("Test disk space usage exceeded {} bytes", limit);
-                        self.bad_test_behavior.replace(cause.clone());
+                        log::info!("Test disk space usage exceeded {limit} bytes");
+                        self.stopped.replace(StopReason::Test(cause.clone()));
                     }
                 }
             }
         }
+
         self.toplevel_iterator.add_result(result)?;
 
         // Progress to the next test case before returning
-        Ok(self.bad_test_behavior.is_none() && self.toplevel_iterator.next())
+        Ok(self.stopped.is_none() && self.toplevel_iterator.next())
     }
 
     /// Records information about this tag to the shadow repository, storing a

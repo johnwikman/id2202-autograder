@@ -2,19 +2,22 @@ name: id2202-autograder
 
 services:
   autograder:
-    image: localhost/id2202-autograder:2.0.0-dev6
+    image: localhost/id2202-autograder:2.0.0-dev7
     depends_on:
       - postgres
     restart: unless-stopped
     cap_add:
       - SYS_ADMIN
       - MKNOD
+      - NET_ADMIN
     devices:
       - "/dev/fuse:/dev/fuse"
     security_opt:
       - "label=disable"
       - "seccomp=unconfined"
-    privileged: true
+      - "systempaths=unconfined"
+      - "writable-cgroups=true"
+    cgroup: private
     # "init" is crucial to reap subprocesses spawned by the autograder
     init: true
     ports:
@@ -75,7 +78,21 @@ services:
       AUTOGRADER_POSTGRES_PASSWORD: "ChangeMe"
       AUTOGRADER_POSTGRES_HOST: "postgres"
       AUTOGRADER_POSTGRES_PORT: "5432"
-    command: /autograder/target/release/entrypoint --settings /mnt/example/settings.toml start
+    # (This follows the docker in docker script: https://github.com/moby/moby/blob/master/hack/dind)
+    command:
+      - sh
+      - -c
+      - |
+        echo "Moving every process into /sys/fs/cgroup/init before enabling subtree_control"
+        mkdir -p /sys/fs/cgroup/init || exit 1
+        while [ -n "$$(cat /sys/fs/cgroup/cgroup.procs)" ]; do
+          for pid in $$(cat /sys/fs/cgroup/cgroup.procs); do
+            echo "$$pid" > /sys/fs/cgroup/init/cgroup.procs
+          done
+        done
+        echo "Enable cgroup v2 subtree_control"
+        echo "+memory +pids" > /sys/fs/cgroup/cgroup.subtree_control || exit 1
+        exec /autograder/target/release/entrypoint --settings /mnt/example/settings.toml start
 
   postgres:
     image: docker.io/library/postgres:17.6

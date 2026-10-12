@@ -6,7 +6,7 @@ use clap::Args;
 use id2202_autograder::{
     config::{Settings, TestGroup, Tests, TestsLoadingOptions},
     error::Error,
-    podman,
+    podman::{self, SHARED},
     utils::utc_string,
 };
 
@@ -50,6 +50,113 @@ pub fn validate_settings(s: Settings, args: ValidateSettingsArgs) -> Result<(), 
         }
     };
     Ok(())
+}
+
+/// Checks, without starting or changing anything, that this system provides
+/// what the autograder needs from it. Prints one line per check. Returns an
+/// error if at least one system check fails.
+pub fn validate_system(_s: &Settings) -> Result<(), Error> {
+    use std::{
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        path::Path,
+    };
+
+    let mut failed_checks = 0;
+    let mut check = |cond: bool, what: &str| {
+        println!(
+            "{} {}",
+            if cond { "\x1b[1;32mPASS\x1b[0m" } else { "\x1b[1;31mFAIL\x1b[0m" },
+            what
+        );
+        if !cond {
+            failed_checks += 1;
+        }
+    };
+
+    // helper functions
+    fn executable(path: &Path) -> bool {
+        path.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    fn on_path(prog: &str) -> bool {
+        std::env::var_os("PATH")
+            .is_some_and(|path| std::env::split_paths(&path).any(|dir| executable(&dir.join(prog))))
+    }
+
+    for bin in ["git", "ssh", "file", "podman", "mkfs.ext4", "fuse2fs", "fusermount3", "df"] {
+        check(on_path(bin), &format!("\x1b[3;33m{bin}\x1b[0m is on PATH"));
+    }
+    if !std::fs::metadata("/proc/self").is_ok_and(|m| m.uid() == 0) {
+        let fusermount = std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path).map(|dir| dir.join("fusermount3")).find(|p| executable(p))
+        });
+        check(
+            fusermount
+                .and_then(|p| p.metadata().ok())
+                .is_some_and(|m| m.uid() == 0 && m.mode() & 0o4000 != 0),
+            "\x1b[3;33mfusermount3\x1b[0m is setuid root",
+        );
+    }
+    check(
+        executable(Path::new(podman::FUSE_OVERLAYFS)),
+        &format!("{} is executable", podman::FUSE_OVERLAYFS),
+    );
+
+    check(std::fs::read_to_string("/proc/mounts").is_ok(), "/proc/mounts is readable");
+
+    check(
+        std::fs::exists("/sys/fs/cgroup/cgroup.controllers").unwrap_or(false),
+        "/sys/fs/cgroup is a cgroup v2 hierarchy",
+    );
+    let fuse = std::fs::OpenOptions::new().read(true).write(true).open("/dev/fuse");
+    check(fuse.is_ok(), "/dev/fuse opens for reading and writing");
+    drop(fuse);
+
+    match SHARED.info() {
+        Ok(info) => {
+            let host = &info.host;
+            check(
+                host.cgroup_version == "v2",
+                &format!("podman uses cgroup {}", host.cgroup_version),
+            );
+            for controller in ["memory", "pids"] {
+                check(
+                    host.cgroup_controllers.iter().any(|c| c == controller),
+                    &format!("the {controller} controller is available to podman"),
+                );
+            }
+            check(
+                host.network_backend == "netavark",
+                &format!("podman's network backend is {}", host.network_backend),
+            );
+            let backend = &host.network_backend_info.path;
+            check(
+                executable(Path::new(backend)),
+                &format!("podman's network backend {backend} is executable"),
+            );
+            if host.security.rootless {
+                let pasta = &host.pasta.executable;
+                check(
+                    executable(Path::new(pasta)),
+                    &format!("pasta {pasta} is executable for rootless networking"),
+                );
+
+                let uids: usize = host.id_mappings.uidmap.iter().flatten().map(|m| m.size).sum();
+                let gids: usize = host.id_mappings.gidmap.iter().flatten().map(|m| m.size).sum();
+                check(uids > 1, &format!("podman's rootless uidmap maps {uids} ids"));
+                check(gids > 1, &format!("podman's rootless gidmap maps {gids} ids"));
+
+                let tun = std::fs::OpenOptions::new().read(true).write(true).open("/dev/net/tun");
+                check(tun.is_ok(), "/dev/net/tun opens for rootless networking");
+            }
+        }
+        Err(e) => check(false, &format!("`podman info` runs: {e}")),
+    }
+
+    if failed_checks == 0 {
+        Ok(())
+    } else {
+        Error::err_runtime(format!("{failed_checks} failed system checks"))
+    }
 }
 
 #[derive(Args, Debug)]
@@ -145,7 +252,7 @@ pub fn test_podman(_s: Settings, args: TestPodmanArgs) -> Result<(), Error> {
 
     if args.list_networks {
         log::debug!("Listing networks");
-        match podman::networks() {
+        match podman::network_names(&podman::SHARED) {
             Ok(nets) => println!("{:?}", nets),
             Err(e) => println!("Could not list networks: {e}"),
         }
@@ -153,7 +260,7 @@ pub fn test_podman(_s: Settings, args: TestPodmanArgs) -> Result<(), Error> {
 
     if args.list_containers {
         log::debug!("Listing containers");
-        match podman::ps_names() {
+        match podman::ps_names(&podman::SHARED) {
             Ok(names) => println!("{:?}", names),
             Err(e) => println!("Could not list containers: {e}"),
         }
