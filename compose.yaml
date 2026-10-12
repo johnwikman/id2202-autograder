@@ -7,9 +7,10 @@ services:
       - postgres
     restart: unless-stopped
     cap_add:
-      - SYS_ADMIN
       - MKNOD
       - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
     devices:
       - "/dev/fuse:/dev/fuse"
     security_opt:
