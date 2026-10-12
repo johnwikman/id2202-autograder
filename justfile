@@ -1,7 +1,7 @@
 # Read environment variables from `.env`.
 set dotenv-load := true
 
-image_version := "2.0.0-dev7"
+image_version := "2.0.0"
 image_name    := "localhost/id2202-autograder"
 image_tag     := image_name + ":" + image_version
 
